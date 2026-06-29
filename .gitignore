@@ -1,0 +1,19 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Xcode / Swift
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+.build/
+
+# Local scratch
+.scratch/
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
