@@ -1,6 +1,6 @@
 # Triage Labels
 
-Use these Matt workflow states for local markdown issues:
+Use these Matt workflow states for GitHub Issues in `WILLOSCAR/linewise`:
 
 | Role | Status |
 | --- | --- |
@@ -11,4 +11,3 @@ Use these Matt workflow states for local markdown issues:
 | Will not be actioned | `wontfix` |
 
 Topic labels such as `product`, `watch`, `iphone`, `healthkit`, `motion`, `ui`, `validation`, and `research` may be used when helpful.
-

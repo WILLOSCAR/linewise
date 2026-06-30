@@ -12,7 +12,7 @@ Current workflow contract:
 - Read `AGENTS.md` first for process rules.
 - Read `CONTEXT.md` for domain language and product boundaries.
 - Use `docs/adr/` for durable product and architecture decisions.
-- Keep implementation issues as local markdown only after a P0 PRD and validation gates exist.
+- Track implementation issues in GitHub Issues only after a P0 PRD and validation gates exist.
 - Do not mix this climbing product with badminton, RallyMate, or other Watch App experiments.
 
 ## 2. Working Product Name
@@ -151,7 +151,7 @@ Why it should be playful:
 Risk:
 
 - If the overlay is inaccurate, users will lose trust quickly.
-- MVP should support manual placement before promising full auto pose/beta generation.
+- MVP should support manual placement before promising full automatic pose or movement generation.
 
 ### 4.5 定线解析
 
@@ -220,7 +220,7 @@ The most useful near-term move is to build a thin app or workflow that helps the
 | Start/top holds | tap on photo | Training data for future AI |
 | Attempt result | Watch Try/Send/Fail/Flash | Core bouldering event |
 | Failure point | tap hold or select reason | Turns failure into training signal |
-| Beta note | short text/voice/photo annotation | Memory and next-session recall |
+| MoveCue | short text/voice/photo annotation | Memory and next-session recall |
 | Rest interval | Watch timer | Pacing and intensity context |
 | Heart rate | HealthKit workout | Supporting intensity signal |
 | Motion timeline | Watch/Core Motion | Candidate attempt/rest segmentation |

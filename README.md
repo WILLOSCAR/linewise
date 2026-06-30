@@ -1,6 +1,6 @@
 # LineWise Climb Watch App
 
-Date: 2026-06-30  
+Date: 2026-07-01  
 Status: Climbing/bouldering project directory, currently in requirements-settlement mode with a Matt-style local workflow scaffold
 
 ## Naming
@@ -38,10 +38,23 @@ P0 remains deliberately narrower:
 | File | Role |
 | --- | --- |
 | `CONTEXT.md` | Concise single-context product and domain source of truth for future agents |
+| `docs/project_background.md` | Project background, market gap, strategy, and product principles |
+| `docs/climbing_bouldering_prd_v0_1.md` | Active P0/P0.5 requirements contract |
+| `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and field validation metrics |
+| `docs/climbing_bouldering_data_collection_plan.md` | Real-gym data collection and annotation protocol |
+| `docs/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
 | `docs/product_initialization_v0.md` | Latest initialization note: product name, expanded pillars, dataset strategy, and next-step recommendations |
-| `docs/bouldering_field_research_v2.md` | Latest field-observation-oriented V2 research; reframes the product from training recorder to gym visit memory system |
 | `docs/adr/0002-linewise-expanded-product-vision.md` | Durable decision: use LineWise / 线感 as the broader working frame while preserving Gym Visit Memory as P0 |
+| `docs/adr/0003-canonical-p0-domain-model-and-terms.md` | Durable decision: canonical P0 entities, event vocabulary, and term aliases |
 | `docs/adr/0001-gym-visit-memory-system.md` | Durable product decision: start from route/project-centered gym visit memory, not generic session logging |
+
+## Historical Research
+
+These files are source material. They do not override `CONTEXT.md`, the active PRD, or ADRs.
+
+| File | Role |
+| --- | --- |
+| `docs/bouldering_field_research_v2.md` | Field-observation-oriented V2 research; reframed the product from training recorder to gym visit memory system |
 | `docs/climbing_bouldering_research_report_v1.md` | Primary expanded five-PM research and product-direction report |
 | `docs/bouldering_industry_history_business_report.md` | Bouldering industry history, Beijing/Shanghai brand landscape, business model, coaching mode, and trend report |
 | `docs/bouldering_market_mvp_report.md` | Original broad market research and MVP opportunity report, kept as source material |
@@ -104,8 +117,4 @@ Not reusable directly:
 
 | Next Doc | Purpose |
 | --- | --- |
-| `docs/climbing_bouldering_prd_v0_1.md` | Convert the research report into a scoped P0 PRD |
-| `docs/climbing_bouldering_data_collection_plan.md` | Define first real climbing data collection protocol |
-| `docs/climbing_bouldering_mvp_gate.md` | Define simulator, real-device, and field-test acceptance gates |
-| `docs/climbing_bouldering_platform_contract.md` | Define HealthKit, Workout, Motion, sync, privacy, and failure semantics |
 | `docs/climbing_bouldering_implementation_plan.md` | Break the MVP into independently verifiable tasks |
