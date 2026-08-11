@@ -595,6 +595,186 @@ func lateAttemptAfterCompletedReviewIsPreservedAndNeedsRecheck() throws {
     "expected late material event to reopen review attention")
 }
 
+func lateResultAfterCompletedReviewNeedsRecheck() throws {
+  let visitID = GymVisitID("visit-late-result-review")
+  let attemptID = AttemptID("attempt-late-result-review")
+
+  let setup: [VisitCommand] = [
+    .startVisit(
+      actionID: ActionID("action-start-late-result-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-late-result-review"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: nil,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .watch
+    ),
+    .endVisit(
+      actionID: ActionID("action-end-late-result-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .beginReview(
+      actionID: ActionID("action-begin-late-result-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .iPhone
+    ),
+    .completeReview(
+      actionID: ActionID("action-complete-late-result-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in setup {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let lateResult = VisitMemory.apply(
+    .markSend(
+      actionID: ActionID("action-late-result-review"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 2_500),
+      source: .watch
+    ),
+    to: state
+  )
+
+  try expect(lateResult.outcome == .accepted, "expected late result to be preserved")
+  try expect(
+    lateResult.state.snapshot.attempts.first?.outcome == .sent,
+    "expected late result to update the Attempt"
+  )
+  try expect(
+    lateResult.state.snapshot.visits.first?.reviewState == .needsRecheck,
+    "expected late result to reopen review attention"
+  )
+}
+
+func undoAfterCompletedReviewNeedsRecheck() throws {
+  let visitID = GymVisitID("visit-late-undo-review")
+  let attemptID = AttemptID("attempt-late-undo-review")
+  let sendActionID = ActionID("action-send-late-undo-review")
+
+  let setup: [VisitCommand] = [
+    .startVisit(
+      actionID: ActionID("action-start-late-undo-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-late-undo-review"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: nil,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .watch
+    ),
+    .markSend(
+      actionID: sendActionID,
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 2_500),
+      source: .watch
+    ),
+    .endVisit(
+      actionID: ActionID("action-end-late-undo-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .beginReview(
+      actionID: ActionID("action-begin-late-undo-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .iPhone
+    ),
+    .completeReview(
+      actionID: ActionID("action-complete-late-undo-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in setup {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let lateUndo = VisitMemory.apply(
+    .undo(
+      actionID: ActionID("action-late-undo-review"),
+      targetActionID: sendActionID,
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(lateUndo.outcome == .accepted, "expected exact-target Undo to be preserved")
+  try expect(
+    lateUndo.state.snapshot.attempts.first?.outcome == .unresolved,
+    "expected late Undo to reproject the Attempt"
+  )
+  try expect(
+    lateUndo.state.snapshot.visits.first?.reviewState == .needsRecheck,
+    "expected late Undo to reopen review attention"
+  )
+}
+
+func anEndedVisitIDCannotBeReused() throws {
+  let visitID = GymVisitID("visit-id-reuse")
+
+  var state = try acceptedState(
+    VisitMemory.apply(
+      .startVisit(
+        actionID: ActionID("action-start-visit-id-reuse"),
+        visitID: visitID,
+        occurredAt: Instant(millisecondsSince1970: 1_000),
+        source: .watch
+      ),
+      to: VisitState()
+    )
+  )
+  state = try acceptedState(
+    VisitMemory.apply(
+      .endVisit(
+        actionID: ActionID("action-end-visit-id-reuse"),
+        visitID: visitID,
+        occurredAt: Instant(millisecondsSince1970: 2_000),
+        source: .watch
+      ),
+      to: state
+    )
+  )
+
+  let reused = VisitMemory.apply(
+    .startVisit(
+      actionID: ActionID("action-reuse-ended-visit-id"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(
+    reused.outcome == .rejected(.visitAlreadyExists),
+    "expected a durable GymVisit identity not to be reused"
+  )
+  try expect(reused.state == state, "expected rejected ID reuse not to overwrite visit history")
+}
+
 func aRouteCardCanStartOneActiveProjectCycle() throws {
   let routeID = RouteCardID("route-project-cycle")
   let projectID = ProjectID("project-cycle-1")
@@ -848,6 +1028,520 @@ func undoingTheOnlySupportingSendReopensTheProjectCycle() throws {
     "expected stale supporting Attempt link to clear")
 }
 
+func confirmingTheSupportingAttemptNotSentReopensTheProjectCycle() throws {
+  let routeID = RouteCardID("route-confirm-project-not-sent")
+  let projectID = ProjectID("project-confirm-project-not-sent")
+  let visitID = GymVisitID("visit-confirm-project-not-sent")
+  let attemptID = AttemptID("attempt-confirm-project-not-sent")
+
+  let commands: [VisitCommand] = [
+    .createRouteCard(
+      actionID: ActionID("action-create-route-confirm-not-sent"),
+      routeCardID: routeID,
+      label: "Yellow slab",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-start-project-confirm-not-sent"),
+      projectID: projectID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("action-start-visit-confirm-not-sent"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-confirm-not-sent"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .watch
+    ),
+    .markSend(
+      actionID: ActionID("action-mark-confirm-not-sent"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 4_100),
+      source: .watch
+    ),
+    .closeProjectSent(
+      actionID: ActionID("action-close-before-confirm-not-sent"),
+      projectID: projectID,
+      supportingAttemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in commands {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let corrected = VisitMemory.apply(
+    .confirmNotSent(
+      actionID: ActionID("action-correct-project-not-sent"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(corrected.outcome == .accepted, "expected explicit result correction to be accepted")
+  try expect(
+    corrected.state.snapshot.attempts.first?.outcome == .notSent,
+    "expected supporting Attempt to become not sent")
+  try expect(
+    corrected.state.snapshot.projects.first?.state == .active,
+    "expected unsupported sent Project to reopen")
+  try expect(
+    corrected.state.snapshot.projects.first?.supportingAttemptID == nil,
+    "expected stale support link to clear")
+}
+
+func undoingNotSentCorrectionRestoresTheSentProjectProjection() throws {
+  let routeID = RouteCardID("route-undo-not-sent-correction")
+  let projectID = ProjectID("project-undo-not-sent-correction")
+  let visitID = GymVisitID("visit-undo-not-sent-correction")
+  let attemptID = AttemptID("attempt-undo-not-sent-correction")
+  let correctionActionID = ActionID("action-not-sent-correction-to-undo")
+
+  let commands: [VisitCommand] = [
+    .createRouteCard(
+      actionID: ActionID("action-create-route-undo-not-sent"),
+      routeCardID: routeID,
+      label: "Green compression",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-start-project-undo-not-sent"),
+      projectID: projectID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("action-start-visit-undo-not-sent"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-undo-not-sent"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .watch
+    ),
+    .markSend(
+      actionID: ActionID("action-mark-undo-not-sent"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 4_100),
+      source: .watch
+    ),
+    .closeProjectSent(
+      actionID: ActionID("action-close-undo-not-sent"),
+      projectID: projectID,
+      supportingAttemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+    .confirmNotSent(
+      actionID: correctionActionID,
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in commands {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let undone = VisitMemory.apply(
+    .undo(
+      actionID: ActionID("action-undo-not-sent-correction"),
+      targetActionID: correctionActionID,
+      occurredAt: Instant(millisecondsSince1970: 7_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(undone.outcome == .accepted, "expected the result correction to be reversible")
+  try expect(
+    undone.state.snapshot.attempts.first?.outcome == .sent,
+    "expected Undo to restore the prior sent outcome"
+  )
+  try expect(
+    undone.state.snapshot.projects.first?.state == .sent,
+    "expected the still-active Project close event to be projected again"
+  )
+  try expect(
+    undone.state.snapshot.projects.first?.supportingAttemptID == attemptID,
+    "expected restored Project projection to retain its supporting Attempt"
+  )
+}
+
+func attemptResultProjectionUsesBusinessTimeNotArrivalOrder() throws {
+  let visitID = GymVisitID("visit-result-order")
+  let attemptID = AttemptID("attempt-result-order")
+
+  var base = try acceptedState(
+    VisitMemory.apply(
+      .startVisit(
+        actionID: ActionID("action-start-result-order"),
+        visitID: visitID,
+        occurredAt: Instant(millisecondsSince1970: 1_000),
+        source: .watch
+      ),
+      to: VisitState()
+    )
+  )
+  base = try acceptedState(
+    VisitMemory.apply(
+      .recordAttempt(
+        actionID: ActionID("action-record-result-order"),
+        attemptID: attemptID,
+        visitID: visitID,
+        routeCardID: nil,
+        occurredAt: Instant(millisecondsSince1970: 2_000),
+        source: .watch
+      ),
+      to: base
+    )
+  )
+
+  let earlierSend = VisitCommand.markSend(
+    actionID: ActionID("action-earlier-send"),
+    attemptID: attemptID,
+    occurredAt: Instant(millisecondsSince1970: 2_100),
+    source: .watch
+  )
+  let laterNotSent = VisitCommand.confirmNotSent(
+    actionID: ActionID("action-later-not-sent"),
+    attemptID: attemptID,
+    occurredAt: Instant(millisecondsSince1970: 2_200),
+    source: .iPhone
+  )
+
+  var chronological = try acceptedState(VisitMemory.apply(earlierSend, to: base))
+  chronological = try acceptedState(VisitMemory.apply(laterNotSent, to: chronological))
+
+  var reversedArrival = try acceptedState(VisitMemory.apply(laterNotSent, to: base))
+  reversedArrival = try acceptedState(VisitMemory.apply(earlierSend, to: reversedArrival))
+
+  try expect(
+    chronological.snapshot == reversedArrival.snapshot,
+    "expected the same result events to project identically regardless of arrival order"
+  )
+  try expect(
+    reversedArrival.snapshot.attempts.first?.outcome == .notSent,
+    "expected the later business-time correction to remain current"
+  )
+}
+
+func sameTimeOpposingResultsRequireReconciliation() throws {
+  let visitID = GymVisitID("visit-result-ambiguity")
+  let attemptID = AttemptID("attempt-result-ambiguity")
+
+  var base = try acceptedState(
+    VisitMemory.apply(
+      .startVisit(
+        actionID: ActionID("action-start-result-ambiguity"),
+        visitID: visitID,
+        occurredAt: Instant(millisecondsSince1970: 1_000),
+        source: .watch
+      ),
+      to: VisitState()
+    )
+  )
+  base = try acceptedState(
+    VisitMemory.apply(
+      .recordAttempt(
+        actionID: ActionID("action-record-result-ambiguity"),
+        attemptID: attemptID,
+        visitID: visitID,
+        routeCardID: nil,
+        occurredAt: Instant(millisecondsSince1970: 2_000),
+        source: .watch
+      ),
+      to: base
+    )
+  )
+
+  let send = VisitCommand.markSend(
+    actionID: ActionID("result-z-send"),
+    attemptID: attemptID,
+    occurredAt: Instant(millisecondsSince1970: 2_100),
+    source: .watch
+  )
+  let notSent = VisitCommand.confirmNotSent(
+    actionID: ActionID("result-a-not-sent"),
+    attemptID: attemptID,
+    occurredAt: Instant(millisecondsSince1970: 2_100),
+    source: .iPhone
+  )
+
+  var sendFirst = try acceptedState(VisitMemory.apply(send, to: base))
+  sendFirst = try acceptedState(VisitMemory.apply(notSent, to: sendFirst))
+  var notSentFirst = try acceptedState(VisitMemory.apply(notSent, to: base))
+  notSentFirst = try acceptedState(VisitMemory.apply(send, to: notSentFirst))
+
+  try expect(
+    sendFirst == notSentFirst,
+    "expected ambiguous result projection and issue identity not to depend on arrival order"
+  )
+  try expect(
+    sendFirst.snapshot.attempts.first?.outcome == .unresolved,
+    "expected unknowable result order to remain unresolved"
+  )
+  try expect(
+    sendFirst.snapshot.reconciliationIssues == [
+      ReconciliationIssueSnapshot(
+        actionID: ActionID("result-z-send"),
+        reason: .conflict(.ambiguousAttemptOutcome(attemptID))
+      )
+    ],
+    "expected both opposing same-time results to produce one deterministic review issue"
+  )
+}
+
+func correctingHistoricalSendCannotCreateTwoActiveProjects() throws {
+  let routeID = RouteCardID("route-project-overlap")
+  let oldProjectID = ProjectID("project-overlap-old")
+  let newProjectID = ProjectID("project-overlap-new")
+  let visitID = GymVisitID("visit-project-overlap")
+  let attemptID = AttemptID("attempt-project-overlap")
+
+  let setup: [VisitCommand] = [
+    .createRouteCard(
+      actionID: ActionID("action-create-route-project-overlap"),
+      routeCardID: routeID,
+      label: "Blue coordination",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-start-old-project-overlap"),
+      projectID: oldProjectID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("action-start-visit-project-overlap"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-project-overlap"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .watch
+    ),
+    .markSend(
+      actionID: ActionID("action-mark-project-overlap"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 4_100),
+      source: .watch
+    ),
+    .closeProjectSent(
+      actionID: ActionID("action-close-old-project-overlap"),
+      projectID: oldProjectID,
+      supportingAttemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-start-new-project-overlap"),
+      projectID: newProjectID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .iPhone
+    ),
+    .endVisit(
+      actionID: ActionID("action-end-visit-project-overlap"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 6_500),
+      source: .watch
+    ),
+    .beginReview(
+      actionID: ActionID("action-begin-review-project-overlap"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 6_600),
+      source: .iPhone
+    ),
+    .completeReview(
+      actionID: ActionID("action-complete-review-project-overlap"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 6_700),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in setup {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let corrected = VisitMemory.apply(
+    .confirmNotSent(
+      actionID: ActionID("action-correct-historical-project-overlap"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 7_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(
+    corrected.outcome == .conflict(.projectCycleWouldOverlap(routeID)),
+    "expected historical correction to require coupled Project review"
+  )
+  try expect(
+    corrected.state.snapshot.projects.filter { $0.state == .active }.count == 1,
+    "expected at most one active Project for the RouteCard"
+  )
+  try expect(
+    corrected.state.snapshot.attempts.first?.outcome == .sent,
+    "expected conflicting correction not to change the current Attempt projection"
+  )
+  try expect(
+    corrected.state.snapshot.visits.first?.reviewState == .needsRecheck,
+    "expected the conflict to reopen completed review attention"
+  )
+  try expect(
+    corrected.state.snapshot.reconciliationIssues == [
+      ReconciliationIssueSnapshot(
+        actionID: ActionID("action-correct-historical-project-overlap"),
+        reason: .conflict(.projectCycleWouldOverlap(routeID))
+      )
+    ],
+    "expected the conflicting command to remain visible for reconciliation"
+  )
+
+  let duplicateConflict = VisitMemory.apply(
+    .confirmNotSent(
+      actionID: ActionID("action-correct-historical-project-overlap"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 7_000),
+      source: .iPhone
+    ),
+    to: corrected.state
+  )
+  try expect(
+    duplicateConflict.outcome == corrected.outcome && duplicateConflict.state == corrected.state,
+    "expected retrying the same conflicting command to be idempotent"
+  )
+}
+
+func correctingSendAfterRouteResetKeepsTheProjectGone() throws {
+  let oldRouteID = RouteCardID("route-gone-project-replay")
+  let successorRouteID = RouteCardID("route-successor-project-replay")
+  let projectID = ProjectID("project-gone-project-replay")
+  let visitID = GymVisitID("visit-gone-project-replay")
+  let attemptID = AttemptID("attempt-gone-project-replay")
+
+  let setup: [VisitCommand] = [
+    .createRouteCard(
+      actionID: ActionID("action-create-route-gone-project-replay"),
+      routeCardID: oldRouteID,
+      label: "White slab before reset",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-start-project-gone-project-replay"),
+      projectID: projectID,
+      routeCardID: oldRouteID,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("action-start-visit-gone-project-replay"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: ActionID("action-record-gone-project-replay"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: oldRouteID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .watch
+    ),
+    .markSend(
+      actionID: ActionID("action-mark-gone-project-replay"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 4_100),
+      source: .watch
+    ),
+    .closeProjectSent(
+      actionID: ActionID("action-close-gone-project-replay"),
+      projectID: projectID,
+      supportingAttemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+    .replaceRouteAfterReset(
+      actionID: ActionID("action-reset-gone-project-replay"),
+      oldRouteCardID: oldRouteID,
+      successorRouteCardID: successorRouteID,
+      successorLabel: "Orange slab after reset",
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in setup {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let corrected = VisitMemory.apply(
+    .confirmNotSent(
+      actionID: ActionID("action-correct-gone-project-replay"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 7_000),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  try expect(corrected.outcome == .accepted, "expected the Attempt correction to be accepted")
+  try expect(
+    corrected.state.snapshot.attempts.first?.outcome == .notSent,
+    "expected the corrected Attempt projection"
+  )
+  try expect(
+    corrected.state.snapshot.projects.first?.state == .gone,
+    "expected reset availability to dominate the restored pre-send active state"
+  )
+  try expect(
+    corrected.state.snapshot.projects.first?.closedAt
+      == Instant(millisecondsSince1970: 6_000),
+    "expected the Project to retain the route-reset closure time"
+  )
+}
+
 func undoRecordAttemptConflictsWhenALaterResultDependsOnIt() throws {
   let visitID = GymVisitID("visit-undo-dependent")
   let attemptID = AttemptID("attempt-undo-dependent")
@@ -894,11 +1588,106 @@ func undoRecordAttemptConflictsWhenALaterResultDependsOnIt() throws {
     "expected Undo not to orphan a later result silently"
   )
   try expect(
-    conflict.state == state,
-    "expected dependent-action conflict to preserve both records for review")
-  try expect(
     conflict.state.snapshot.attempts.first?.recordState == .active,
     "expected Attempt to remain active until reviewed")
+  try expect(
+    conflict.state.snapshot.reconciliationIssues == [
+      ReconciliationIssueSnapshot(
+        actionID: ActionID("action-undo-record-with-dependent"),
+        reason: .conflict(.targetHasDependentActions)
+      )
+    ],
+    "expected dependent-action conflict to preserve both records for review"
+  )
+}
+
+func lateResultTargetingRetractedAttemptRequiresReview() throws {
+  let visitID = GymVisitID("visit-result-retracted-review")
+  let attemptID = AttemptID("attempt-result-retracted-review")
+  let recordActionID = ActionID("action-record-result-retracted-review")
+  let lateResultActionID = ActionID("action-late-result-retracted-review")
+
+  let setup: [VisitCommand] = [
+    .startVisit(
+      actionID: ActionID("action-start-result-retracted-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .watch
+    ),
+    .recordAttempt(
+      actionID: recordActionID,
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: nil,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .watch
+    ),
+    .undo(
+      actionID: ActionID("action-undo-result-retracted-review"),
+      targetActionID: recordActionID,
+      occurredAt: Instant(millisecondsSince1970: 2_100),
+      source: .watch
+    ),
+    .endVisit(
+      actionID: ActionID("action-end-result-retracted-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .watch
+    ),
+    .beginReview(
+      actionID: ActionID("action-begin-result-retracted-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .iPhone
+    ),
+    .completeReview(
+      actionID: ActionID("action-complete-result-retracted-review"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .iPhone
+    ),
+  ]
+
+  var state = VisitState()
+  for command in setup {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let command = VisitCommand.markSend(
+    actionID: lateResultActionID,
+    attemptID: attemptID,
+    occurredAt: Instant(millisecondsSince1970: 2_050),
+    source: .watch
+  )
+  let conflicted = VisitMemory.apply(command, to: state)
+
+  try expect(
+    conflicted.outcome == .conflict(.targetIsRetracted(attemptID)),
+    "expected a result targeting a retracted Attempt to require review"
+  )
+  try expect(
+    conflicted.state.snapshot.attempts.first?.recordState == .retracted,
+    "expected the dependent result not to restore its retracted target"
+  )
+  try expect(
+    conflicted.state.snapshot.visits.first?.reviewState == .needsRecheck,
+    "expected the late semantic conflict to reopen completed review"
+  )
+  try expect(
+    conflicted.state.snapshot.reconciliationIssues == [
+      ReconciliationIssueSnapshot(
+        actionID: lateResultActionID,
+        reason: .conflict(.targetIsRetracted(attemptID))
+      )
+    ],
+    "expected the rejected dependent intent to remain visible"
+  )
+
+  let retry = VisitMemory.apply(command, to: conflicted.state)
+  try expect(
+    retry.outcome == conflicted.outcome && retry.state == conflicted.state,
+    "expected conflict delivery retry to be idempotent"
+  )
 }
 
 func deferredCommandConflictRemainsVisibleForReview() throws {
@@ -999,6 +1788,15 @@ let specifications: [(String, () throws -> Void)] = [
     "late Attempt after completed review is preserved and needs recheck",
     lateAttemptAfterCompletedReviewIsPreservedAndNeedsRecheck
   ),
+  (
+    "late result after completed review needs recheck",
+    lateResultAfterCompletedReviewNeedsRecheck
+  ),
+  (
+    "Undo after completed review needs recheck",
+    undoAfterCompletedReviewNeedsRecheck
+  ),
+  ("an ended GymVisit ID cannot be reused", anEndedVisitIDCannotBeReused),
   ("a RouteCard can start one active Project cycle", aRouteCardCanStartOneActiveProjectCycle),
   (
     "a Project closes sent only with a sent Attempt on the same route",
@@ -1013,8 +1811,36 @@ let specifications: [(String, () throws -> Void)] = [
     undoingTheOnlySupportingSendReopensTheProjectCycle
   ),
   (
+    "Confirming the supporting Attempt not sent reopens the Project cycle",
+    confirmingTheSupportingAttemptNotSentReopensTheProjectCycle
+  ),
+  (
+    "Undoing a Not Sent correction restores the sent Project projection",
+    undoingNotSentCorrectionRestoresTheSentProjectProjection
+  ),
+  (
+    "Attempt result projection uses business time rather than arrival order",
+    attemptResultProjectionUsesBusinessTimeNotArrivalOrder
+  ),
+  (
+    "same-time opposing results require reconciliation",
+    sameTimeOpposingResultsRequireReconciliation
+  ),
+  (
+    "correcting a historical Send cannot create two active Projects",
+    correctingHistoricalSendCannotCreateTwoActiveProjects
+  ),
+  (
+    "correcting a Send after route reset keeps the Project gone",
+    correctingSendAfterRouteResetKeepsTheProjectGone
+  ),
+  (
     "Undo Record Attempt conflicts when a later result depends on it",
     undoRecordAttemptConflictsWhenALaterResultDependsOnIt
+  ),
+  (
+    "late result targeting a retracted Attempt requires review",
+    lateResultTargetingRetractedAttemptRequiresReview
   ),
   (
     "deferred command conflict remains visible for review",

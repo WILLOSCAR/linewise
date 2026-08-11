@@ -114,6 +114,7 @@ public struct VisitState: Equatable, Sendable {
   var openVisitID: GymVisitID?
   var visitsByID: [GymVisitID: GymVisitSnapshot]
   var attemptsByID: [AttemptID: AttemptSnapshot]
+  var attemptOutcomeRecordsByActionID: [ActionID: AttemptOutcomeRecord]
   var routeCardsByID: [RouteCardID: RouteCardSnapshot]
   var projectsByID: [ProjectID: ProjectSnapshot]
   var appliedCommands: [ActionID: VisitCommand]
@@ -121,12 +122,14 @@ public struct VisitState: Equatable, Sendable {
   var retractedActionIDs: Set<ActionID>
   var pendingCommands: [ActionID: VisitCommand]
   var pendingReasons: [ActionID: VisitDeferredReason]
+  var conflictingCommandsByActionID: [ActionID: VisitCommand]
   var reconciliationIssuesByActionID: [ActionID: ReconciliationIssueSnapshot]
 
   public init() {
     openVisitID = nil
     visitsByID = [:]
     attemptsByID = [:]
+    attemptOutcomeRecordsByActionID = [:]
     routeCardsByID = [:]
     projectsByID = [:]
     appliedCommands = [:]
@@ -134,6 +137,7 @@ public struct VisitState: Equatable, Sendable {
     retractedActionIDs = []
     pendingCommands = [:]
     pendingReasons = [:]
+    conflictingCommandsByActionID = [:]
     reconciliationIssuesByActionID = [:]
   }
 
@@ -251,6 +255,7 @@ public enum VisitCommand: Equatable, Sendable {
 
 public enum VisitRejection: Equatable, Sendable {
   case anotherVisitIsOpen
+  case visitAlreadyExists
   case visitDoesNotExist
   case visitIsNotOpen
   case attemptAlreadyExists
@@ -273,6 +278,9 @@ public enum VisitRejection: Equatable, Sendable {
 
 public enum VisitConflict: Equatable, Sendable {
   case actionIDReused
+  case ambiguousAttemptOutcome(AttemptID)
+  case projectCycleWouldOverlap(RouteCardID)
+  case targetIsRetracted(AttemptID)
   case targetHasDependentActions
 }
 
@@ -332,6 +340,18 @@ public enum VisitMemory {
           state.pendingReasons[command.actionID] ?? .missingAction(command.actionID))
       )
     }
+    if let conflicting = state.conflictingCommandsByActionID[command.actionID] {
+      guard conflicting == command else {
+        return VisitTransition(state: state, outcome: .conflict(.actionIDReused))
+      }
+      guard
+        let issue = state.reconciliationIssuesByActionID[command.actionID],
+        case .conflict(let conflict) = issue.reason
+      else {
+        return VisitTransition(state: state, outcome: .conflict(.actionIDReused))
+      }
+      return VisitTransition(state: state, outcome: .conflict(conflict))
+    }
 
     var next = state
     let effect: AppliedEffect
@@ -340,6 +360,9 @@ public enum VisitMemory {
     case .startVisit(_, let visitID, let occurredAt, let source):
       guard next.openVisitID == nil else {
         return VisitTransition(state: state, outcome: .rejected(.anotherVisitIsOpen))
+      }
+      guard next.visitsByID[visitID] == nil else {
+        return VisitTransition(state: state, outcome: .rejected(.visitAlreadyExists))
       }
       next.openVisitID = visitID
       next.visitsByID[visitID] = GymVisitSnapshot(
@@ -375,57 +398,70 @@ public enum VisitMemory {
         recordState: .active,
         outcome: .unresolved
       )
-      if visit.reviewState == .reviewed {
-        next.visitsByID[visitID] = GymVisitSnapshot(
-          id: visit.id,
-          startedAt: visit.startedAt,
-          endedAt: visit.endedAt,
-          startedBy: visit.startedBy,
-          captureState: visit.captureState,
-          reviewState: .needsRecheck
-        )
-      }
+      markVisitNeedsRecheckIfReviewed(visitID, in: &next)
       effect = .attemptRecorded(attemptID)
 
-    case .markSend(_, let attemptID, _, _):
+    case .markSend(let actionID, let attemptID, let occurredAt, _):
       guard let attempt = next.attemptsByID[attemptID] else {
         return deferred(command, reason: .missingAttempt(attemptID), from: state)
       }
       guard attempt.recordState == .active else {
-        return VisitTransition(state: state, outcome: .rejected(.attemptIsRetracted))
+        return preservedConflict(
+          command,
+          reason: .targetIsRetracted(attemptID),
+          visitID: attempt.visitID,
+          from: state
+        )
       }
 
-      let previousOutcome = attempt.outcome
-      next.attemptsByID[attemptID] = AttemptSnapshot(
-        id: attempt.id,
-        visitID: attempt.visitID,
-        routeCardID: attempt.routeCardID,
-        occurredAt: attempt.occurredAt,
-        recordedBy: attempt.recordedBy,
-        recordState: attempt.recordState,
-        outcome: .sent
+      next.attemptOutcomeRecordsByActionID[actionID] = AttemptOutcomeRecord(
+        actionID: actionID,
+        attemptID: attemptID,
+        outcome: .sent,
+        occurredAt: occurredAt
       )
-      effect = .outcomeChanged(attemptID: attemptID, previous: previousOutcome)
+      reprojectAttemptOutcome(attemptID, in: &next)
+      if let routeCardID = routeCardWithOverlappingActiveProjects(in: next) {
+        return preservedConflict(
+          command,
+          reason: .projectCycleWouldOverlap(routeCardID),
+          visitID: attempt.visitID,
+          from: state
+        )
+      }
+      markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
+      effect = .outcomeRecorded(attemptID)
 
-    case .confirmNotSent(_, let attemptID, _, _):
+    case .confirmNotSent(let actionID, let attemptID, let occurredAt, _):
       guard let attempt = next.attemptsByID[attemptID] else {
         return deferred(command, reason: .missingAttempt(attemptID), from: state)
       }
       guard attempt.recordState == .active else {
-        return VisitTransition(state: state, outcome: .rejected(.attemptIsRetracted))
+        return preservedConflict(
+          command,
+          reason: .targetIsRetracted(attemptID),
+          visitID: attempt.visitID,
+          from: state
+        )
       }
 
-      let previousOutcome = attempt.outcome
-      next.attemptsByID[attemptID] = AttemptSnapshot(
-        id: attempt.id,
-        visitID: attempt.visitID,
-        routeCardID: attempt.routeCardID,
-        occurredAt: attempt.occurredAt,
-        recordedBy: attempt.recordedBy,
-        recordState: attempt.recordState,
-        outcome: .notSent
+      next.attemptOutcomeRecordsByActionID[actionID] = AttemptOutcomeRecord(
+        actionID: actionID,
+        attemptID: attemptID,
+        outcome: .notSent,
+        occurredAt: occurredAt
       )
-      effect = .outcomeChanged(attemptID: attemptID, previous: previousOutcome)
+      reprojectAttemptOutcome(attemptID, in: &next)
+      if let routeCardID = routeCardWithOverlappingActiveProjects(in: next) {
+        return preservedConflict(
+          command,
+          reason: .projectCycleWouldOverlap(routeCardID),
+          visitID: attempt.visitID,
+          from: state
+        )
+      }
+      markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
+      effect = .outcomeRecorded(attemptID)
 
     case .undo(_, let targetActionID, _, _):
       guard !next.retractedActionIDs.contains(targetActionID) else {
@@ -434,13 +470,19 @@ public enum VisitMemory {
       guard let targetEffect = next.appliedEffects[targetActionID] else {
         return deferred(command, reason: .missingAction(targetActionID), from: state)
       }
-      guard
-        !hasDependentActions(
-          on: targetEffect,
-          targetActionID: targetActionID,
-          in: next
-        )
-      else {
+      if hasDependentActions(
+        on: targetEffect,
+        targetActionID: targetActionID,
+        in: next
+      ) {
+        if let visitID = affectedVisitID(for: targetEffect, in: next) {
+          return preservedConflict(
+            command,
+            reason: .targetHasDependentActions,
+            visitID: visitID,
+            from: state
+          )
+        }
         return VisitTransition(state: state, outcome: .conflict(.targetHasDependentActions))
       }
 
@@ -458,24 +500,32 @@ public enum VisitMemory {
           recordState: .retracted,
           outcome: attempt.outcome
         )
-        reopenProjectsSupportedBy(attemptID, in: &next)
+        reprojectProjects(in: &next)
+        if let routeCardID = routeCardWithOverlappingActiveProjects(in: next) {
+          return preservedConflict(
+            command,
+            reason: .projectCycleWouldOverlap(routeCardID),
+            visitID: attempt.visitID,
+            from: state
+          )
+        }
+        markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
 
-      case .outcomeChanged(let attemptID, let previousOutcome):
+      case .outcomeRecorded(let attemptID):
         guard let attempt = next.attemptsByID[attemptID] else {
           return VisitTransition(state: state, outcome: .rejected(.attemptDoesNotExist))
         }
-        next.attemptsByID[attemptID] = AttemptSnapshot(
-          id: attempt.id,
-          visitID: attempt.visitID,
-          routeCardID: attempt.routeCardID,
-          occurredAt: attempt.occurredAt,
-          recordedBy: attempt.recordedBy,
-          recordState: attempt.recordState,
-          outcome: previousOutcome
-        )
-        if previousOutcome != .sent {
-          reopenProjectsSupportedBy(attemptID, in: &next)
+        next.retractedActionIDs.insert(targetActionID)
+        reprojectAttemptOutcome(attemptID, in: &next)
+        if let routeCardID = routeCardWithOverlappingActiveProjects(in: next) {
+          return preservedConflict(
+            command,
+            reason: .projectCycleWouldOverlap(routeCardID),
+            visitID: attempt.visitID,
+            from: state
+          )
         }
+        markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
 
       case .visitStarted, .visitEnded, .reviewStateChanged, .routeCardCreated, .routeReplaced,
         .projectStarted, .projectClosed, .undo:
@@ -680,6 +730,22 @@ public enum VisitMemory {
     return VisitTransition(state: next, outcome: .deferred(reason))
   }
 
+  private static func preservedConflict(
+    _ command: VisitCommand,
+    reason: VisitConflict,
+    visitID: GymVisitID,
+    from state: VisitState
+  ) -> VisitTransition {
+    var next = state
+    next.conflictingCommandsByActionID[command.actionID] = command
+    next.reconciliationIssuesByActionID[command.actionID] = ReconciliationIssueSnapshot(
+      actionID: command.actionID,
+      reason: .conflict(reason)
+    )
+    markVisitNeedsRecheckIfReviewed(visitID, in: &next)
+    return VisitTransition(state: next, outcome: .conflict(reason))
+  }
+
   private static func drainingPending(from state: VisitState) -> VisitState {
     var next = state
     let candidates = next.pendingCommands.values.sorted {
@@ -713,23 +779,148 @@ public enum VisitMemory {
     return next
   }
 
-  private static func reopenProjectsSupportedBy(
+  private static func reprojectAttemptOutcome(
     _ attemptID: AttemptID,
     in state: inout VisitState
   ) {
-    for project in state.projectsByID.values
-    where
-      project.state == .sent && project.supportingAttemptID == attemptID
+    guard let attempt = state.attemptsByID[attemptID] else {
+      return
+    }
+
+    let activeRecords =
+      state.attemptOutcomeRecordsByActionID.values
+      .filter {
+        $0.attemptID == attemptID && !state.retractedActionIDs.contains($0.actionID)
+      }
+
+    let latestOccurredAt = activeRecords.map(\.occurredAt).max()
+    let latestRecords = activeRecords.filter { $0.occurredAt == latestOccurredAt }
+    let firstOutcome = latestRecords.first?.outcome
+    let hasAmbiguousOutcome = latestRecords.contains { $0.outcome != firstOutcome }
+    let currentOutcome = hasAmbiguousOutcome ? .unresolved : firstOutcome ?? .unresolved
+
+    let previousAmbiguityIssueIDs = state.reconciliationIssuesByActionID.compactMap {
+      actionID, issue -> ActionID? in
+      guard
+        case .conflict(.ambiguousAttemptOutcome(let issueAttemptID)) = issue.reason,
+        issueAttemptID == attemptID
+      else {
+        return nil
+      }
+      return actionID
+    }
+    for actionID in previousAmbiguityIssueIDs {
+      state.reconciliationIssuesByActionID[actionID] = nil
+    }
+    if hasAmbiguousOutcome,
+      let issueActionID = latestRecords.map(\.actionID).max(by: {
+        $0.rawValue < $1.rawValue
+      })
     {
+      state.reconciliationIssuesByActionID[issueActionID] = ReconciliationIssueSnapshot(
+        actionID: issueActionID,
+        reason: .conflict(.ambiguousAttemptOutcome(attemptID))
+      )
+    }
+
+    state.attemptsByID[attemptID] = AttemptSnapshot(
+      id: attempt.id,
+      visitID: attempt.visitID,
+      routeCardID: attempt.routeCardID,
+      occurredAt: attempt.occurredAt,
+      recordedBy: attempt.recordedBy,
+      recordState: attempt.recordState,
+      outcome: currentOutcome
+    )
+
+    reprojectProjects(in: &state)
+  }
+
+  private static func reprojectProjects(in state: inout VisitState) {
+    let projects = Array(state.projectsByID.values)
+
+    for project in projects where project.state != .archived {
+      let closureCommands = state.appliedCommands.values.filter { command in
+        guard
+          case .closeProjectSent(let actionID, let projectID, _, _, _) = command,
+          projectID == project.id,
+          !state.retractedActionIDs.contains(actionID)
+        else {
+          return false
+        }
+        return true
+      }
+      let latestClosure = closureCommands.max(by: {
+        if $0.occurredAt != $1.occurredAt {
+          return $0.occurredAt < $1.occurredAt
+        }
+        return $0.actionID.rawValue < $1.actionID.rawValue
+      })
+
+      var supportingAttemptID: AttemptID?
+      var sentAt: Instant?
+      if let latestClosure,
+        case .closeProjectSent(_, _, let attemptID, let closedAt, _) = latestClosure
+      {
+        supportingAttemptID = attemptID
+        sentAt = closedAt
+      }
+      let supportingAttempt = supportingAttemptID.flatMap { state.attemptsByID[$0] }
+      let hasValidSupport =
+        supportingAttempt?.recordState == .active
+        && supportingAttempt?.outcome == .sent
+        && supportingAttempt?.routeCardID == project.routeCardID
+
+      let routeIsGone = state.routeCardsByID[project.routeCardID]?.availability == .gone
+      let resetAt = state.appliedCommands.values
+        .filter { command in
+          guard case .replaceRouteAfterReset(_, let oldRouteCardID, _, _, _, _) = command else {
+            return false
+          }
+          return oldRouteCardID == project.routeCardID
+        }
+        .map(\.occurredAt)
+        .max()
+
+      let projectedState: ProjectState = hasValidSupport ? .sent : routeIsGone ? .gone : .active
       state.projectsByID[project.id] = ProjectSnapshot(
         id: project.id,
         routeCardID: project.routeCardID,
-        state: .active,
+        state: projectedState,
         startedAt: project.startedAt,
-        closedAt: nil,
-        supportingAttemptID: nil
+        closedAt: hasValidSupport ? sentAt : routeIsGone ? resetAt : nil,
+        supportingAttemptID: hasValidSupport ? supportingAttemptID : nil
       )
     }
+  }
+
+  private static func routeCardWithOverlappingActiveProjects(
+    in state: VisitState
+  ) -> RouteCardID? {
+    var seenRouteCardIDs: Set<RouteCardID> = []
+    for project in state.projectsByID.values where project.state == .active {
+      guard seenRouteCardIDs.insert(project.routeCardID).inserted else {
+        return project.routeCardID
+      }
+    }
+    return nil
+  }
+
+  private static func markVisitNeedsRecheckIfReviewed(
+    _ visitID: GymVisitID,
+    in state: inout VisitState
+  ) {
+    guard let visit = state.visitsByID[visitID], visit.reviewState == .reviewed else {
+      return
+    }
+    state.visitsByID[visitID] = GymVisitSnapshot(
+      id: visit.id,
+      startedAt: visit.startedAt,
+      endedAt: visit.endedAt,
+      startedBy: visit.startedBy,
+      captureState: visit.captureState,
+      reviewState: .needsRecheck
+    )
   }
 
   private static func hasDependentActions(
@@ -744,7 +935,7 @@ public enum VisitMemory {
     case .attemptRecorded(let attemptID):
       targetAttemptID = attemptID
       onlyActionsAfterTarget = false
-    case .outcomeChanged(let attemptID, _):
+    case .outcomeRecorded(let attemptID):
       targetAttemptID = attemptID
       onlyActionsAfterTarget = true
     default:
@@ -755,7 +946,7 @@ public enum VisitMemory {
     let hasAppliedResult = state.appliedEffects.contains { actionID, effect in
       guard actionID != targetActionID,
         !state.retractedActionIDs.contains(actionID),
-        case .outcomeChanged(let attemptID, _) = effect,
+        case .outcomeRecorded(let attemptID) = effect,
         attemptID == targetAttemptID
       else {
         return false
@@ -778,6 +969,20 @@ public enum VisitMemory {
         false
       }
     }
+  }
+
+  private static func affectedVisitID(
+    for effect: AppliedEffect,
+    in state: VisitState
+  ) -> GymVisitID? {
+    let attemptID: AttemptID
+    switch effect {
+    case .attemptRecorded(let id), .outcomeRecorded(let id):
+      attemptID = id
+    default:
+      return nil
+    }
+    return state.attemptsByID[attemptID]?.visitID
   }
 }
 
@@ -828,6 +1033,13 @@ enum AppliedEffect: Equatable, Sendable {
   case projectStarted(ProjectID)
   case projectClosed(ProjectID)
   case attemptRecorded(AttemptID)
-  case outcomeChanged(attemptID: AttemptID, previous: AttemptOutcome)
+  case outcomeRecorded(AttemptID)
   case undo(ActionID)
+}
+
+struct AttemptOutcomeRecord: Equatable, Sendable {
+  let actionID: ActionID
+  let attemptID: AttemptID
+  let outcome: AttemptOutcome
+  let occurredAt: Instant
 }
