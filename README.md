@@ -29,15 +29,16 @@ The broader product vision now has five pillars:
 4. 定线解析: routesetter-lens interpretation of movement, key difficulty, wall style, and training intent.
 5. 教学与训练: route-failure-driven videos, drills, and functional training paths.
 
-P0 remains deliberately narrower:
+P0 remains deliberately narrower as a production contract, while Intelligence Nursery probes may run in parallel:
 
-> Prove the manual-first `capture -> quick review -> next-session recall` loop before adding AI route reading, automated photo analysis, Smart Stack, video, coach workflows, or training-platform expansion.
+> Prove the manual-first `capture -> quick review -> next-session recall` loop as the reliable product core. Promote AI route reading, automated photo analysis, video, coach workflows, or training-platform expansion only through their own evidence gates.
 
 ## Active Docs
 
 | File | Role |
 | --- | --- |
 | `CONTEXT.md` | Concise single-context product and domain source of truth for future agents |
+| `docs/linewise_ai_route_rehearsal_requirements_v0.md` | Intelligence Nursery requirements for AI route reading, personalized body rehearsal, continuous animation, and single-step debugging |
 | `docs/project_background.md` | Project background, market gap, strategy, and product principles |
 | `docs/climbing_bouldering_prd_v0_1.md` | Active P0/P0.5 requirements contract |
 | `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and field validation metrics |

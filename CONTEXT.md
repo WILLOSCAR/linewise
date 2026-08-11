@@ -14,7 +14,7 @@ The current P0 frame is still a **Gym Visit Memory System**: Watch captures low-
 - iPhone owns route cards, subjective grade, failure reasons, movement cues, session review, and next-session recall.
 - Automation must be phrased as `suggested`, not `detected`. User correction is part of the trust model.
 - HealthKit, heart rate, and motion data are supporting evidence. Do not make medical, safety, fatigue, or precise calorie claims.
-- P0 should prove the manual-first `route/project -> attempt/rest -> review -> next-session recall` loop before AI route reading, video analysis, partner matching, teaching content, or gym integration.
+- P0 should prove the manual-first `route/project -> attempt/rest -> review -> next-session recall` loop before AI route reading, video analysis, partner matching, teaching content, or gym integration become production dependencies. Intelligence Nursery probes may run in parallel.
 - The long-term product may include AI route reading, stick-figure movement visualization, routesetter-lens analysis, teaching/training, and climbing partner workflows, but these must remain separate modules until validated.
 - Canonical P0 chain: `GymVisit -> RouteCard -> Attempt -> FailureEpisode -> MoveCue -> NextSessionCue`.
 
@@ -37,7 +37,7 @@ The current P0 frame is still a **Gym Visit Memory System**: Watch captures low-
 | `SuggestionProvenance` | Thin metadata that records why something was suggested, such as source, confidence, and whether the user accepted, edited, or rejected it. |
 | `CorrectionEvent` | A user correction to an event, annotation, route, or suggestion. Corrections are product trust data, not just cleanup. |
 | `RouteRead` | An AI-assisted interpretation of a route photo, including hold grouping, start/top candidates, movement hypotheses, and possible movement cues. It is a suggestion, not ground truth. |
-| `StickFigureCue` | A playful visual explanation that places a simple body model or motion path onto the route to explain sequencing and movement. |
+| `StickFigureCue` | A short shareable visual excerpt, normally one to three movement steps, taken from an editable RouteRehearsal to explain one crux or movement idea. |
 | `SetterLens` | An analysis view that explains a route from a routesetter's perspective: intended movement, key difficulty, constraint, wall style, and skill focus. |
 | `TrainingPath` | A structured learning path that connects route failures to teaching videos, movement drills, strength/mobility work, and next-session practice. |
 | `ProofCheck` | A small next-session validation prompt that asks whether a MoveCue or drill helped on the route. |
@@ -45,8 +45,51 @@ The current P0 frame is still a **Gym Visit Memory System**: Watch captures low-
 | `ClimbingBuddy` | A companion layer that may mean an AI assistant, a human climbing partner, or both. Do not collapse these into one feature without specifying which one is being designed. |
 | `PersonalClimbingDataset` | The user's local-first collection of route photos, attempt outcomes, movement cues, Watch data, and optional videos. It exists to make future AI and training features more reliable. |
 
+## AI Route Rehearsal Language
+
+**RouteScene**:
+An editable representation of a wall and selected route recovered from photos, video, or a future spatial scan. It contains holds, volumes, route roles, scale, geometry assumptions, and corrections.
+_Avoid_: Route map, official route truth
+
+**BodyProfile**:
+A local-first description of the user's body proportions and optional movement preferences used to size a rehearsal skeleton. It is not a medical or capability assessment.
+_Avoid_: Body diagnosis, fitness profile
+
+**ClimberAvatar**:
+The articulated visual body derived from a BodyProfile and placed into a RouteScene.
+_Avoid_: Digital twin, exact body replica
+
+**LimbContact**:
+The explicit relationship between LH, RH, LF, or RF and a hold, volume, wall region, ground, free state, or unknown state at one moment.
+_Avoid_: Grip point
+
+**MoveSequence**:
+The symbolic ordered plan of which limb changes to which contact target and which contacts stay locked. It does not by itself define a whole-body pose.
+_Avoid_: Correct beta, final solution
+
+**PoseKeyframe**:
+A meaningful whole-body climbing pose with explicit limb contacts, torso placement, solver confidence, and unresolved constraint findings.
+_Avoid_: Screenshot, animation frame
+
+**MovementStep**:
+The transition between two PoseKeyframes, including contacts gained, released, and retained plus a qualitative explanation.
+_Avoid_: Frame
+
+**MovementHypothesis**:
+One candidate interpretation of how a person could climb a route. Several hypotheses may coexist for different body proportions, styles, or uncertainties.
+_Avoid_: Solution, answer
+
+**RouteRehearsal**:
+An editable and playable sequence of PoseKeyframes and MovementSteps over a RouteScene for one BodyProfile.
+_Avoid_: Simulation truth, guaranteed beta
+
+**ConstraintFinding**:
+A qualitative warning or unresolved assumption about reach, joint range, contact, collision, geometry, or downstream validity. It is not a safety judgment.
+_Avoid_: Safety alert, injury risk
+
 ## Active Product Docs
 
+- `docs/linewise_ai_route_rehearsal_requirements_v0.md`: active Intelligence Nursery requirements for RouteRead, personalized avatar rehearsal, keyframes, animation, and single-step debugging; not a P0 release dependency.
 - `docs/project_background.md`: active project background and strategic framing for new collaborators.
 - `docs/climbing_bouldering_prd_v0_1.md`: active P0/P0.5 requirements contract.
 - `docs/climbing_bouldering_mvp_gate.md`: active Go/No-Go gates and validation metrics.
