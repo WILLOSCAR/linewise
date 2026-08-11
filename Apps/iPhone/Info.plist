@@ -12,5 +12,11 @@
   <string>LineWise uses the camera only when you choose to capture a private route photo.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>LineWise imports only the route photo you explicitly select for your private climbing record.</string>
+  <key>LineWiseRouteReadEndpoint</key>
+  <string>$(LINEWISE_ROUTE_READ_ENDPOINT)</string>
+  <key>LineWiseRouteReadProvider</key>
+  <string>$(LINEWISE_ROUTE_READ_PROVIDER_ID)</string>
+  <key>LineWiseRouteReadProviderVersion</key>
+  <string>$(LINEWISE_ROUTE_READ_PROVIDER_VERSION)</string>
 </dict>
 </plist>

@@ -542,6 +542,197 @@ private func importCannotBundleModelConsentOrUseRevokedStorageConsent() async th
   }
 }
 
+@MainActor
+private func routeReadActionRequiresConsentThenDeliversSuggestedCallback() async throws {
+  let rootDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("linewise-media-surface-\(UUID().uuidString)", isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: rootDirectory) }
+  let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+  let stored = try await library.importSource(
+    RouteMediaImportRequest(
+      assetID: RouteMediaAssetID("surface-route-read"),
+      routeCardID: RouteCardID("surface-route"),
+      data: onePixelPNG,
+      kind: .routePhoto,
+      mimeType: "image/png",
+      purpose: .routeReference,
+      consent: MediaConsent(
+        status: .granted,
+        scope: .storageOnly,
+        recordedAt: Instant(millisecondsSince1970: 100)
+      ),
+      capturedAt: Instant(millisecondsSince1970: 90),
+      captureDeviceClass: .phone,
+      captureMethod: .photoLibraryImport,
+      retention: .keepUntilUserDeletes
+    )
+  )
+  let suggested = routeMediaSurfaceResult()
+  let provider = LoadingRouteMediaProvider(loader: library, result: suggested)
+  var callbackResult: RouteReadResult?
+  let controller = RouteMediaReadSurfaceController(provider: provider) { result in
+    callbackResult = result
+  }
+  let routeRead = routeMediaSurfaceRequest()
+
+  try expect(!controller.canRun(with: stored), "storage consent must not expose Run route read")
+  let gated = await controller.run(asset: stored, routeRead: routeRead)
+  try expect(
+    gated == .rejected(.consentScopeMismatch(actual: .storageOnly)),
+    "storage consent should remain separate from model processing"
+  )
+  let gatedCallCount = await provider.callCount
+  try expect(gatedCallCount == 0, "consent gating must happen before provider or bytes")
+
+  let authorized = try await library.grantModelProcessingConsent(
+    for: stored.id,
+    at: Instant(millisecondsSince1970: 200)
+  )
+  try expect(controller.canRun(with: authorized), "separate model consent should unlock Run")
+  let consentOnlyCallCount = await provider.callCount
+  try expect(consentOnlyCallCount == 0, "granting consent alone must not call or upload")
+
+  let outcome = await controller.run(asset: authorized, routeRead: routeRead)
+  try expect(outcome == .accepted(suggested), "explicit Run should return the provider result")
+  let completedCallCount = await provider.callCount
+  let loadedBytes = await provider.loadedBytes
+  try expect(completedCallCount == 1, "explicit Run should invoke the provider once")
+  try expect(loadedBytes == onePixelPNG, "provider should load registered library bytes")
+  try expect(callbackResult == suggested, "suggested scene should cross the surface callback")
+  try expect(
+    controller.lastResult?.provenance.authorship == .suggested
+      && controller.lastResult?.provenance.automation == .modelAdapter,
+    "surface should expose honest suggested model provenance"
+  )
+  try expect(controller.errorMessage == nil, "successful route read should clear error state")
+}
+
+@MainActor
+private func routeReadActionSurfacesProviderFailureWithoutCallback() async throws {
+  let asset = routeMediaSurfaceAsset()
+  var callbackCount = 0
+  let controller = RouteMediaReadSurfaceController(
+    provider: FailingRouteMediaProvider()
+  ) { _ in
+    callbackCount += 1
+  }
+
+  let outcome = await controller.run(asset: asset, routeRead: routeMediaSurfaceRequest())
+
+  guard case .rejected(.providerFailed(let message)) = outcome else {
+    throw AppleAdapterSpecFailure.expected("expected explicit provider failure")
+  }
+  try expect(message.contains("fixture model unavailable"), "provider failure should be visible")
+  try expect(callbackCount == 0, "failed provider must not emit a route-read callback")
+  try expect(controller.lastResult == nil, "failed provider must not retain a result")
+  try expect(
+    controller.errorMessage?.contains("fixture model unavailable") == true,
+    "surface should retain a visible error message"
+  )
+}
+
+private actor LoadingRouteMediaProvider: RouteMediaReadProviding {
+  nonisolated let identifier = "loading-route-media-fixture"
+  private let loader: any RouteMediaDataLoader
+  private let result: RouteReadResult
+  private(set) var callCount = 0
+  private(set) var loadedBytes: Data?
+
+  init(loader: any RouteMediaDataLoader, result: RouteReadResult) {
+    self.loader = loader
+    self.result = result
+  }
+
+  func read(_ request: RouteMediaReadRequest) async throws -> RouteReadResult {
+    callCount += 1
+    guard let asset = request.assets.first else {
+      throw AppleAdapterSpecFailure.expected("missing route media")
+    }
+    loadedBytes = try await loader.loadData(for: asset.localReference)
+    return result
+  }
+}
+
+private struct FailingRouteMediaProvider: RouteMediaReadProviding {
+  let identifier = "failing-route-media-fixture"
+
+  func read(_ request: RouteMediaReadRequest) async throws -> RouteReadResult {
+    throw RouteMediaSurfaceFixtureError.unavailable
+  }
+}
+
+private enum RouteMediaSurfaceFixtureError: Error, LocalizedError {
+  case unavailable
+
+  var errorDescription: String? { "fixture model unavailable" }
+}
+
+private func routeMediaSurfaceRequest() -> RouteReadRequest {
+  RouteReadRequest(
+    sceneID: RouteSceneID("surface-scene"),
+    name: "Surface route",
+    size: SceneSize(width: 1, height: 1),
+    metersPerSceneUnit: nil,
+    candidateHolds: []
+  )
+}
+
+private func routeMediaSurfaceResult() -> RouteReadResult {
+  RouteReadResult(
+    scene: RouteScene(
+      id: RouteSceneID("surface-scene"),
+      name: "Suggested surface route",
+      size: SceneSize(width: 1, height: 1),
+      metersPerSceneUnit: nil,
+      holds: [
+        Hold(
+          id: HoldID("suggested-start"),
+          center: Point2D(x: 0.5, y: 0.8),
+          radius: 0.1,
+          routeRole: .start
+        )
+      ]
+    ),
+    provenance: RehearsalProvenance(
+      authorship: .suggested,
+      automation: .modelAdapter,
+      providerIdentifier: "fixture-model",
+      version: "1"
+    )
+  )
+}
+
+private func routeMediaSurfaceAsset() -> RouteMediaAsset {
+  RouteMediaAsset(
+    id: RouteMediaAssetID("failure-asset"),
+    routeCardID: RouteCardID("surface-route"),
+    localReference: LocalMediaReference(
+      fileIdentifier: "failure-file",
+      sandboxRelativePath: "media/source/failure-file.png"
+    ),
+    kind: .routePhoto,
+    mimeType: "image/png",
+    byteCount: 1,
+    dimensions: MediaDimensions(pixelWidth: 1, pixelHeight: 1),
+    contentDigest: MediaContentDigest(algorithm: .sha256, hexValue: "fixture"),
+    purpose: .routeReference,
+    consent: MediaConsent(
+      status: .granted,
+      scope: .explicitModelProcessing,
+      recordedAt: Instant(millisecondsSince1970: 200)
+    ),
+    captureProvenance: MediaCaptureProvenance(
+      capturedAt: Instant(millisecondsSince1970: 100),
+      deviceClass: .phone,
+      method: .photoLibraryImport,
+      importedByUser: true
+    ),
+    origin: .source,
+    quality: .unreviewed,
+    retention: .keepUntilUserDeletes
+  )
+}
+
 func runRouteMediaLibrarySpecifications() async throws -> Int {
   try await importedMediaReopensAndLoadsOnlyRegisteredBytes()
   try await sourceAndDerivedMediaRemainSeparateWithLineage()
@@ -553,5 +744,7 @@ func runRouteMediaLibrarySpecifications() async throws -> Int {
   try await loaderRejectsTraversalAndSymlinkEscapes()
   try await failedManifestWriteLeavesNoRegisteredAssetOrStagedBytes()
   try await importCannotBundleModelConsentOrUseRevokedStorageConsent()
-  return 10
+  try await routeReadActionRequiresConsentThenDeliversSuggestedCallback()
+  try await routeReadActionSurfacesProviderFailureWithoutCallback()
+  return 12
 }

@@ -7,7 +7,102 @@ import LineWiseDomain
 func runLearningExperienceSurfaceSpecifications() async throws -> Int {
   try await qualitativeReadingAndTrainingPathCompleteThroughPublicSurface()
   try await persistenceFailureKeepsThePendingReadingVisible()
-  return 2
+  try suggestedRouteReadAndAttemptLinkedActualUsePublicSurface()
+  return 3
+}
+
+@MainActor
+private func suggestedRouteReadAndAttemptLinkedActualUsePublicSurface() throws {
+  let model = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(
+      store: MemoryExperienceArchiveStore()
+    )
+  )
+  let routeID = RouteCardID("media-surface-route")
+  let visitID = GymVisitID("media-surface-visit")
+  let attemptID = AttemptID("media-surface-attempt")
+  try expect(
+    model.createRoute(label: "Media route", routeCardID: routeID, at: learningSurfaceInstant(40)),
+    "expected media route"
+  )
+  try expect(model.startVisit(visitID: visitID, at: learningSurfaceInstant(41)), "expected visit")
+  try expect(
+    model.recordAttempt(attemptID: attemptID, at: learningSurfaceInstant(42)),
+    "expected Attempt for Actual draft"
+  )
+
+  let scene = RouteScene(
+    id: RouteSceneID("media-surface-scene"),
+    name: "Suggested media scene",
+    size: SceneSize(width: 1_000, height: 1_600),
+    metersPerSceneUnit: nil,
+    holds: [
+      Hold(
+        id: HoldID("media-surface-start"),
+        center: Point2D(x: 300, y: 1_300),
+        radius: 45,
+        routeRole: .start
+      ),
+      Hold(
+        id: HoldID("media-surface-top"),
+        center: Point2D(x: 650, y: 200),
+        radius: 45,
+        routeRole: .top
+      ),
+    ]
+  )
+  let provenance = RehearsalProvenance(
+    authorship: .suggested,
+    automation: .modelAdapter,
+    providerIdentifier: "surface-model",
+    version: "1"
+  )
+  let suggestedID = RouteRehearsalID("media-surface-suggested")
+  try expect(
+    model.attachSuggestedRouteRead(
+      RouteReadResult(scene: scene, provenance: provenance),
+      routeCardID: routeID,
+      plannedVisitID: visitID,
+      rehearsalID: suggestedID
+    ),
+    "expected the media callback to attach a suggested rehearsal"
+  )
+  let suggestedEditor = try requireLearningSurfaceValue(
+    model.rehearsalEditorModel(for: suggestedID),
+    "expected suggested editor"
+  )
+  try expect(
+    suggestedEditor.projection.routeReadProvenance == provenance,
+    "the public editor must preserve media route-read provenance"
+  )
+  try expect(
+    model.saveRehearsalEdits(suggestedID),
+    "a plan-only suggested rehearsal must save without inventing Actual frames"
+  )
+
+  let actualID = RouteRehearsalID("media-surface-actual")
+  try expect(
+    model.createManualRehearsalStarter(
+      routeCardID: routeID,
+      plannedVisitID: visitID,
+      actualAttemptID: attemptID,
+      rehearsalID: actualID
+    ),
+    "expected an Attempt-linked rehearsal"
+  )
+  let actualEditor = try requireLearningSurfaceValue(
+    model.rehearsalEditorModel(for: actualID),
+    "expected Attempt-linked editor"
+  )
+  actualEditor.copyPlanIntoActualDraft()
+  try expect(
+    actualEditor.projection.activeTrack == .actual
+      && actualEditor.projection.keyframes.allSatisfy {
+        $0.provenance.authorship == .userAuthored && $0.provenance.automation == .manual
+      },
+    "Plan copy must become a user-authored Actual draft"
+  )
+  try expect(model.saveRehearsalEdits(actualID), "expected Actual draft save")
 }
 
 @MainActor

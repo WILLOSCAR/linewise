@@ -8,7 +8,97 @@ func runExperienceSurfaceSpecifications() async throws -> Int {
   try manualReviewRemainsExplicitAndReopensTheNextSessionCue()
   try await lifecyclePhysiologyAndManualRehearsalRemainAvailableWithoutAI()
   try reviewBranchesAndPersistenceFailuresStayHonest()
-  return 3
+  try syncedEndedVisitRestoresReviewInboxAndCanBeginReview()
+  return 4
+}
+
+@MainActor
+private func syncedEndedVisitRestoresReviewInboxAndCanBeginReview() throws {
+  let repository = try VisitRepository(
+    store: MemoryVisitEventStore(),
+    localDeviceID: DeviceID("iphone-synced-review-surface")
+  )
+  let archiveStore = MemoryExperienceArchiveStore()
+  let model = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(
+      store: archiveStore,
+      repository: repository
+    )
+  )
+  var syncSide = LineWiseAppCoordinator(repository: repository)
+  let routeID = RouteCardID("route-synced-review-surface")
+  let visitID = GymVisitID("visit-synced-review-surface")
+  let attemptID = AttemptID("attempt-synced-review-surface")
+  let intents: [LineWiseAppIntent] = [
+    .createRoute(
+      actionID: ActionID("create-synced-review-surface"),
+      routeCardID: routeID,
+      label: "Synced orange route",
+      availability: .present,
+      occurredAt: surfaceInstant(70),
+      source: .watch
+    ),
+    .startVisit(
+      actionID: ActionID("start-synced-review-surface"),
+      visitID: visitID,
+      occurredAt: surfaceInstant(71),
+      source: .watch
+    ),
+    .selectRoute(routeID),
+    .recordAttempt(
+      actionID: ActionID("attempt-synced-review-surface"),
+      attemptID: attemptID,
+      occurredAt: surfaceInstant(72),
+      source: .watch
+    ),
+    .endVisit(
+      actionID: ActionID("end-synced-review-surface"),
+      occurredAt: surfaceInstant(73),
+      source: .watch
+    ),
+  ]
+  for intent in intents {
+    try expect(syncSide.handle(intent).isSuccess, "expected synced surface setup: \(intent)")
+  }
+
+  try expect(model.pendingReviewItems.isEmpty, "expected the experience surface to start stale")
+  model.refreshFromPersistence()
+  try expect(
+    model.pendingReviewItems.map(\.id)
+      == [ReviewInboxItemID("unresolved/attempt-synced-review-surface")],
+    "refresh must reconcile the ended Watch Visit into the iPhone Review Inbox"
+  )
+
+  let failingModel = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(
+      store: AlwaysFailingExperienceStore(),
+      repository: repository
+    )
+  )
+  failingModel.refreshFromPersistence()
+  if case .persistence(let message) = failingModel.issue {
+    try expect(
+      message.localizedCaseInsensitiveContains("review inbox"),
+      "the failed reconciliation should identify the unsaved Review Inbox"
+    )
+  } else {
+    throw AppleAdapterSpecFailure.expected(
+      "a failed Review Inbox write must remain visible on the iPhone surface"
+    )
+  }
+  try expect(
+    failingModel.pendingReviewItems.isEmpty,
+    "an unsaved reconciled item must not leak into the published projection"
+  )
+
+  try expect(
+    model.beginVisitReview(visitID, at: surfaceInstant(74)),
+    "the synced Visit must expose an explicit enter-review action"
+  )
+  try expect(
+    model.projection.capture.visits.first?.reviewState == .reviewing,
+    "entering review must durably advance the synced Visit"
+  )
 }
 
 @MainActor

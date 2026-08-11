@@ -20,7 +20,232 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       "experience lifecycle exports and deletes all non visit data",
       experienceLifecycleExportsAndDeletesAllNonVisitData
     ),
+    (
+      "suggested media route read attaches to RouteCard and reopens with provenance",
+      suggestedMediaRouteReadAttachesAndReopens
+    ),
+    (
+      "Attempt-linked Actual draft saves without observed provenance",
+      attemptLinkedActualDraftSavesAsManual
+    ),
   ]
+}
+
+private func attemptLinkedActualDraftSavesAsManual() throws {
+  let visitStore = MemoryVisitEventStore()
+  let archiveStore = MemoryExperienceArchiveStore()
+  let repository = try VisitRepository(
+    store: visitStore,
+    localDeviceID: DeviceID("actual-draft-phone")
+  )
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: repository
+  )
+  let routeID = RouteCardID("actual-draft-route")
+  let visitID = GymVisitID("actual-draft-visit")
+  let attemptID = AttemptID("actual-draft-attempt")
+  try prepareFailedAttempt(
+    in: &experience,
+    routeID: routeID,
+    projectID: ProjectID("actual-draft-project"),
+    visitID: visitID,
+    attemptID: attemptID
+  )
+  let engine = try persistenceRehearsalEngine()
+  let attached = try experience.attachRehearsal(
+    engine,
+    routeCardID: routeID,
+    plannedVisitID: visitID,
+    actualAttemptID: attemptID
+  )
+  try expect(attached == .accepted, "expected Attempt-linked rehearsal")
+  var editor = LineWiseRehearsalCoordinator(
+    routeCardID: routeID,
+    engine: engine,
+    actualAttemptID: attemptID
+  )
+  let copied = editor.handle(.copyPlanIntoActualDraft)
+  try expect(copied.isSuccess, "expected Actual draft copy")
+
+  let saved = try experience.updateRehearsal(engine.rehearsal.id) { storedEngine in
+    storedEngine = editor.engine
+  }
+  try expect(saved.actualAttemptID == attemptID, "saved Actual should retain its real Attempt")
+  try expect(!saved.rehearsal.actual.keyframes.isEmpty, "saved Actual draft should remain visible")
+  try expect(
+    saved.rehearsal.actual.keyframes.allSatisfy {
+      $0.provenance.authorship == .userAuthored
+        && $0.provenance.automation == .manual
+    },
+    "copied Actual draft must not claim observed evidence"
+  )
+
+  let reopenedRepository = try VisitRepository(
+    store: visitStore,
+    localDeviceID: DeviceID("actual-draft-phone")
+  )
+  let reopened = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: reopenedRepository
+  )
+  let reopenedActual = try persistenceRequired(
+    reopened.projection.rehearsals.first?.rehearsal.actual,
+    "reopened Actual draft"
+  )
+  try expect(
+    reopenedActual.keyframes.allSatisfy { $0.provenance.authorship == .userAuthored },
+    "reopened Actual draft should remain user authored"
+  )
+}
+
+private func suggestedMediaRouteReadAttachesAndReopens() throws {
+  let visitStore = MemoryVisitEventStore()
+  let archiveStore = MemoryExperienceArchiveStore()
+  let repository = try VisitRepository(
+    store: visitStore,
+    localDeviceID: DeviceID("media-route-read-phone")
+  )
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: repository
+  )
+  let routeID = RouteCardID("media-route-card")
+  let created = try experience.handle(
+    .createRoute(
+      actionID: ActionID("media-route-create"),
+      routeCardID: routeID,
+      label: "Suggested media route",
+      availability: .present,
+      occurredAt: persistenceInstant(1),
+      source: .iPhone
+    )
+  )
+  try expect(created.isSuccess, "expected target RouteCard")
+
+  let start = Hold(
+    id: HoldID("media-suggested-start"),
+    center: Point2D(x: 0.35, y: 0.8),
+    radius: 0.08,
+    routeRole: .start
+  )
+  let result = RouteReadResult(
+    scene: RouteScene(
+      id: RouteSceneID("media-suggested-scene"),
+      name: "Suggested route scene",
+      size: SceneSize(width: 1, height: 1),
+      metersPerSceneUnit: nil,
+      holds: [
+        start,
+        Hold(
+          id: HoldID("media-suggested-top"),
+          center: Point2D(x: 0.6, y: 0.15),
+          radius: 0.08,
+          routeRole: .top
+        ),
+      ]
+    ),
+    provenance: RehearsalProvenance(
+      authorship: .suggested,
+      automation: .modelAdapter,
+      providerIdentifier: "media-route-model",
+      version: "7"
+    )
+  )
+  let rehearsalID = RouteRehearsalID("media-suggested-rehearsal")
+  let attached = try experience.attachRouteReadResult(
+    result,
+    routeCardID: routeID,
+    rehearsalID: rehearsalID,
+    bodyProfile: .generic(id: BodyProfileID("media-route-body")),
+    confirmedStartHoldIDs: []
+  )
+  try expect(attached == .accepted, "expected suggested route read attachment")
+  let association = try persistenceRequired(
+    experience.projection.rehearsals.first(where: { $0.rehearsal.id == rehearsalID }),
+    "suggested rehearsal association"
+  )
+  try expect(association.routeCardID == routeID, "expected corresponding RouteCard")
+  try expect(association.rehearsal.scene == result.scene, "expected suggested scene")
+  try expect(
+    association.routeReadProvenance == result.provenance,
+    "route-read provenance must survive attachment"
+  )
+  try expect(
+    association.rehearsal.plan.keyframes.first?.contacts.allSatisfy {
+      $0.target == .unknown
+    } == true,
+    "unconfirmed model start holds must not become user contacts"
+  )
+  try expect(
+    association.rehearsal.plan.keyframes.first?.provenance == result.provenance,
+    "suggested starter must not be relabeled manual"
+  )
+
+  let confirmedRehearsalID = RouteRehearsalID("media-confirmed-rehearsal")
+  let confirmed = try experience.attachRouteReadResult(
+    result,
+    routeCardID: routeID,
+    rehearsalID: confirmedRehearsalID,
+    bodyProfile: .generic(id: BodyProfileID("media-confirmed-body")),
+    confirmedStartHoldIDs: [start.id]
+  )
+  try expect(confirmed == .accepted, "expected separately confirmed start hold")
+  let confirmedFrame = try persistenceRequired(
+    experience.projection.rehearsals.first(where: {
+      $0.rehearsal.id == confirmedRehearsalID
+    })?.rehearsal.plan.keyframes.first,
+    "confirmed-start frame"
+  )
+  try expect(
+    confirmedFrame.contact(for: .leftHand)?.target == .hold(start.id)
+      && confirmedFrame.contact(for: .rightHand)?.target == .hold(start.id),
+    "one confirmed start hold should seed an editable hand match"
+  )
+  try expect(
+    confirmedFrame.contact(for: .leftFoot)?.target == .unknown
+      && confirmedFrame.contact(for: .rightFoot)?.target == .unknown,
+    "route reading must not invent foot contacts"
+  )
+
+  let duplicate = try experience.attachRouteReadResult(
+    result,
+    routeCardID: routeID,
+    rehearsalID: rehearsalID,
+    bodyProfile: .generic(id: BodyProfileID("media-route-body"))
+  )
+  try expect(
+    duplicate == .rejected(.rehearsalAlreadyExists),
+    "duplicate media attachment should remain explicit"
+  )
+  let nonSuggested = RouteReadResult(scene: result.scene, provenance: .manual)
+  let invalid = try experience.attachRouteReadResult(
+    nonSuggested,
+    routeCardID: routeID,
+    rehearsalID: RouteRehearsalID("media-invalid-rehearsal"),
+    bodyProfile: .generic(id: BodyProfileID("media-invalid-body"))
+  )
+  try expect(
+    invalid == .rejected(.routeReadMustBeSuggested),
+    "non-suggested route read should not enter the model-result path"
+  )
+
+  let reopenedRepository = try VisitRepository(
+    store: visitStore,
+    localDeviceID: DeviceID("media-route-read-phone")
+  )
+  let reopened = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: reopenedRepository
+  )
+  let reopenedAssociation = try persistenceRequired(
+    reopened.projection.rehearsals.first(where: { $0.rehearsal.id == rehearsalID }),
+    "reopened suggested rehearsal"
+  )
+  try expect(
+    reopenedAssociation == association,
+    "suggested media scene and provenance should reopen losslessly"
+  )
 }
 
 private func experienceArchiveReopensAllNonVisitState() throws {
@@ -482,4 +707,11 @@ private func persistenceRehearsalEngine() throws -> RouteRehearsalEngine {
 
 private func persistenceInstant(_ value: Int64) -> Instant {
   Instant(millisecondsSince1970: value * 1_000)
+}
+
+private func persistenceRequired<Value>(_ value: Value?, _ label: String) throws -> Value {
+  guard let value else {
+    throw ApplicationSpecFailure.expected("missing \(label)")
+  }
+  return value
 }

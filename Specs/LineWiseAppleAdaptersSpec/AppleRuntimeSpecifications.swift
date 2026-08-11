@@ -4,13 +4,74 @@ import LineWiseApplication
 import LineWiseDomain
 
 func runAppleRuntimeSpecifications() async throws -> Int {
+  try await manualVisitStartDoesNotRequestHealthAuthorization()
+  try await explicitHealthOptInRequestsAuthorizationAndStartsFutureVisit()
   try await workoutDenialDoesNotRollbackTheLocalVisit()
   try await workoutFailureDoesNotRollbackTheLocalVisit()
   try await acceptedTransfersAreAcknowledgedButRejectedTransfersRemainPending()
   try await pullingTheSamePayloadIsIdempotent()
   try await completedWorkoutExposesAnOptionalSummary()
   try await experienceBackedRuntimeReopensActiveRest()
-  return 6
+  return 8
+}
+
+@MainActor
+private func manualVisitStartDoesNotRequestHealthAuthorization() async throws {
+  let recorder = ScriptedWorkoutRecorder(
+    capability: .authorizationRequired,
+    authorization: .ready
+  )
+  let fixture = try runtimeFixture(recorder: recorder)
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+  let feedback = fixture.runtime.handle(startVisitIntent("manual-only"))
+  try expect(feedback.isSuccess, "manual Visit capture should still begin")
+  await fixture.runtime.waitForOptionalCapabilityWork()
+  let counts = await recorder.invocationCounts()
+  try expect(
+    counts.authorizationRequests == 0 && counts.starts == 0,
+    "default Visit start must not request Health authorization or start a workout"
+  )
+  try expect(
+    fixture.runtime.healthRecordingPreference == .manualOnly,
+    "Health recording must be visibly off until the user opts in"
+  )
+  try expect(
+    fixture.runtime.workoutStatus == .idle,
+    "manual-only capture must keep the optional workout idle"
+  )
+}
+
+@MainActor
+private func explicitHealthOptInRequestsAuthorizationAndStartsFutureVisit() async throws {
+  let recorder = ScriptedWorkoutRecorder(
+    capability: .authorizationRequired,
+    authorization: .ready
+  )
+  let fixture = try runtimeFixture(recorder: recorder)
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+  fixture.runtime.enableHealthRecording()
+  await fixture.runtime.waitForOptionalCapabilityWork()
+  var counts = await recorder.invocationCounts()
+  try expect(
+    counts.authorizationRequests == 1 && counts.starts == 0,
+    "explicit Enable Health Recording must request access without inventing a Visit"
+  )
+  try expect(
+    fixture.runtime.healthRecordingPreference == .enabled,
+    "the runtime must retain the user's current-run opt-in"
+  )
+
+  let feedback = fixture.runtime.handle(startVisitIntent("health-enabled"))
+  try expect(feedback.isSuccess, "optional Health recording must not replace manual capture")
+  await fixture.runtime.waitForOptionalCapabilityWork()
+  counts = await recorder.invocationCounts()
+  try expect(
+    counts.authorizationRequests == 1 && counts.starts == 1,
+    "an authorized opt-in should best-effort start the later Visit workout"
+  )
+  try expect(fixture.runtime.workoutStatus == .recording, "expected optional workout recording")
 }
 
 @MainActor
@@ -79,14 +140,15 @@ private func experienceBackedRuntimeReopensActiveRest() async throws {
 
 @MainActor
 private func workoutDenialDoesNotRollbackTheLocalVisit() async throws {
-  let fixture = try runtimeFixture(
-    recorder: ScriptedWorkoutRecorder(
-      capability: .authorizationRequired,
-      authorization: .denied
-    )
+  let recorder = ScriptedWorkoutRecorder(
+    capability: .authorizationRequired,
+    authorization: .denied
   )
+  let fixture = try runtimeFixture(recorder: recorder)
   defer { try? FileManager.default.removeItem(at: fixture.root) }
 
+  fixture.runtime.enableHealthRecording()
+  await fixture.runtime.waitForOptionalCapabilityWork()
   let feedback = fixture.runtime.handle(startVisitIntent("denied"))
   try expect(feedback.isSuccess, "HealthKit authorization must not gate the local visit")
   try expect(
@@ -95,9 +157,14 @@ private func workoutDenialDoesNotRollbackTheLocalVisit() async throws {
   )
 
   await fixture.runtime.waitForOptionalCapabilityWork()
+  let deniedCounts = await recorder.invocationCounts()
   try expect(
     fixture.runtime.workoutStatus == .degraded(.denied),
     "denied HealthKit must be visible as an optional degraded state"
+  )
+  try expect(
+    deniedCounts.authorizationRequests == 1 && deniedCounts.starts == 0,
+    "denial must not trigger a workout or a repeated authorization prompt"
   )
 }
 
@@ -111,6 +178,8 @@ private func workoutFailureDoesNotRollbackTheLocalVisit() async throws {
   )
   defer { try? FileManager.default.removeItem(at: fixture.root) }
 
+  fixture.runtime.enableHealthRecording()
+  await fixture.runtime.waitForOptionalCapabilityWork()
   let feedback = fixture.runtime.handle(startVisitIntent("failed"))
   try expect(feedback.isSuccess, "a recorder failure must not reject a durable local visit")
   await fixture.runtime.waitForOptionalCapabilityWork()
@@ -180,7 +249,10 @@ private func pullingTheSamePayloadIsIdempotent() async throws {
   let second = await destination.runtime.pullReceivedEvents()
 
   try expect(first.insertedCount == 1 && first.duplicateCount == 0, "first pull should insert")
-  try expect(second.insertedCount == 0 && second.duplicateCount == 1, "retry should deduplicate")
+  try expect(
+    second.insertedCount == 0 && second.duplicateCount == 0,
+    "a repository-persisted payload should be consumed from the transport inbox"
+  )
   try expect(
     destination.runtime.projection.visits.count == 1,
     "repeated pulls must not duplicate domain state"
@@ -207,6 +279,8 @@ private func completedWorkoutExposesAnOptionalSummary() async throws {
   )
   defer { try? FileManager.default.removeItem(at: fixture.root) }
 
+  fixture.runtime.enableHealthRecording()
+  await fixture.runtime.waitForOptionalCapabilityWork()
   _ = fixture.runtime.handle(startVisitIntent("summary"))
   await fixture.runtime.waitForOptionalCapabilityWork()
   _ = fixture.runtime.handle(
@@ -294,7 +368,13 @@ private actor ScriptedRuntimeTransport: DevicePayloadTransport {
     }
   }
 
-  func receivedPayloads() async -> [Data] { payloads }
+  func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload] {
+    payloads.enumerated().map { offset, payload in
+      ReceivedDevicePayload(id: DevicePayloadID("scripted-\(offset)"), payload: payload)
+    }
+  }
+
+  func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws {}
 }
 
 private actor ScriptedWorkoutRecorder: WorkoutRecording {
@@ -303,6 +383,9 @@ private actor ScriptedWorkoutRecorder: WorkoutRecording {
   private let startError: Error?
   private let stopError: Error?
   private let summary: HealthKitWorkoutSummary?
+  private var authorizationRequestCount = 0
+  private var startCount = 0
+  private var stopCount = 0
 
   init(
     capability: OptionalCapabilityState,
@@ -319,14 +402,23 @@ private actor ScriptedWorkoutRecorder: WorkoutRecording {
   }
 
   func capabilityState() async -> OptionalCapabilityState { capability }
-  func requestAuthorization() async -> OptionalCapabilityState { authorization }
+  func requestAuthorization() async -> OptionalCapabilityState {
+    authorizationRequestCount += 1
+    return authorization
+  }
   func start(at date: Date) async throws {
+    startCount += 1
     if let startError { throw startError }
   }
   func stop(at date: Date) async throws {
+    stopCount += 1
     if let stopError { throw stopError }
   }
   func latestSummary() async -> HealthKitWorkoutSummary? { summary }
+
+  func invocationCounts() -> (authorizationRequests: Int, starts: Int, stops: Int) {
+    (authorizationRequestCount, startCount, stopCount)
+  }
 }
 
 private enum ScriptedRuntimeError: Error, CustomStringConvertible {

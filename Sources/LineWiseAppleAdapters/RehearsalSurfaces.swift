@@ -139,15 +139,13 @@
         ))
     }
 
+    public func copyPlanIntoActualDraft() {
+      handle(.copyPlanIntoActualDraft)
+    }
+
+    @available(*, deprecated, renamed: "copyPlanIntoActualDraft")
     public func seedActualFromPlan() {
-      let plan = coordinator.engine.rehearsal.plan.keyframes
-      handle(
-        .importTimeline(
-          track: .actual,
-          seedKeyframes: plan,
-          maximumKeyframeCount: max(plan.count, 1),
-          provider: .manual
-        ))
+      copyPlanIntoActualDraft()
     }
 
     public func scrub(to timelinePosition: Double) {
@@ -216,7 +214,7 @@
       switch intent {
       case .assignHold, .clearContact, .setContactLock, .addKeyframe, .duplicateKeyframe,
         .deleteKeyframe, .moveKeyframe, .recomputeKeyframe, .recomputeDownstream, .importRoute,
-        .importTimeline:
+        .importTimeline, .copyPlanIntoActualDraft:
         true
       case .selectTrack, .selectKeyframe, .selectLimb, .stepForward, .stepBackward, .scrub,
         .play, .pause, .tick:
@@ -516,7 +514,10 @@
               maximumKeyframeCount: maximumSuggestedFrames
             )
           }
-          Button("Plan → Actual") { model.seedActualFromPlan() }
+          Button("Copy Plan into Actual draft") {
+            model.copyPlanIntoActualDraft()
+          }
+          .disabled(!model.projection.canCreateActualDraft)
         }
         .buttonStyle(.bordered)
 

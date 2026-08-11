@@ -1,3 +1,90 @@
+import Foundation
+import LineWiseDomain
+
+public enum RouteMediaReadSurfaceRejection: Equatable, Sendable {
+  case providerUnavailable
+  case consentNotGranted(status: MediaConsentStatus)
+  case consentScopeMismatch(actual: MediaConsentScope)
+  case cancelled
+  case providerFailed(String)
+}
+
+public enum RouteMediaReadSurfaceOutcome: Equatable, Sendable {
+  case accepted(RouteReadResult)
+  case rejected(RouteMediaReadSurfaceRejection)
+}
+
+/// Platform-neutral state/controller behind the iPhone route-media action. Recording consent never
+/// calls the provider; only `run` crosses the injected provider seam and emits the result callback.
+@MainActor
+public final class RouteMediaReadSurfaceController {
+  public private(set) var lastResult: RouteReadResult?
+  public private(set) var errorMessage: String?
+
+  private let provider: (any RouteMediaReadProviding)?
+  private let onResult: @MainActor (RouteReadResult) -> Void
+
+  public init(
+    provider: (any RouteMediaReadProviding)?,
+    onResult: @escaping @MainActor (RouteReadResult) -> Void = { _ in }
+  ) {
+    self.provider = provider
+    self.onResult = onResult
+  }
+
+  public func canRun(with asset: RouteMediaAsset?) -> Bool {
+    guard let asset, provider != nil else { return false }
+    return asset.consent.status == .granted
+      && asset.consent.scope == .explicitModelProcessing
+  }
+
+  @discardableResult
+  public func run(
+    asset: RouteMediaAsset,
+    routeRead: RouteReadRequest
+  ) async -> RouteMediaReadSurfaceOutcome {
+    guard let provider else {
+      return reject(.providerUnavailable, message: "No route-reading provider is configured.")
+    }
+    guard asset.consent.status == .granted else {
+      return reject(
+        .consentNotGranted(status: asset.consent.status),
+        message: "This photo is not currently authorized for model processing."
+      )
+    }
+    guard asset.consent.scope == .explicitModelProcessing else {
+      return reject(
+        .consentScopeMismatch(actual: asset.consent.scope),
+        message: "Grant separate AI route-reading permission before running the model."
+      )
+    }
+
+    do {
+      let result = try await provider.read(
+        RouteMediaReadRequest(routeRead: routeRead, assets: [asset])
+      )
+      lastResult = result
+      errorMessage = nil
+      onResult(result)
+      return .accepted(result)
+    } catch is CancellationError {
+      return reject(.cancelled, message: "Route reading was cancelled.")
+    } catch {
+      return reject(
+        .providerFailed(error.localizedDescription), message: error.localizedDescription)
+    }
+  }
+
+  private func reject(
+    _ rejection: RouteMediaReadSurfaceRejection,
+    message: String
+  ) -> RouteMediaReadSurfaceOutcome {
+    lastResult = nil
+    errorMessage = message
+    return .rejected(rejection)
+  }
+}
+
 #if os(iOS) && canImport(PhotosUI) && canImport(SwiftUI) && canImport(UIKit)
   import Foundation
   import LineWiseDomain
@@ -12,6 +99,7 @@
     @Published public private(set) var lastImportedAsset: RouteMediaAsset?
     @Published public private(set) var statusMessage =
       "Choose a route photo only after confirming private local storage."
+    @Published public private(set) var lastRouteReadResult: RouteReadResult?
     @Published public var presentsFileImporter = false
     @Published public var presentsPhotoLibrary = false
     @Published public var presentsCamera = false
@@ -22,10 +110,27 @@
 
     private let library: FoundationRouteMediaLibrary
     private let routeCardID: RouteCardID
+    private let routeReadController: RouteMediaReadSurfaceController
+    private let configuredRouteReadRequest: RouteReadRequest?
 
-    public init(library: FoundationRouteMediaLibrary, routeCardID: RouteCardID) {
+    public init(
+      library: FoundationRouteMediaLibrary,
+      routeCardID: RouteCardID,
+      routeReadProvider: (any RouteMediaReadProviding)? = nil,
+      routeReadRequest: RouteReadRequest? = nil,
+      onRouteRead: @escaping @MainActor (RouteReadResult) -> Void = { _ in }
+    ) {
       self.library = library
       self.routeCardID = routeCardID
+      routeReadController = RouteMediaReadSurfaceController(
+        provider: routeReadProvider,
+        onResult: onRouteRead
+      )
+      configuredRouteReadRequest = routeReadRequest
+    }
+
+    public var canRunRouteRead: Bool {
+      routeReadController.canRun(with: lastImportedAsset)
     }
 
     public func importFile(_ result: Result<URL, Error>) async {
@@ -80,11 +185,32 @@
       }
     }
 
+    /// This is the separate, explicit model action. Consent recording above never calls it.
+    public func runRouteRead() async {
+      guard let asset = lastImportedAsset else {
+        statusMessage = "Import a local route photo before running route reading."
+        return
+      }
+      let routeRead = configuredRouteReadRequest ?? Self.routeReadRequest(for: asset)
+      let outcome = await routeReadController.run(asset: asset, routeRead: routeRead)
+      switch outcome {
+      case .accepted(let result):
+        lastRouteReadResult = result
+        statusMessage =
+          "Suggested route read ready from \(result.provenance.providerIdentifier). Review and edit it before use."
+      case .rejected:
+        lastRouteReadResult = nil
+        statusMessage =
+          "Route reading did not complete: \(routeReadController.errorMessage ?? "unknown error")"
+      }
+    }
+
     public func deleteLastImportedMedia() async {
       guard let asset = lastImportedAsset else { return }
       do {
         _ = try await library.deleteAsset(asset.id, at: Self.now(), reason: .userRequested)
         lastImportedAsset = nil
+        lastRouteReadResult = nil
         statusMessage = "The local media bytes were deleted."
       } catch {
         statusMessage = "Local deletion did not complete: \(error.localizedDescription)"
@@ -120,11 +246,25 @@
           retention: .keepUntilUserDeletes
         )
       )
+      lastRouteReadResult = nil
       statusMessage = "Route photo saved privately on this device. It has not been uploaded."
     }
 
     private static func now() -> Instant {
       Instant(millisecondsSince1970: Int64(Date().timeIntervalSince1970 * 1_000))
+    }
+
+    private static func routeReadRequest(for asset: RouteMediaAsset) -> RouteReadRequest {
+      RouteReadRequest(
+        sceneID: RouteSceneID("route-media/\(asset.id.rawValue)"),
+        name: "Suggested route from photo",
+        size: SceneSize(
+          width: Double(max(asset.dimensions.pixelWidth, 1)),
+          height: Double(max(asset.dimensions.pixelHeight, 1))
+        ),
+        metersPerSceneUnit: nil,
+        candidateHolds: []
+      )
     }
   }
 
@@ -132,11 +272,20 @@
   public struct RouteMediaImportSurface: View {
     @StateObject private var viewModel: RouteMediaImportViewModel
 
-    public init(library: FoundationRouteMediaLibrary, routeCardID: RouteCardID) {
+    public init(
+      library: FoundationRouteMediaLibrary,
+      routeCardID: RouteCardID,
+      routeReadProvider: (any RouteMediaReadProviding)? = nil,
+      routeReadRequest: RouteReadRequest? = nil,
+      onRouteRead: @escaping @MainActor (RouteReadResult) -> Void = { _ in }
+    ) {
       _viewModel = StateObject(
         wrappedValue: RouteMediaImportViewModel(
           library: library,
-          routeCardID: routeCardID
+          routeCardID: routeCardID,
+          routeReadProvider: routeReadProvider,
+          routeReadRequest: routeReadRequest,
+          onRouteRead: onRouteRead
         )
       )
     }
@@ -177,6 +326,18 @@
             )
             .font(.footnote)
             .foregroundStyle(.secondary)
+            if viewModel.canRunRouteRead {
+              Button("Run route read") {
+                Task { await viewModel.runRouteRead() }
+              }
+              if let result = viewModel.lastRouteReadResult {
+                Text(
+                  "\(result.provenance.displayLabel) · \(result.provenance.providerIdentifier) v\(result.provenance.version)"
+                )
+                .font(.footnote.monospaced())
+                .foregroundStyle(.secondary)
+              }
+            }
             Button("Delete Local Photo", role: .destructive) {
               Task { await viewModel.deleteLastImportedMedia() }
             }

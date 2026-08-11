@@ -17,12 +17,12 @@ let package = Package(
     .target(name: "LineWiseApplication", dependencies: ["LineWiseDomain"]),
     .target(
       name: "LineWiseAppleAdapters",
-      dependencies: ["LineWiseDomain", "LineWiseApplication", "LineWiseAIAdapters"]
+      dependencies: ["LineWiseDomain", "LineWiseApplication"]
     ),
     .target(name: "LineWiseAIAdapters", dependencies: ["LineWiseDomain"]),
     .executableTarget(
       name: "LineWiseDemo",
-      dependencies: ["LineWiseDomain", "LineWiseApplication", "LineWiseAppleAdapters"]
+      dependencies: ["LineWiseDomain", "LineWiseApplication"]
     ),
     .executableTarget(
       name: "LineWiseDomainSpec",
@@ -31,7 +31,7 @@ let package = Package(
     ),
     .executableTarget(
       name: "LineWiseApplicationSpec",
-      dependencies: ["LineWiseDomain", "LineWiseApplication", "LineWiseAppleAdapters"],
+      dependencies: ["LineWiseDomain", "LineWiseApplication"],
       path: "Specs/LineWiseApplicationSpec"
     ),
     .executableTarget(

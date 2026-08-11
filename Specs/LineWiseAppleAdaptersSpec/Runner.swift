@@ -28,12 +28,15 @@ struct LineWiseAppleAdaptersSpecRunner {
     let first = try await transport.send(Data("first".utf8), mode: .reliableBackground)
     let second = try await transport.send(Data("second".utf8), mode: .immediateIfReachable)
     let payloads = await transport.receivedPayloads()
-    try expect(first.acceptedLocally && second.acceptedLocally, "expected local enqueue receipts")
+    try expect(
+      first.acceptedLocally && second.acceptedLocally,
+      "expected the in-memory fake to confirm both durable modes"
+    )
     try expect(
       payloads == [Data("first".utf8), Data("second".utf8)],
       "expected transport order to remain stable"
     )
-    print("PASS: device transport accepts payloads locally before connectivity")
+    print("PASS: in-memory transport confirms durable modes deterministically")
 
     let bridge = DeviceEnvelopeBridge(transport: InMemoryDevicePayloadTransport())
     let envelope = DeviceEventEnvelope(
@@ -55,13 +58,18 @@ struct LineWiseAppleAdaptersSpecRunner {
     )
     print("PASS: DeviceEventEnvelope crosses the payload bridge losslessly")
     let deviceSyncCount = try await runDeviceSyncServiceSpecifications()
-    print("PASS: accepted transfers become acknowledgement candidates")
+    print("PASS: callback-confirmed transfers become acknowledgement candidates")
     print("PASS: rejected and failed transfers remain pending")
+    let durableTransportCount = try await runDurableDeviceTransportSpecifications()
+    print("PASS: Outbox acknowledgement waits for the reliable completion callback")
+    print("PASS: inbound transport bytes wait for repository persistence")
     let bootstrapCount = try runPersistentBootstrapSpecifications()
     print("PASS: app bootstrap reopens durable state")
     print("PASS: app bootstrap rejects an invalid device identity")
     print("PASS: app bootstrap keeps a stable role-scoped device identity")
     let appleRuntimeCount = try await runAppleRuntimeSpecifications()
+    print("PASS: manual Visit start does not request Health authorization")
+    print("PASS: explicit Health opt-in requests access and enables later recording")
     print("PASS: workout denial does not roll back the local Visit")
     print("PASS: workout failure does not roll back the local Visit")
     print("PASS: runtime acknowledges only transport-accepted events")
@@ -75,7 +83,7 @@ struct LineWiseAppleAdaptersSpecRunner {
     let learningSurfaceCount = try await runLearningExperienceSurfaceSpecifications()
     let mediaLibraryCount = try await runRouteMediaLibrarySpecifications()
     print(
-      "LineWiseAppleAdaptersSpec: \(3 + deviceSyncCount + bootstrapCount + appleRuntimeCount + experienceSurfaceCount + learningSurfaceCount + mediaLibraryCount) passed"
+      "LineWiseAppleAdaptersSpec: \(3 + deviceSyncCount + durableTransportCount + bootstrapCount + appleRuntimeCount + experienceSurfaceCount + learningSurfaceCount + mediaLibraryCount) passed"
     )
   }
 }

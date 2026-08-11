@@ -29,7 +29,14 @@
           ),
           appCoordinator: persistent.coordinator
         )
-        let transport = WatchConnectivityPayloadTransport()
+        let transport = try WatchConnectivityPayloadTransport(
+          inboxStore: FoundationFileDevicePayloadInboxStore(
+            fileURL: LineWiseAppBootstrap.devicePayloadInboxURL(
+              in: storageDirectory,
+              role: .watch
+            )
+          )
+        )
         let runtime = LineWiseAppleRuntime(
           deviceID: persistent.deviceID,
           experienceCoordinator: experience,

@@ -25,14 +25,15 @@ Route reading, qualitative interpretation, stick-figure rehearsal, and training 
 
 1. Domain semantics live in a platform-independent Swift module.
 2. UI submits commands; it does not mutate storage rows directly.
-3. A user action becomes accepted locally before cross-device delivery is attempted.
-4. Delivery is at least once; stable action IDs make application idempotent.
+3. A user action becomes accepted locally before cross-device delivery is attempted; local acceptance is never presented as remote durability.
+4. Delivery is at least once; stable action IDs make application idempotent, and an outbox event is acknowledged only after a reliable transfer completion callback.
 5. Late, conflicting, or uncertain input reopens review instead of inventing certainty.
 6. HealthKit, WatchConnectivity, media, and model providers fail independently.
 7. Subjective physiology remains primary; sensor summaries are optional and non-diagnostic.
 8. Model output is always a suggestion with provider provenance.
 9. Export, deletion, consent, and correction are product behavior, not cleanup work.
 10. Platform behavior is not called verified until exercised with the required SDK, signing, and devices.
+11. Intelligence is optional and user-opened; the default product surface proves the manual P0 loop first.
 
 ## 3. Current Architecture
 
@@ -84,13 +85,15 @@ flowchart TB
 
 - In-memory and Foundation file stores behind shared contracts.
 - Schema v1 plus v0 migration fixtures, deterministic replay, and atomic replacement.
-- Stable device envelopes, inbox/outbox, acknowledgement, retry, duplicate suppression, and origin-sequence conflict handling.
+- Stable device envelopes, inbox/outbox, completion-confirmed acknowledgement, retry, duplicate suppression, and origin-sequence conflict handling.
+- Role-scoped durable WatchConnectivity payload inboxes that are consumed only after repository persistence succeeds.
 - Export, scoped delete, and redacted diagnostics.
 - Transactional experience archive covering Recall, Learning, Physiology, Rehearsal, and Rest state.
 
 ### C. Recall, teaching, and physiology
 
 - Explicit Review Inbox branches.
+- Stable reconciliation of unresolved/unassigned Attempts from ended synced visits, including restart and persistence-failure retry.
 - Atomic FailureEpisode → MoveCue → NextSessionCue capture.
 - Cue complete/defer/dismiss/reopen lifecycle.
 - Approved MicroDrill catalog, TrainingPath, and ProofCheck.
@@ -110,6 +113,8 @@ flowchart TB
 - Source/derived media lineage, purpose, consent, hash, quality, retention, annotations, corrections, tombstones, and manifest export.
 - Path-contained local byte loading and explicit model-processing consent.
 - Deterministic-local and HTTP route-analysis providers.
+- Explicit media-consent then model-run flow, with suggested RouteRead attachment and durable route-read provenance.
+- Attempt-linked Actual drafts copied from Plan as `userAuthored + manual`, never mislabeled as observed evidence.
 - Typed cancellation, timeout, HTTP, response, consent, and integrity failures.
 - Adapter-enforced `suggested + modelAdapter` provenance.
 
@@ -117,8 +122,10 @@ flowchart TB
 
 - iPhone visit/review/recall/physiology/rehearsal experience surface.
 - Watch Attempt, result, Undo, Rest, elapsed-time, and end-visit surface.
+- Explicit Health recording enablement; manual Visit start never requests HealthKit authorization by itself.
 - HealthKit unavailable/denied/failure degradation without rollback of app-private visits.
-- WatchConnectivity enqueue/pull/ack behavior and persistent device identity.
+- WatchConnectivity enqueue/pull/completion-ack behavior, durable inbound payloads, and persistent device identity.
+- Manual P0 surfaces shown by default, with route intelligence behind an explicit user-opened workspace.
 - Dynamic Type, VoiceOver labels, and text-plus-symbol state communication.
 
 ### G. Field evidence
@@ -151,6 +158,8 @@ git diff --check
 ```
 
 The executable specification targets are used because the currently selected Command Line Tools installation does not expose the full Xcode test runtime. They exercise only public module interfaces and exit nonzero on a violated expectation.
+
+Current baseline: 76 Domain + 36 Application + 41 Apple adapter + 15 AI adapter behaviors = 168 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
 
 ## 6. Apple Validation Procedure
 

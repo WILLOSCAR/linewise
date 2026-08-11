@@ -44,24 +44,72 @@ public enum DeviceTransferMode: Equatable, Sendable {
   case immediateIfReachable
 }
 
+public enum DeviceTransferNonAcknowledgementReason: Equatable, Sendable,
+  CustomStringConvertible
+{
+  case latestContextIsReplaceable
+  case sessionNotActivated
+  case transportDidNotConfirm
+
+  public var description: String {
+    switch self {
+    case .latestContextIsReplaceable:
+      "latestContext is replaceable and cannot acknowledge a durable event"
+    case .sessionNotActivated:
+      "the device transport session is not activated"
+    case .transportDidNotConfirm:
+      "the device transport did not confirm durable completion"
+    }
+  }
+}
+
+public enum DeviceTransferReceiptDisposition: Equatable, Sendable {
+  case durablyCompleted
+  case notEligibleForDurableAcknowledgement(DeviceTransferNonAcknowledgementReason)
+}
+
 public struct DeviceTransferReceipt: Equatable, Sendable {
-  public let acceptedLocally: Bool
+  public let disposition: DeviceTransferReceiptDisposition
   public let mode: DeviceTransferMode
 
-  public init(acceptedLocally: Bool, mode: DeviceTransferMode) {
-    self.acceptedLocally = acceptedLocally
+  public init(
+    disposition: DeviceTransferReceiptDisposition,
+    mode: DeviceTransferMode
+  ) {
+    self.disposition = disposition
     self.mode = mode
+  }
+
+  /// Compatibility initializer for simple fakes. A `true` value means the
+  /// transport has durably completed delivery, not merely queued work in RAM.
+  public init(acceptedLocally: Bool, mode: DeviceTransferMode) {
+    disposition =
+      acceptedLocally
+      ? .durablyCompleted
+      : .notEligibleForDurableAcknowledgement(.transportDidNotConfirm)
+    self.mode = mode
+  }
+
+  public var acceptedLocally: Bool {
+    disposition == .durablyCompleted
   }
 }
 
 public protocol DevicePayloadTransport: Sendable {
   func activate() async
   func send(_ payload: Data, mode: DeviceTransferMode) async throws -> DeviceTransferReceipt
-  func receivedPayloads() async -> [Data]
+  func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload]
+  func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws
+}
+
+extension DevicePayloadTransport {
+  public func receivedPayloads() async -> [Data] {
+    (try? await pendingReceivedPayloads().map(\.payload)) ?? []
+  }
 }
 
 public actor InMemoryDevicePayloadTransport: DevicePayloadTransport {
-  private var payloads: [Data] = []
+  private var payloads: [ReceivedDevicePayload] = []
 
   public init() {}
 
@@ -69,12 +117,38 @@ public actor InMemoryDevicePayloadTransport: DevicePayloadTransport {
 
   public func send(_ payload: Data, mode: DeviceTransferMode) async throws -> DeviceTransferReceipt
   {
-    payloads.append(payload)
-    return DeviceTransferReceipt(acceptedLocally: true, mode: mode)
+    guard mode != .latestContext else {
+      return DeviceTransferReceipt(
+        disposition: .notEligibleForDurableAcknowledgement(.latestContextIsReplaceable),
+        mode: mode
+      )
+    }
+    payloads.append(
+      ReceivedDevicePayload(
+        id: DevicePayloadID(UUID().uuidString.lowercased()),
+        payload: payload
+      )
+    )
+    return DeviceTransferReceipt(disposition: .durablyCompleted, mode: mode)
   }
 
-  public func receivedPayloads() async -> [Data] {
+  public func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload] {
     payloads
+  }
+
+  public func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws {
+    let acknowledged = Set(payloadIDs)
+    payloads.removeAll { acknowledged.contains($0.id) }
+  }
+}
+
+public struct ReceivedDeviceEnvelope: Equatable, Sendable {
+  public let payloadID: DevicePayloadID
+  public let envelope: DeviceEventEnvelope
+
+  public init(payloadID: DevicePayloadID, envelope: DeviceEventEnvelope) {
+    self.payloadID = payloadID
+    self.envelope = envelope
   }
 }
 
@@ -98,11 +172,22 @@ public actor DeviceEnvelopeBridge {
     return try await transport.send(encoder.encode(envelope), mode: mode)
   }
 
-  public func receivedEnvelopes() async throws -> [DeviceEventEnvelope] {
+  public func pendingReceivedEnvelopes() async throws -> [ReceivedDeviceEnvelope] {
     let decoder = JSONDecoder()
-    return try await transport.receivedPayloads().map {
-      try decoder.decode(DeviceEventEnvelope.self, from: $0)
+    return try await transport.pendingReceivedPayloads().map { received in
+      ReceivedDeviceEnvelope(
+        payloadID: received.id,
+        envelope: try decoder.decode(DeviceEventEnvelope.self, from: received.payload)
+      )
     }
+  }
+
+  public func receivedEnvelopes() async throws -> [DeviceEventEnvelope] {
+    try await pendingReceivedEnvelopes().map(\.envelope)
+  }
+
+  public func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws {
+    try await transport.acknowledgeReceivedPayloads(payloadIDs)
   }
 }
 
@@ -238,15 +323,44 @@ public actor DeviceEnvelopeBridge {
 #if canImport(WatchConnectivity) && (os(iOS) || os(watchOS))
   import WatchConnectivity
 
+  public enum WatchConnectivityPayloadTransportError: Error, Equatable, Sendable,
+    CustomStringConvertible
+  {
+    case backgroundTransferFailed(String)
+
+    public var description: String {
+      switch self {
+      case .backgroundTransferFailed(let reason):
+        "WatchConnectivity background transfer failed: \(reason)"
+      }
+    }
+  }
+
   public final class WatchConnectivityPayloadTransport: NSObject, DevicePayloadTransport,
     @unchecked Sendable
   {
+    private static let envelopeKey = "linewiseEnvelope"
+    private static let payloadIDKey = "linewisePayloadID"
+
     private let session: WCSession
-    private let lock = NSLock()
-    private var inbox: [Data] = []
+    private let inbox: DurableDevicePayloadInbox
+    private let completions = DeviceTransferCompletionRegistry<UUID>()
+    private let delegateErrorLock = NSLock()
+    private var delegatePersistenceError: DevicePayloadInboxError?
 
     public init(session: WCSession = .default) {
       self.session = session
+      inbox = DurableDevicePayloadInbox()
+      super.init()
+      session.delegate = self
+    }
+
+    public init(
+      session: WCSession = .default,
+      inboxStore: any DevicePayloadInboxStore
+    ) throws {
+      self.session = session
+      inbox = try DurableDevicePayloadInbox(store: inboxStore)
       super.init()
       session.delegate = self
     }
@@ -262,33 +376,75 @@ public actor DeviceEnvelopeBridge {
     ) async throws -> DeviceTransferReceipt {
       guard session.activationState == .activated else {
         session.activate()
-        return DeviceTransferReceipt(acceptedLocally: false, mode: mode)
+        return DeviceTransferReceipt(
+          disposition: .notEligibleForDurableAcknowledgement(.sessionNotActivated),
+          mode: mode
+        )
       }
-      let value: [String: Any] = ["linewiseEnvelope": payload]
+      let transferID = UUID()
+      let value: [String: Any] = [
+        Self.envelopeKey: payload,
+        Self.payloadIDKey: transferID.uuidString.lowercased(),
+      ]
       switch mode {
       case .reliableBackground:
+        await completions.prepare(transferID)
         session.transferUserInfo(value)
       case .latestContext:
         try session.updateApplicationContext(value)
+        return DeviceTransferReceipt(
+          disposition: .notEligibleForDurableAcknowledgement(.latestContextIsReplaceable),
+          mode: mode
+        )
       case .immediateIfReachable:
         if session.isReachable {
           session.sendMessage(value, replyHandler: nil, errorHandler: nil)
         }
-        // Keep a reliable local queue even when the best-effort fast path is
-        // reachable. Duplicate reception is safe because DeviceEventEnvelope
-        // replay is idempotent.
+        // The fast path improves latency but never acknowledges durable work.
+        // Its reliable fallback owns the completion callback and uses the same
+        // payload ID so the receiver's durable inbox can deduplicate both.
+        await completions.prepare(transferID)
         session.transferUserInfo(value)
       }
-      return DeviceTransferReceipt(acceptedLocally: true, mode: mode)
+
+      let completion = await completions.wait(for: transferID)
+      try Task.checkCancellation()
+      switch completion {
+      case .succeeded:
+        return DeviceTransferReceipt(disposition: .durablyCompleted, mode: mode)
+      case .failed(let reason):
+        throw WatchConnectivityPayloadTransportError.backgroundTransferFailed(reason)
+      }
     }
 
-    public func receivedPayloads() async -> [Data] {
-      lock.withLock { inbox }
+    public func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload] {
+      if let error = delegateErrorLock.withLock({ delegatePersistenceError }) {
+        throw error
+      }
+      return inbox.pendingPayloads
+    }
+
+    public func acknowledgeReceivedPayloads(
+      _ payloadIDs: [DevicePayloadID]
+    ) async throws {
+      try inbox.acknowledge(payloadIDs)
     }
 
     private func receive(_ userInfo: [String: Any]) {
-      guard let data = userInfo["linewiseEnvelope"] as? Data else { return }
-      lock.withLock { inbox.append(data) }
+      guard let data = userInfo[Self.envelopeKey] as? Data else { return }
+      let payloadID = DevicePayloadID(
+        (userInfo[Self.payloadIDKey] as? String) ?? UUID().uuidString.lowercased()
+      )
+      do {
+        _ = try inbox.receive(ReceivedDevicePayload(id: payloadID, payload: data))
+        delegateErrorLock.withLock { delegatePersistenceError = nil }
+      } catch let error as DevicePayloadInboxError {
+        delegateErrorLock.withLock { delegatePersistenceError = error }
+      } catch {
+        delegateErrorLock.withLock {
+          delegatePersistenceError = .delegatePersistenceFailed(String(describing: error))
+        }
+      }
     }
   }
 
@@ -301,6 +457,24 @@ public actor DeviceEnvelopeBridge {
 
     public func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
       receive(userInfo)
+    }
+
+    public func session(
+      _ session: WCSession,
+      didFinish userInfoTransfer: WCSessionUserInfoTransfer,
+      error: Error?
+    ) {
+      guard
+        let rawTransferID = userInfoTransfer.userInfo[Self.payloadIDKey] as? String,
+        let transferID = UUID(uuidString: rawTransferID)
+      else { return }
+      let completion: DeviceTransferCompletion =
+        error.map {
+          .failed(String(describing: $0))
+        } ?? .succeeded
+      Task { [completions] in
+        await completions.complete(completion, for: transferID)
+      }
     }
 
     public func session(

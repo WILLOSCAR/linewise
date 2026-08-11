@@ -66,6 +66,13 @@
     }
 
     public func refreshFromPersistence() {
+      do {
+        try coordinator.reload()
+        _ = try coordinator.reconcileReviewInboxFromCapture()
+        issue = nil
+      } catch {
+        issue = .persistence("Could not refresh the Review Inbox: \(error)")
+      }
       syncProjection()
     }
 
@@ -311,9 +318,6 @@
         return rejectValidation("There is no open gym visit to end.")
       }
       let time = occurredAt ?? now
-      let unresolved = projection.capture.attempts.filter {
-        $0.visitID == visit.id && $0.recordState == .active && $0.outcome == .unresolved
-      }
       guard
         performCapture(
           .endVisit(
@@ -333,22 +337,22 @@
           )
         )
       else { return false }
+      return reconcileReviewInbox()
+    }
 
-      for attempt in unresolved where !hasReviewItem(for: attempt.id) {
-        guard
-          performRecall(
-            .enqueueReviewItem(
-              actionID: makeActionID("enqueue-review"),
-              itemID: ReviewInboxItemID("unresolved/\(attempt.id.rawValue)"),
-              sourceKey: "attempt/\(attempt.id.rawValue)/unresolved",
-              visitID: visit.id,
-              kind: .unresolvedAttempt(attempt.id),
-              occurredAt: time
-            )
-          )
-        else { return false }
-      }
-      return true
+    @discardableResult
+    public func beginVisitReview(
+      _ visitID: GymVisitID,
+      at occurredAt: Instant? = nil
+    ) -> Bool {
+      performCapture(
+        .beginReview(
+          actionID: makeActionID("begin-review"),
+          visitID: visitID,
+          occurredAt: occurredAt ?? now,
+          source: .iPhone
+        )
+      )
     }
 
     @discardableResult
@@ -566,6 +570,7 @@
     public func createManualRehearsalStarter(
       routeCardID: RouteCardID,
       plannedVisitID: GymVisitID? = nil,
+      actualAttemptID: AttemptID? = nil,
       rehearsalID: RouteRehearsalID = RouteRehearsalID(UUID().uuidString)
     ) -> Bool {
       guard !projection.rehearsals.contains(where: { $0.rehearsal.id == rehearsalID }) else {
@@ -580,7 +585,8 @@
         let outcome = try coordinator.attachRehearsal(
           engine,
           routeCardID: routeCardID,
-          plannedVisitID: plannedVisitID
+          plannedVisitID: plannedVisitID,
+          actualAttemptID: actualAttemptID
         )
         syncProjection()
         switch outcome {
@@ -597,6 +603,44 @@
         return false
       } catch {
         issue = .operation("Could not create the manual route rehearsal: \(error)")
+        syncProjection()
+        return false
+      }
+    }
+
+    @discardableResult
+    public func attachSuggestedRouteRead(
+      _ result: RouteReadResult,
+      routeCardID: RouteCardID,
+      plannedVisitID: GymVisitID? = nil,
+      confirmedStartHoldIDs: [HoldID] = [],
+      rehearsalID: RouteRehearsalID = RouteRehearsalID(UUID().uuidString)
+    ) -> Bool {
+      guard projection.capture.routeCards.contains(where: { $0.id == routeCardID }) else {
+        return rejectValidation("The RouteCard for this suggested read no longer exists.")
+      }
+      do {
+        let outcome = try coordinator.attachRouteReadResult(
+          result,
+          routeCardID: routeCardID,
+          rehearsalID: rehearsalID,
+          bodyProfile: .generic(
+            id: BodyProfileID("\(rehearsalID.rawValue)/generic-body")
+          ),
+          confirmedStartHoldIDs: confirmedStartHoldIDs,
+          plannedVisitID: plannedVisitID
+        )
+        syncProjection()
+        switch outcome {
+        case .accepted:
+          issue = nil
+          return true
+        case .rejected(let reason):
+          issue = .operation("Could not save the suggested route read: \(reason).")
+          return false
+        }
+      } catch {
+        issue = .persistence("Could not persist the suggested route read: \(error)")
         syncProjection()
         return false
       }
@@ -623,7 +667,8 @@
           coordinator: LineWiseRehearsalCoordinator(
             routeCardID: association.routeCardID,
             engine: engine,
-            routeReadProvenance: .manual
+            routeReadProvenance: association.routeReadProvenance,
+            actualAttemptID: association.actualAttemptID
           )
         )
         rehearsalEditorModels[rehearsalID] = model
@@ -645,8 +690,13 @@
       let selectedTrack = editor.projection.activeTrack
       _ = editor.handle(.selectTrack(.plan))
       let plan = editor.projection.keyframes
-      _ = editor.handle(.selectTrack(.actual))
-      let actual = editor.projection.keyframes
+      let actual: [PoseKeyframe]
+      if editor.projection.actualAttemptID != nil {
+        _ = editor.handle(.selectTrack(.actual))
+        actual = editor.projection.keyframes
+      } else {
+        actual = []
+      }
       _ = editor.handle(.selectTrack(selectedTrack))
       let current = editor.projection
       do {
@@ -818,14 +868,16 @@
       )
     }
 
-    private func hasReviewItem(for attemptID: AttemptID) -> Bool {
-      projection.recall.reviewItems.contains { item in
-        switch item.kind {
-        case .unresolvedAttempt(let id), .unassignedAttempt(let id):
-          id == attemptID
-        case .lateRecord, .conflictingRecord, .missingNextSessionCue:
-          false
-        }
+    private func reconcileReviewInbox() -> Bool {
+      do {
+        _ = try coordinator.reconcileReviewInboxFromCapture()
+        issue = nil
+        syncProjection()
+        return true
+      } catch {
+        issue = .persistence("Could not save the Review Inbox: \(error)")
+        syncProjection()
+        return false
       }
     }
 
@@ -989,6 +1041,7 @@
     @StateObject private var model: LineWiseExperienceViewModel
     private let supportingHealthKitSummary: HealthKitWorkoutSummary?
     private let routeMediaLibrary: FoundationRouteMediaLibrary?
+    private let routeMediaReadProvider: (any RouteMediaReadProviding)?
 
     @State private var newRouteLabel = ""
     @State private var editingRouteID: RouteCardID?
@@ -1003,15 +1056,18 @@
     @State private var fatigue = 5
     @State private var pumpRawValue = ForearmPumpLevel.moderate.rawValue
     @State private var setterLensEditDrafts: [String: String] = [:]
+    @State private var showsRouteIntelligence = false
 
     public init(
       model: @autoclosure @escaping () -> LineWiseExperienceViewModel,
       supportingHealthKitSummary: HealthKitWorkoutSummary? = nil,
-      routeMediaLibrary: FoundationRouteMediaLibrary? = nil
+      routeMediaLibrary: FoundationRouteMediaLibrary? = nil,
+      routeMediaReadProvider: (any RouteMediaReadProviding)? = nil
     ) {
       _model = StateObject(wrappedValue: model())
       self.supportingHealthKitSummary = supportingHealthKitSummary
       self.routeMediaLibrary = routeMediaLibrary
+      self.routeMediaReadProvider = routeMediaReadProvider
     }
 
     public var body: some View {
@@ -1026,13 +1082,16 @@
           nextSessionCueSection
           currentVisitSection
           routeMemorySection
-          routeMediaSection
           projectSection
           reviewInboxSection
           failureReviewSection
-          learningLoopSection
           physiologySection
-          rehearsalSection
+          routeIntelligenceAccessSection
+          if showsRouteIntelligence {
+            routeMediaSection
+            rehearsalSection
+            learningLoopSection
+          }
         }
         .navigationTitle("LineWise")
       }
@@ -1049,7 +1108,15 @@
             NavigationLink {
               RouteMediaImportSurface(
                 library: routeMediaLibrary,
-                routeCardID: route.id
+                routeCardID: route.id,
+                routeReadProvider: routeMediaReadProvider,
+                onRouteRead: { result in
+                  model.attachSuggestedRouteRead(
+                    result,
+                    routeCardID: route.id,
+                    plannedVisitID: model.projection.capture.activeVisit?.id
+                  )
+                }
               )
             } label: {
               Label("Add media for \(route.label)", systemImage: "photo.on.rectangle.angled")
@@ -1060,6 +1127,18 @@
           }
         }
       #endif
+    }
+
+    private var routeIntelligenceAccessSection: some View {
+      Section("Optional route intelligence") {
+        Toggle("Show RouteRehearsal, SetterLens, and training tools", isOn: $showsRouteIntelligence)
+        Text(
+          "The manual visit, review, and next-session memory loop works without these tools. Any automatic route read remains a suggestion that you can edit or reject."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      }
     }
 
     private func issueSection(_ issue: LineWiseExperienceSurfaceIssue) -> some View {
@@ -1184,6 +1263,19 @@
           }
         } else {
           Label("No Visit in progress", systemImage: "pause.circle")
+          ForEach(
+            model.projection.capture.visits.filter {
+              $0.captureState == .ended
+                && ($0.reviewState == .pendingReview || $0.reviewState == .needsRecheck)
+            },
+            id: \.id.rawValue
+          ) { visit in
+            Button {
+              model.beginVisitReview(visit.id)
+            } label: {
+              Label("Review ended Visit", systemImage: "checklist")
+            }
+          }
           Button {
             model.startVisit()
           } label: {
@@ -1687,7 +1779,8 @@
           Button("Create manual starter for \(route.label)") {
             model.createManualRehearsalStarter(
               routeCardID: route.id,
-              plannedVisitID: model.projection.capture.activeVisit?.id
+              plannedVisitID: model.projection.capture.activeVisit?.id,
+              actualAttemptID: model.projection.capture.currentRouteAttempts.last?.id
             )
           }
         } else {
@@ -1938,22 +2031,26 @@
       @ObservedObject private var experienceModel: LineWiseExperienceViewModel
       @ObservedObject private var syncModel: LineWiseAppViewModel
       private let routeMediaLibrary: FoundationRouteMediaLibrary?
+      private let routeMediaReadProvider: (any RouteMediaReadProviding)?
 
       public init(
         experienceModel: LineWiseExperienceViewModel,
         syncModel: LineWiseAppViewModel,
-        routeMediaLibrary: FoundationRouteMediaLibrary? = nil
+        routeMediaLibrary: FoundationRouteMediaLibrary? = nil,
+        routeMediaReadProvider: (any RouteMediaReadProviding)? = nil
       ) {
         _experienceModel = ObservedObject(wrappedValue: experienceModel)
         _syncModel = ObservedObject(wrappedValue: syncModel)
         self.routeMediaLibrary = routeMediaLibrary
+        self.routeMediaReadProvider = routeMediaReadProvider
       }
 
       public var body: some View {
         LineWiseExperienceRootView(
           model: experienceModel,
           supportingHealthKitSummary: syncModel.latestHealthKitWorkoutSummary,
-          routeMediaLibrary: routeMediaLibrary
+          routeMediaLibrary: routeMediaLibrary,
+          routeMediaReadProvider: routeMediaReadProvider
         )
         .onAppear {
           syncModel.activate()

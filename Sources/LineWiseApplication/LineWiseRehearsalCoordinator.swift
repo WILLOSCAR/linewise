@@ -52,6 +52,7 @@ public enum LineWiseRehearsalIntent: Equatable, Sendable {
     maximumKeyframeCount: Int,
     provider: RehearsalImportProvider
   )
+  case copyPlanIntoActualDraft
 }
 
 public enum LineWiseRehearsalFailure: Equatable, Sendable {
@@ -61,6 +62,8 @@ public enum LineWiseRehearsalFailure: Equatable, Sendable {
   case keyframeNotFound(PoseKeyframeID)
   case engine(RouteRehearsalError)
   case provider(RehearsalProviderError)
+  case actualAttemptRequired
+  case actualDraftAlreadyExists
   case unexpected(String)
 }
 
@@ -108,6 +111,8 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
   public let routeReadProvenance: RehearsalProvenance
   public let timelineImportProvenance: RehearsalProvenance?
   public let selectedFrameWasManuallyEdited: Bool
+  public let actualAttemptID: AttemptID?
+  public let canCreateActualDraft: Bool
 
   public init(
     routeCardID: RouteCardID,
@@ -128,7 +133,9 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
     playback: RehearsalPlaybackState,
     routeReadProvenance: RehearsalProvenance,
     timelineImportProvenance: RehearsalProvenance?,
-    selectedFrameWasManuallyEdited: Bool
+    selectedFrameWasManuallyEdited: Bool,
+    actualAttemptID: AttemptID?,
+    canCreateActualDraft: Bool
   ) {
     self.routeCardID = routeCardID
     self.rehearsalID = rehearsalID
@@ -149,6 +156,8 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
     self.routeReadProvenance = routeReadProvenance
     self.timelineImportProvenance = timelineImportProvenance
     self.selectedFrameWasManuallyEdited = selectedFrameWasManuallyEdited
+    self.actualAttemptID = actualAttemptID
+    self.canCreateActualDraft = canCreateActualDraft
   }
 
   public var selectedKeyframe: PoseKeyframe? {
@@ -191,6 +200,7 @@ public struct LineWiseRehearsalFeedback: Equatable, Sendable {
 
 public struct LineWiseRehearsalCoordinator: Sendable {
   public let routeCardID: RouteCardID
+  public let actualAttemptID: AttemptID?
   public private(set) var engine: RouteRehearsalEngine
 
   private var selectedKeyframeID: PoseKeyframeID?
@@ -204,9 +214,11 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     engine: RouteRehearsalEngine,
     routeReadProvenance: RehearsalProvenance = .manual,
     timelineImportProvenance: [RehearsalTrack: RehearsalProvenance] = [:],
-    selectedLimb: Limb = .leftHand
+    selectedLimb: Limb = .leftHand,
+    actualAttemptID: AttemptID? = nil
   ) {
     self.routeCardID = routeCardID
+    self.actualAttemptID = actualAttemptID
     self.engine = engine
     self.routeReadProvenance = routeReadProvenance
     self.timelineImportProvenance = timelineImportProvenance
@@ -224,7 +236,8 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     bodyProfile: BodyProfile,
     planKeyframes: [PoseKeyframe],
     actualKeyframes: [PoseKeyframe] = [],
-    routeReadProvenance: RehearsalProvenance = .manual
+    routeReadProvenance: RehearsalProvenance = .manual,
+    actualAttemptID: AttemptID? = nil
   ) throws {
     let engine = try RouteRehearsalEngine(
       rehearsalID: rehearsalID,
@@ -239,7 +252,8 @@ public struct LineWiseRehearsalCoordinator: Sendable {
       routeReadProvenance: routeReadProvenance,
       timelineImportProvenance: [
         .plan: planKeyframes.first?.provenance ?? .manual
-      ]
+      ],
+      actualAttemptID: actualAttemptID
     )
     if let provenance = actualKeyframes.first?.provenance {
       timelineImportProvenance[.actual] = provenance
@@ -290,7 +304,9 @@ public struct LineWiseRehearsalCoordinator: Sendable {
       timelineImportProvenance: timelineImportProvenance[track],
       selectedFrameWasManuallyEdited: selectedKeyframeID.map {
         manuallyEditedFrameIDs.contains($0)
-      } ?? false
+      } ?? false,
+      actualAttemptID: actualAttemptID,
+      canCreateActualDraft: actualAttemptID != nil && rehearsal.actual.keyframes.isEmpty
     )
   }
 
@@ -372,6 +388,7 @@ public struct LineWiseRehearsalCoordinator: Sendable {
       try addKeyframe(id: id, label: label, after: sourceID)
 
     case .duplicateKeyframe(let sourceID, let newID, let label):
+      try requireAttemptBeforeCreatingActual()
       try engine.duplicateKeyframe(sourceID, as: newID, label: label)
       selectedKeyframeID = newID
       recordManualEdit(newID)
@@ -438,6 +455,9 @@ public struct LineWiseRehearsalCoordinator: Sendable {
         maximumKeyframeCount: maximumCount,
         provider: provider
       )
+
+    case .copyPlanIntoActualDraft:
+      try copyPlanIntoActualDraft()
     }
   }
 
@@ -481,6 +501,7 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     label: String,
     after requestedSourceID: PoseKeyframeID?
   ) throws {
+    try requireAttemptBeforeCreatingActual()
     let activeTrack = engine.rehearsal.activeTrack
     if activeTimeline.keyframes.isEmpty {
       guard let source = engine.rehearsal.plan.keyframes.first else {
@@ -555,6 +576,9 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     maximumKeyframeCount: Int,
     provider: RehearsalImportProvider
   ) throws {
+    if track == .actual, actualAttemptID == nil {
+      throw LineWiseRehearsalOperationError(.actualAttemptRequired)
+    }
     let rehearsal = engine.rehearsal
     let request = RehearsalSuggestionRequest(
       rehearsalID: rehearsal.id,
@@ -579,6 +603,34 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     timelineImportProvenance[track] = suggestion.provenance
     manuallyEditedFrameIDs.subtract(uniqueFrames.map(\.id))
     selectedKeyframeID = uniqueFrames.first?.id
+  }
+
+  private mutating func copyPlanIntoActualDraft() throws {
+    guard actualAttemptID != nil else {
+      throw LineWiseRehearsalOperationError(.actualAttemptRequired)
+    }
+    guard engine.rehearsal.actual.keyframes.isEmpty else {
+      throw LineWiseRehearsalOperationError(.actualDraftAlreadyExists)
+    }
+    let copies = engine.rehearsal.plan.keyframes.enumerated().map { index, source in
+      manualCopy(
+        source,
+        id: PoseKeyframeID("\(engine.rehearsal.id.rawValue)/actual-draft-\(index + 1)"),
+        label: "\(source.label) · Actual draft"
+      )
+    }
+    try engine.replaceTimeline(for: .actual, with: copies)
+    engine.selectTrack(.actual)
+    timelineImportProvenance[.actual] = .manual
+    manuallyEditedFrameIDs.formUnion(copies.map(\.id))
+    selectedKeyframeID = copies.first?.id
+    try syncPlaybackToSelection()
+  }
+
+  private func requireAttemptBeforeCreatingActual() throws {
+    if engine.rehearsal.activeTrack == .actual, actualAttemptID == nil {
+      throw LineWiseRehearsalOperationError(.actualAttemptRequired)
+    }
   }
 
   private func uniqueKeyframes(

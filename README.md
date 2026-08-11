@@ -17,14 +17,17 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 ### Persistence and cross-device behavior
 
 - Local-first Watch and iPhone capture with stable action IDs and deterministic replay.
-- Versioned JSON stores, migration, atomic file replacement, inbox/outbox, acknowledgements, retry, and duplicate suppression.
+- Versioned JSON stores, migration, atomic file replacement, inbox/outbox, retry, and duplicate suppression.
+- A Watch event is acknowledged only after the reliable WatchConnectivity transfer completion callback; received payloads stay in a durable inbox until repository persistence succeeds.
+- Ending a visit on Watch creates stable unresolved/unassigned Review Inbox work on iPhone and safely retries that reconciliation after restart or write failure.
 - Full export and deletion APIs; redacted diagnostics omit route labels, health values, timestamps, and device IDs.
 - Persistent experience state covers review, recall, training, physiology context, rehearsal, and active rest.
 
 ### Physiology context
 
 - Subjective fatigue and pump are the primary user inputs.
-- HealthKit workout summaries are optional supporting context and never block manual capture.
+- Health recording is an explicit user choice: starting a manual visit does not request HealthKit authorization, and denial or workout failure never blocks capture.
+- HealthKit workout summaries are optional supporting context.
 - Physiology output is explicitly non-diagnostic; raw sensor streams are not treated as proof of muscle state.
 
 ### Route rehearsal and learning
@@ -41,12 +44,14 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 - Consent-gated source/derived route media with lineage, hashes, annotations, correction revisions, retention, deletion tombstones, and manifest export.
 - Local media loading is path-contained and does not expose filesystem paths to model requests.
 - Replaceable HTTP adapters for route reading and rehearsal suggestions with runtime credential injection, cancellation, limits, and typed failures.
+- Media consent and model execution are separate actions; a suggested route read can be attached to a RouteCard, edited as a rehearsal, reopened, and copied into an Attempt-linked Actual draft without pretending it was observed.
 - Every remote model result is forced to `suggested + modelAdapter`; user confirmation remains a separate action.
 
 ### Apple surfaces
 
 - SwiftUI Watch capture/rest surface and iPhone experience/review/rehearsal surfaces.
-- HealthKit and WatchConnectivity adapters with explicit unavailable/denied/failure states.
+- Explicit Health recording enablement and HealthKit/WatchConnectivity unavailable, denied, pending, and failure states.
+- Manual capture, review, and physiology remain the default surface; route intelligence is a user-opened optional workspace.
 - Dynamic Type, VoiceOver labels, and text-plus-symbol status treatment in the main experience flow.
 
 ## Repository Layout
@@ -79,9 +84,11 @@ swift run linewise-demo
 
 Run the same checks with `-c release` before shipping a branch.
 
+The current executable-spec baseline is 168 passing behaviors in both Debug and Release: Domain 76, Application 36, Apple adapters 41, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+
 For the Apple apps, open `LineWise.xcodeproj` in a full Xcode installation, choose the shared `LineWise` or `LineWise-Watch` scheme, configure signing, and run on a paired iPhone/Apple Watch. HealthKit and WatchConnectivity behavior must be verified on real signed devices; Swift Package tests alone do not establish that evidence.
 
-Remote AI is optional. Construct a provider with an endpoint and a runtime bearer-token source; no credential is stored in the repository. The manual and deterministic-local flows remain usable when the endpoint is absent or fails.
+Remote AI is optional. The iPhone composition reads `LINEWISE_ROUTE_READ_ENDPOINT`, `LINEWISE_ROUTE_READ_PROVIDER_ID`, and `LINEWISE_ROUTE_READ_PROVIDER_VERSION` from build settings and resolves `LINEWISE_ROUTE_READ_BEARER_TOKEN` at runtime. No endpoint or credential is committed, and the manual and deterministic-local flows remain usable when configuration is absent or a request fails.
 
 ## Product and Evidence Boundary
 

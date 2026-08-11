@@ -210,6 +210,7 @@ specifications.append(contentsOf: rehearsalCoordinatorSpecifications())
 specifications.append(contentsOf: experiencePersistenceSpecifications())
 specifications.append(contentsOf: fieldEvidenceSpecifications())
 specifications.append(contentsOf: learningExperienceSpecifications())
+specifications.append(contentsOf: reviewInboxReconciliationSpecifications())
 
 var failures: [String] = []
 for (name, specification) in specifications {

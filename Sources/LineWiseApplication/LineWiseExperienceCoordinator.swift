@@ -88,6 +88,9 @@ public enum RehearsalAssociationRejection: Error, Equatable, Sendable {
   case attemptRouteMismatch
   case attemptVisitMismatch
   case actualTrackRequiresAttempt
+  case routeReadMustBeSuggested
+  case confirmedStartHoldDoesNotExist(HoldID)
+  case invalidRouteReadResult(RouteRehearsalError)
 }
 
 public enum RehearsalAssociationOutcome: Equatable, Sendable {
@@ -99,18 +102,49 @@ public struct RouteRehearsalAssociationSnapshot: Equatable, Codable, Sendable {
   public let routeCardID: RouteCardID
   public let plannedVisitID: GymVisitID?
   public let actualAttemptID: AttemptID?
+  public let routeReadProvenance: RehearsalProvenance
   public let rehearsal: RouteRehearsal
 
   public init(
     routeCardID: RouteCardID,
     plannedVisitID: GymVisitID?,
     actualAttemptID: AttemptID?,
+    routeReadProvenance: RehearsalProvenance = .manual,
     rehearsal: RouteRehearsal
   ) {
     self.routeCardID = routeCardID
     self.plannedVisitID = plannedVisitID
     self.actualAttemptID = actualAttemptID
+    self.routeReadProvenance = routeReadProvenance
     self.rehearsal = rehearsal
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case routeCardID
+    case plannedVisitID
+    case actualAttemptID
+    case routeReadProvenance
+    case rehearsal
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    routeCardID = try container.decode(RouteCardID.self, forKey: .routeCardID)
+    plannedVisitID = try container.decodeIfPresent(GymVisitID.self, forKey: .plannedVisitID)
+    actualAttemptID = try container.decodeIfPresent(AttemptID.self, forKey: .actualAttemptID)
+    routeReadProvenance =
+      try container.decodeIfPresent(RehearsalProvenance.self, forKey: .routeReadProvenance)
+      ?? .manual
+    rehearsal = try container.decode(RouteRehearsal.self, forKey: .rehearsal)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(routeCardID, forKey: .routeCardID)
+    try container.encodeIfPresent(plannedVisitID, forKey: .plannedVisitID)
+    try container.encodeIfPresent(actualAttemptID, forKey: .actualAttemptID)
+    try container.encode(routeReadProvenance, forKey: .routeReadProvenance)
+    try container.encode(rehearsal, forKey: .rehearsal)
   }
 }
 
@@ -119,6 +153,27 @@ public enum LineWiseExperienceWarning: Equatable, Sendable {
     cueID: NextSessionCueID,
     reason: RecallTrainingRejection
   )
+}
+
+public struct ReviewInboxReconciliationSummary: Equatable, Sendable {
+  public let enqueuedItemIDs: [ReviewInboxItemID]
+
+  public init(enqueuedItemIDs: [ReviewInboxItemID]) {
+    self.enqueuedItemIDs = enqueuedItemIDs
+  }
+}
+
+public enum ReviewInboxReconciliationError: Error, Equatable, Sendable,
+  CustomStringConvertible
+{
+  case enqueueRejected(sourceKey: String, reason: RecallTrainingRejection)
+
+  public var description: String {
+    switch self {
+    case .enqueueRejected(let sourceKey, let reason):
+      "Could not reconcile Review Inbox source \(sourceKey): \(reason)"
+    }
+  }
 }
 
 public struct LineWiseExperienceProjection: Equatable, Sendable {
@@ -157,6 +212,7 @@ public struct LineWiseExperienceCoordinator {
     let routeCardID: RouteCardID
     let plannedVisitID: GymVisitID?
     let actualAttemptID: AttemptID?
+    let routeReadProvenance: RehearsalProvenance
     var engine: RouteRehearsalEngine
 
     var snapshot: RouteRehearsalAssociationSnapshot {
@@ -164,6 +220,7 @@ public struct LineWiseExperienceCoordinator {
         routeCardID: routeCardID,
         plannedVisitID: plannedVisitID,
         actualAttemptID: actualAttemptID,
+        routeReadProvenance: routeReadProvenance,
         rehearsal: engine.rehearsal
       )
     }
@@ -242,6 +299,7 @@ public struct LineWiseExperienceCoordinator {
         routeCardID: association.routeCardID,
         plannedVisitID: association.plannedVisitID,
         actualAttemptID: association.actualAttemptID,
+        routeReadProvenance: association.routeReadProvenance,
         engine: engine
       )
     }
@@ -317,6 +375,79 @@ public struct LineWiseExperienceCoordinator {
     _ envelopes: [DeviceEventEnvelope]
   ) -> LineWiseDeviceSyncOutcome {
     appCoordinator.receive(envelopes)
+  }
+
+  /// Rebuilds the user-decision queue from durable capture state without
+  /// reopening sources the user already resolved or dismissed.
+  @discardableResult
+  public mutating func reconcileReviewInboxFromCapture() throws
+    -> ReviewInboxReconciliationSummary
+  {
+    let capture = appCoordinator.projection
+    let reviewableVisitIDs = Set(
+      capture.visits.compactMap { visit -> GymVisitID? in
+        guard visit.captureState == .ended else { return nil }
+        switch visit.reviewState {
+        case .pendingReview, .reviewing, .needsRecheck:
+          return visit.id
+        case .notReady, .reviewed:
+          return nil
+        }
+      }
+    )
+    let trackedSourceKeys = Set(recallTrainingState.snapshot.reviewItems.map(\.sourceKey))
+    var proposedRecallState = recallTrainingState
+    var newlyTrackedSourceKeys: Set<String> = []
+    var enqueuedItemIDs: [ReviewInboxItemID] = []
+
+    for attempt in capture.attempts
+    where attempt.recordState == .active && reviewableVisitIDs.contains(attempt.visitID) {
+      var candidates: [(suffix: String, kind: ReviewInboxItemKind)] = []
+      if attempt.routeCardID == nil {
+        candidates.append(("unassigned", .unassignedAttempt(attempt.id)))
+      }
+      if attempt.outcome == .unresolved {
+        candidates.append(("unresolved", .unresolvedAttempt(attempt.id)))
+      }
+
+      for candidate in candidates {
+        let sourceKey = "attempt/\(attempt.id.rawValue)/\(candidate.suffix)"
+        guard
+          !trackedSourceKeys.contains(sourceKey),
+          !newlyTrackedSourceKeys.contains(sourceKey)
+        else { continue }
+        let itemID = ReviewInboxItemID("\(candidate.suffix)/\(attempt.id.rawValue)")
+        let transition = RecallTraining.apply(
+          .enqueueReviewItem(
+            actionID: ActionID("experience.reconcile-review/\(sourceKey)"),
+            itemID: itemID,
+            sourceKey: sourceKey,
+            visitID: attempt.visitID,
+            kind: candidate.kind,
+            occurredAt: attempt.occurredAt
+          ),
+          visitSnapshot: visitSnapshotForRecall,
+          to: proposedRecallState
+        )
+        switch transition.outcome {
+        case .accepted:
+          proposedRecallState = transition.state
+          newlyTrackedSourceKeys.insert(sourceKey)
+          enqueuedItemIDs.append(itemID)
+        case .duplicate:
+          proposedRecallState = transition.state
+          newlyTrackedSourceKeys.insert(sourceKey)
+        case .rejected(let reason):
+          throw ReviewInboxReconciliationError.enqueueRejected(
+            sourceKey: sourceKey,
+            reason: reason
+          )
+        }
+      }
+    }
+
+    recallTrainingState = proposedRecallState
+    return ReviewInboxReconciliationSummary(enqueuedItemIDs: enqueuedItemIDs)
   }
 
   @discardableResult
@@ -476,7 +607,8 @@ public struct LineWiseExperienceCoordinator {
     _ engine: RouteRehearsalEngine,
     routeCardID: RouteCardID,
     plannedVisitID: GymVisitID? = nil,
-    actualAttemptID: AttemptID? = nil
+    actualAttemptID: AttemptID? = nil,
+    routeReadProvenance: RehearsalProvenance = .manual
   ) -> RehearsalAssociationOutcome {
     let rehearsalID = engine.rehearsal.id
     guard rehearsalsByID[rehearsalID] == nil else {
@@ -494,9 +626,72 @@ public struct LineWiseExperienceCoordinator {
       routeCardID: routeCardID,
       plannedVisitID: plannedVisitID,
       actualAttemptID: actualAttemptID,
+      routeReadProvenance: routeReadProvenance,
       engine: engine
     )
     return .accepted
+  }
+
+  /// Creates an editable suggested rehearsal from a media route read without inventing observed
+  /// movement. Suggested start holds become contacts only when their IDs were separately confirmed.
+  @discardableResult
+  public mutating func attachRouteReadResult(
+    _ result: RouteReadResult,
+    routeCardID: RouteCardID,
+    rehearsalID: RouteRehearsalID,
+    bodyProfile: BodyProfile,
+    confirmedStartHoldIDs: [HoldID] = [],
+    plannedVisitID: GymVisitID? = nil
+  ) -> RehearsalAssociationOutcome {
+    guard result.provenance.authorship == .suggested else {
+      return .rejected(.routeReadMustBeSuggested)
+    }
+    let uniqueConfirmedStarts = confirmedStartHoldIDs.reduce(into: [HoldID]()) {
+      if !$0.contains($1) { $0.append($1) }
+    }
+    for holdID in uniqueConfirmedStarts where result.scene.hold(id: holdID) == nil {
+      return .rejected(.confirmedStartHoldDoesNotExist(holdID))
+    }
+
+    let contacts = Self.suggestedStarterContacts(confirmedStartHoldIDs: uniqueConfirmedStarts)
+    let confirmedHolds = uniqueConfirmedStarts.compactMap(result.scene.hold)
+    let torsoPosition: Point2D
+    if confirmedHolds.isEmpty {
+      torsoPosition = Point2D(
+        x: result.scene.size.width / 2,
+        y: result.scene.size.height / 2
+      )
+    } else {
+      torsoPosition = Point2D(
+        x: confirmedHolds.map(\.center.x).reduce(0, +) / Double(confirmedHolds.count),
+        y: confirmedHolds.map(\.center.y).reduce(0, +) / Double(confirmedHolds.count)
+      )
+    }
+    let starter = PoseKeyframe(
+      id: PoseKeyframeID("\(rehearsalID.rawValue)/suggested-start"),
+      label: "Suggested start draft",
+      torsoPosition: torsoPosition,
+      contacts: contacts,
+      provenance: result.provenance
+    )
+    do {
+      let engine = try RouteRehearsalEngine(
+        rehearsalID: rehearsalID,
+        scene: result.scene,
+        bodyProfile: bodyProfile,
+        planKeyframes: [starter]
+      )
+      return attachRehearsal(
+        engine,
+        routeCardID: routeCardID,
+        plannedVisitID: plannedVisitID,
+        routeReadProvenance: result.provenance
+      )
+    } catch let error as RouteRehearsalError {
+      return .rejected(.invalidRouteReadResult(error))
+    } catch {
+      return .rejected(.invalidRouteReadResult(.emptyPlan))
+    }
   }
 
   @discardableResult
@@ -596,6 +791,24 @@ public struct LineWiseExperienceCoordinator {
       }
     }
     return nil
+  }
+
+  private static func suggestedStarterContacts(
+    confirmedStartHoldIDs: [HoldID]
+  ) -> [LimbContact] {
+    var contacts = Limb.allCases.map(LimbContact.unknown)
+    guard let first = confirmedStartHoldIDs.first else { return contacts }
+    contacts[0] = LimbContact(
+      limb: .leftHand,
+      target: .hold(first),
+      mode: confirmedStartHoldIDs.count == 1 ? .match : .hand
+    )
+    contacts[1] = LimbContact(
+      limb: .rightHand,
+      target: .hold(confirmedStartHoldIDs.dropFirst().first ?? first),
+      mode: confirmedStartHoldIDs.count == 1 ? .match : .hand
+    )
+    return contacts
   }
 }
 

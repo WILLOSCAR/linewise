@@ -15,7 +15,47 @@ func rehearsalCoordinatorSpecifications() -> [(String, () throws -> Void)] {
       "rehearsal coordinator supports step scrub continuous and loop playback",
       rehearsalCoordinatorSupportsPlaybackModes
     ),
+    (
+      "Actual draft requires an Attempt and copied Plan remains user authored",
+      actualDraftRequiresAttemptAndRemainsUserAuthored
+    ),
   ]
+}
+
+private func actualDraftRequiresAttemptAndRemainsUserAuthored() throws {
+  var withoutAttempt = try makeRehearsalCoordinator(actualAttemptID: nil)
+  let rejected = withoutAttempt.handle(.copyPlanIntoActualDraft)
+  try expect(
+    rejected.outcome == .rejected(.actualAttemptRequired),
+    "Actual creation should require a real associated Attempt"
+  )
+  try expect(
+    withoutAttempt.engine.rehearsal.actual.keyframes.isEmpty,
+    "rejected Actual creation must not mutate the timeline"
+  )
+  try expect(
+    !rejected.projection.canCreateActualDraft,
+    "UI projection should disable Actual drafting without an Attempt"
+  )
+
+  let attemptID = AttemptID("actual-draft-attempt")
+  var linked = try makeRehearsalCoordinator(actualAttemptID: attemptID)
+  let copied = linked.handle(.copyPlanIntoActualDraft)
+  try expect(copied.isSuccess, "Attempt-linked Plan should copy into an Actual draft")
+  try expect(
+    copied.projection.actualAttemptID == attemptID, "Attempt identity should remain visible")
+  try expect(copied.projection.activeTrack == .actual, "copied draft should open Actual")
+  try expect(
+    copied.projection.keyframes.allSatisfy {
+      $0.provenance.authorship == .userAuthored
+        && $0.provenance.automation == .manual
+    },
+    "copied Plan is a user-authored manual draft, never observed movement"
+  )
+  try expect(
+    copied.projection.timelineImportProvenance == .manual,
+    "Actual draft track provenance should be manual"
+  )
 }
 
 private func rehearsalCoordinatorPreservesProviderProvenance() throws {
@@ -231,7 +271,9 @@ private func rehearsalCoordinatorSupportsPlaybackModes() throws {
   )
 }
 
-private func makeRehearsalCoordinator() throws -> LineWiseRehearsalCoordinator {
+private func makeRehearsalCoordinator(
+  actualAttemptID: AttemptID? = AttemptID("rehearsal-spec-attempt")
+) throws -> LineWiseRehearsalCoordinator {
   let holds = [
     Hold(id: HoldID("hold-lower-left"), center: Point2D(x: 25, y: 20), radius: 4),
     Hold(id: HoldID("hold-lower-right"), center: Point2D(x: 55, y: 22), radius: 4),
@@ -294,7 +336,8 @@ private func makeRehearsalCoordinator() throws -> LineWiseRehearsalCoordinator {
     rehearsalID: RouteRehearsalID("rehearsal-spec"),
     scene: scene,
     bodyProfile: body,
-    planKeyframes: frames
+    planKeyframes: frames,
+    actualAttemptID: actualAttemptID
   )
 }
 

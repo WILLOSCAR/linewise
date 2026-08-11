@@ -12,6 +12,11 @@ public enum LineWiseWorkoutStatus: Equatable, Sendable {
   case failed(String)
 }
 
+public enum LineWiseHealthRecordingPreference: Equatable, Sendable {
+  case manualOnly
+  case enabled
+}
+
 public enum LineWiseSyncPhase: Equatable, Sendable {
   case inactive
   case activating
@@ -122,8 +127,8 @@ private enum LineWiseAppleCaptureBackend {
 }
 
 /// Owns the production Apple runtime boundary while leaving the domain capture
-/// loop authoritative. HealthKit and cross-device delivery are optional
-/// follow-up work performed only after a command is durably accepted.
+/// loop authoritative. HealthKit recording requires a separate explicit user
+/// opt-in, while cross-device delivery follows durable capture mutations.
 @MainActor
 public final class LineWiseAppleRuntime {
   public let deviceID: DeviceID
@@ -132,8 +137,10 @@ public final class LineWiseAppleRuntime {
   private let syncService: LineWiseDeviceSyncService
   private let workoutRecorder: any WorkoutRecording
   private var optionalCapabilityTask: Task<Void, Never>?
+  private var authorizedCapabilityAfterOptIn: OptionalCapabilityState?
   private var syncWasActivated = false
 
+  public private(set) var healthRecordingPreference: LineWiseHealthRecordingPreference = .manualOnly
   public private(set) var workoutStatus: LineWiseWorkoutStatus = .idle
   public private(set) var syncStatus: LineWiseSyncStatus
   public private(set) var latestHealthKitWorkoutSummary: HealthKitWorkoutSummary?
@@ -189,13 +196,23 @@ public final class LineWiseAppleRuntime {
     guard feedback.outcome == .accepted else { return feedback }
     switch intent {
     case .startVisit(_, _, let occurredAt, _):
-      scheduleWorkoutStart(at: Self.date(from: occurredAt))
+      if healthRecordingPreference == .enabled {
+        scheduleWorkoutStart(at: Self.date(from: occurredAt))
+      }
     case .endVisit(_, let occurredAt, _):
       scheduleWorkoutStop(at: Self.date(from: occurredAt))
     default:
       break
     }
     return feedback
+  }
+
+  /// Records an explicit, runtime-scoped user choice before HealthKit access
+  /// is requested. Manual Visit capture remains available for every outcome.
+  public func enableHealthRecording() {
+    guard healthRecordingPreference == .manualOnly else { return }
+    healthRecordingPreference = .enabled
+    scheduleHealthAuthorization()
   }
 
   public func waitForOptionalCapabilityWork() async {
@@ -229,13 +246,13 @@ public final class LineWiseAppleRuntime {
 
     for delivery in batch.deliveries {
       switch delivery.outcome {
-      case .acceptedForDelivery:
+      case .confirmedDurableDelivery:
         let acknowledgement = captureBackend.acknowledgeOutbound(delivery.eventID)
         if case .persistenceFailed(let reason) = acknowledgement {
           failures.append(reason)
         }
-      case .notAcceptedLocally:
-        failures.append("Transport did not accept \(delivery.eventID.rawValue) locally")
+      case .notEligibleForDurableAcknowledgement(let reason):
+        failures.append("\(delivery.eventID.rawValue): \(reason.description)")
       case .failed(let reason):
         failures.append(reason)
       }
@@ -260,9 +277,24 @@ public final class LineWiseAppleRuntime {
   public func pullReceivedEvents() async -> DeviceSyncPullResult {
     await activateSync()
     do {
-      let envelopes = try await syncService.pull()
-      switch captureBackend.receive(envelopes) {
+      let received = try await syncService.pull()
+      switch captureBackend.receive(received.map(\.envelope)) {
       case .received(let insertedEventIDs, let duplicateEventIDs):
+        do {
+          try await syncService.acknowledgeReceived(received.map(\.payloadID))
+        } catch {
+          let reason = String(describing: error)
+          syncStatus = LineWiseSyncStatus(
+            phase: .degraded,
+            pendingCount: pendingOutboundCount,
+            lastError: reason
+          )
+          return DeviceSyncPullResult(
+            insertedCount: insertedEventIDs.count,
+            duplicateCount: duplicateEventIDs.count,
+            error: reason
+          )
+        }
         refreshSyncStatusAfterPull()
         return DeviceSyncPullResult(
           insertedCount: insertedEventIDs.count,
@@ -313,6 +345,21 @@ public final class LineWiseAppleRuntime {
     }
   }
 
+  private func scheduleHealthAuthorization() {
+    let preceding = optionalCapabilityTask
+    workoutStatus = .preparing
+    optionalCapabilityTask = Task { [weak self] in
+      await preceding?.value
+      guard let self else { return }
+      var capability = await self.workoutRecorder.capabilityState()
+      if capability == .authorizationRequired {
+        capability = await self.workoutRecorder.requestAuthorization()
+      }
+      self.authorizedCapabilityAfterOptIn = capability
+      self.workoutStatus = capability == .ready ? .idle : .degraded(capability)
+    }
+  }
+
   private func scheduleWorkoutStop(at date: Date) {
     let preceding = optionalCapabilityTask
     optionalCapabilityTask = Task { [weak self] in
@@ -325,10 +372,16 @@ public final class LineWiseAppleRuntime {
   }
 
   private func startOptionalWorkout(at date: Date) async {
-    var capability = await workoutRecorder.capabilityState()
+    var capability: OptionalCapabilityState
+    if let authorizedCapabilityAfterOptIn {
+      capability = authorizedCapabilityAfterOptIn
+    } else {
+      capability = await workoutRecorder.capabilityState()
+    }
     if capability == .authorizationRequired {
       capability = await workoutRecorder.requestAuthorization()
     }
+    authorizedCapabilityAfterOptIn = capability
     guard capability == .ready else {
       workoutStatus = .degraded(capability)
       return

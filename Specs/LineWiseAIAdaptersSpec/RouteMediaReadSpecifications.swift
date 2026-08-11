@@ -204,9 +204,10 @@ private func routeMediaSuccessCarriesVerifiedBytesAndLineage() async throws {
     transport: transport,
     maximumTotalByteCount: 16
   )
+  let domainProvider: any RouteMediaReadProviding = provider
   let routeRead = mediaRouteReadRequest()
 
-  let result = try await provider.read(
+  let result = try await domainProvider.read(
     RouteMediaReadRequest(routeRead: routeRead, assets: [source, derived])
   )
 

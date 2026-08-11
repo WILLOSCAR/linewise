@@ -1,8 +1,8 @@
 import LineWiseDomain
 
 public enum DeviceSyncDeliveryOutcome: Equatable, Sendable {
-  case acceptedForDelivery(DeviceTransferMode)
-  case notAcceptedLocally
+  case confirmedDurableDelivery(DeviceTransferMode)
+  case notEligibleForDurableAcknowledgement(DeviceTransferNonAcknowledgementReason)
   case failed(String)
 }
 
@@ -15,8 +15,8 @@ public struct DeviceSyncDelivery: Equatable, Sendable {
     self.outcome = outcome
   }
 
-  public var wasAcceptedLocally: Bool {
-    if case .acceptedForDelivery = outcome { return true }
+  public var wasDurablyConfirmed: Bool {
+    if case .confirmedDurableDelivery = outcome { return true }
     return false
   }
 }
@@ -30,16 +30,16 @@ public struct DeviceSyncBatchResult: Equatable, Sendable {
 
   public var acknowledgementCandidates: [ActionID] {
     deliveries.compactMap { delivery in
-      delivery.wasAcceptedLocally ? delivery.eventID : nil
+      delivery.wasDurablyConfirmed ? delivery.eventID : nil
     }
   }
 }
 
 /// Moves already-durable domain envelopes across an optional device transport.
 ///
-/// This service never owns the Outbox. Its acknowledgement candidates are only
-/// a signal that the transport accepted a payload locally; the caller remains
-/// responsible for atomically acknowledging the matching durable event.
+/// This service never owns the Outbox. An acknowledgement candidate means the
+/// reliable transport produced its completion callback successfully; merely
+/// entering a platform queue or updating replaceable context is insufficient.
 public struct LineWiseDeviceSyncService: Sendable {
   private let bridge: DeviceEnvelopeBridge
 
@@ -55,18 +55,34 @@ public struct LineWiseDeviceSyncService: Sendable {
     _ envelopes: [DeviceEventEnvelope],
     mode: DeviceTransferMode = .reliableBackground
   ) async -> DeviceSyncBatchResult {
+    if mode == .latestContext {
+      return DeviceSyncBatchResult(
+        deliveries: envelopes.map {
+          DeviceSyncDelivery(
+            eventID: $0.eventID,
+            outcome: .notEligibleForDurableAcknowledgement(.latestContextIsReplaceable)
+          )
+        }
+      )
+    }
+
     var deliveries: [DeviceSyncDelivery] = []
     deliveries.reserveCapacity(envelopes.count)
 
     for envelope in envelopes {
       do {
         let receipt = try await bridge.send(envelope, mode: mode)
+        let outcome: DeviceSyncDeliveryOutcome =
+          switch receipt.disposition {
+          case .durablyCompleted:
+            .confirmedDurableDelivery(receipt.mode)
+          case .notEligibleForDurableAcknowledgement(let reason):
+            .notEligibleForDurableAcknowledgement(reason)
+          }
         deliveries.append(
           DeviceSyncDelivery(
             eventID: envelope.eventID,
-            outcome: receipt.acceptedLocally
-              ? .acceptedForDelivery(receipt.mode)
-              : .notAcceptedLocally
+            outcome: outcome
           ))
       } catch {
         deliveries.append(
@@ -80,7 +96,11 @@ public struct LineWiseDeviceSyncService: Sendable {
     return DeviceSyncBatchResult(deliveries: deliveries)
   }
 
-  public func pull() async throws -> [DeviceEventEnvelope] {
-    try await bridge.receivedEnvelopes()
+  public func pull() async throws -> [ReceivedDeviceEnvelope] {
+    try await bridge.pendingReceivedEnvelopes()
+  }
+
+  public func acknowledgeReceived(_ payloadIDs: [DevicePayloadID]) async throws {
+    try await bridge.acknowledgeReceivedPayloads(payloadIDs)
   }
 }

@@ -2,23 +2,6 @@ import CryptoKit
 import Foundation
 import LineWiseDomain
 
-/// Loads one app-controlled media reference into memory. Storage ownership and file-system access
-/// stay with the caller; this adapter never persists the returned bytes.
-public protocol RouteMediaDataLoader: Sendable {
-  func loadData(for reference: LocalMediaReference) async throws -> Data
-}
-
-/// A route-read request whose media remains represented by local dataset metadata until `read`.
-public struct RouteMediaReadRequest: Equatable, Sendable {
-  public let routeRead: RouteReadRequest
-  public let assets: [RouteMediaAsset]
-
-  public init(routeRead: RouteReadRequest, assets: [RouteMediaAsset]) {
-    self.routeRead = routeRead
-    self.assets = assets
-  }
-}
-
 public enum RouteMediaReadContractError: Error, Equatable, Sendable {
   case invalidTotalByteLimit
   case mediaRequired
@@ -57,7 +40,7 @@ extension RouteMediaReadContractError: LocalizedError {
 }
 
 /// Sends explicitly authorized route imagery to a replaceable remote model endpoint.
-public struct HTTPRouteMediaReadProvider: Sendable {
+public struct HTTPRouteMediaReadProvider: RouteMediaReadProviding {
   public var identifier: String { configuration.providerIdentifier }
 
   private let configuration: RemoteModelEndpointConfiguration

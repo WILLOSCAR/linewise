@@ -14,6 +14,7 @@
 		A10000000000000000000005 /* LineWise Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* LineWise Watch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000006 /* LineWiseApplication in Frameworks */ = {isa = PBXBuildFile; productRef = Q10000000000000000000003 /* LineWiseApplication */; };
 		A10000000000000000000007 /* LineWiseApplication in Frameworks */ = {isa = PBXBuildFile; productRef = Q10000000000000000000004 /* LineWiseApplication */; };
+		A10000000000000000000008 /* LineWiseAIAdapters in Frameworks */ = {isa = PBXBuildFile; productRef = Q10000000000000000000005 /* LineWiseAIAdapters */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 			files = (
 				A10000000000000000000003 /* LineWiseAppleAdapters in Frameworks */,
 				A10000000000000000000006 /* LineWiseApplication in Frameworks */,
+				A10000000000000000000008 /* LineWiseAIAdapters in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -140,6 +142,7 @@
 			packageProductDependencies = (
 				Q10000000000000000000001 /* LineWiseAppleAdapters */,
 				Q10000000000000000000003 /* LineWiseApplication */,
+				Q10000000000000000000005 /* LineWiseAIAdapters */,
 			);
 			productName = LineWise;
 			productReference = B10000000000000000000007 /* LineWise.app */;
@@ -437,6 +440,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = P10000000000000000000001 /* XCLocalSwiftPackageReference "." */;
 			productName = LineWiseApplication;
+		};
+		Q10000000000000000000005 /* LineWiseAIAdapters */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = P10000000000000000000001 /* XCLocalSwiftPackageReference "." */;
+			productName = LineWiseAIAdapters;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

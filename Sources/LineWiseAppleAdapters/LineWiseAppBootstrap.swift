@@ -73,6 +73,16 @@ public enum LineWiseAppBootstrap {
     )
   }
 
+  public static func devicePayloadInboxURL(
+    in storageDirectoryURL: URL,
+    role: LineWiseDeviceRole
+  ) -> URL {
+    storageDirectoryURL.appendingPathComponent(
+      "device-payload-inbox-\(role.rawValue)-v1.json",
+      isDirectory: false
+    )
+  }
+
   public static func makePersistentCoordinator(
     storageDirectoryURL: URL,
     deviceID: DeviceID

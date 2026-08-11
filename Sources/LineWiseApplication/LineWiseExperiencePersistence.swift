@@ -325,10 +325,14 @@ public struct PersistentLineWiseExperienceCoordinator {
   ) -> LineWiseDeviceSyncOutcome {
     var proposed = coordinator
     let result = proposed.receive(envelopes)
-    guard case .received(let insertedEventIDs, _) = result, !insertedEventIDs.isEmpty else {
+    guard case .received(let insertedEventIDs, _) = result else {
       return result
     }
     do {
+      let reconciliation = try proposed.reconcileReviewInboxFromCapture()
+      guard !insertedEventIDs.isEmpty || !reconciliation.enqueuedItemIDs.isEmpty else {
+        return result
+      }
       try persist(proposed)
       coordinator = proposed
       return result
@@ -342,6 +346,18 @@ public struct PersistentLineWiseExperienceCoordinator {
     _ eventID: ActionID
   ) -> LineWiseDeviceSyncOutcome {
     coordinator.acknowledgeOutbound(eventID)
+  }
+
+  @discardableResult
+  public mutating func reconcileReviewInboxFromCapture() throws
+    -> ReviewInboxReconciliationSummary
+  {
+    var proposed = coordinator
+    let result = try proposed.reconcileReviewInboxFromCapture()
+    guard !result.enqueuedItemIDs.isEmpty else { return result }
+    try persist(proposed)
+    coordinator = proposed
+    return result
   }
 
   @discardableResult
@@ -397,7 +413,8 @@ public struct PersistentLineWiseExperienceCoordinator {
     _ engine: RouteRehearsalEngine,
     routeCardID: RouteCardID,
     plannedVisitID: GymVisitID? = nil,
-    actualAttemptID: AttemptID? = nil
+    actualAttemptID: AttemptID? = nil,
+    routeReadProvenance: RehearsalProvenance = .manual
   ) throws -> RehearsalAssociationOutcome {
     try applying(
       {
@@ -405,7 +422,32 @@ public struct PersistentLineWiseExperienceCoordinator {
           engine,
           routeCardID: routeCardID,
           plannedVisitID: plannedVisitID,
-          actualAttemptID: actualAttemptID
+          actualAttemptID: actualAttemptID,
+          routeReadProvenance: routeReadProvenance
+        )
+      },
+      commitsWhen: { $0 == .accepted }
+    )
+  }
+
+  @discardableResult
+  public mutating func attachRouteReadResult(
+    _ result: RouteReadResult,
+    routeCardID: RouteCardID,
+    rehearsalID: RouteRehearsalID,
+    bodyProfile: BodyProfile,
+    confirmedStartHoldIDs: [HoldID] = [],
+    plannedVisitID: GymVisitID? = nil
+  ) throws -> RehearsalAssociationOutcome {
+    try applying(
+      {
+        $0.attachRouteReadResult(
+          result,
+          routeCardID: routeCardID,
+          rehearsalID: rehearsalID,
+          bodyProfile: bodyProfile,
+          confirmedStartHoldIDs: confirmedStartHoldIDs,
+          plannedVisitID: plannedVisitID
         )
       },
       commitsWhen: { $0 == .accepted }

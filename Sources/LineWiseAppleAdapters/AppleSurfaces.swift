@@ -10,6 +10,7 @@
     @Published public private(set) var feedback: LineWiseAppOutcome?
     @Published public private(set) var syncStatus: LineWiseSyncStatus
     @Published public private(set) var workoutStatus: LineWiseWorkoutStatus
+    @Published public private(set) var healthRecordingPreference: LineWiseHealthRecordingPreference
     @Published public private(set) var latestHealthKitWorkoutSummary: HealthKitWorkoutSummary?
     @Published public private(set) var currentInstant: Instant
     @Published public private(set) var isLowPowerMode = false
@@ -23,6 +24,7 @@
       projection = runtime.projection
       syncStatus = runtime.syncStatus
       workoutStatus = runtime.workoutStatus
+      healthRecordingPreference = runtime.healthRecordingPreference
       latestHealthKitWorkoutSummary = runtime.latestHealthKitWorkoutSummary
       currentInstant = Self.now
     }
@@ -90,6 +92,44 @@
           source: source
         )
       )
+    }
+
+    public let healthRecordingPurposeMessage =
+      "Optionally save this visit as a Health workout for heart-rate and workout-summary context. LineWise does not use it to diagnose fatigue, safety, or injury."
+
+    public var healthRecordingStatusText: String {
+      switch workoutStatus {
+      case .idle:
+        "Ready for the next Visit"
+      case .preparing:
+        "Checking Health access"
+      case .recording:
+        "Recording an optional Health workout"
+      case .completing:
+        "Saving the optional Health workout"
+      case .completed:
+        "Health workout saved"
+      case .degraded(.denied):
+        "Health access was denied; manual capture remains available"
+      case .degraded(.unavailable):
+        "Health recording is unavailable; manual capture remains available"
+      case .degraded(.authorizationRequired):
+        "Health access still requires authorization"
+      case .degraded(.ready):
+        "Health recording is ready"
+      case .degraded(.failed(let reason)), .failed(let reason):
+        "Health recording did not start: \(reason)"
+      }
+    }
+
+    public func enableHealthRecording() {
+      runtime.enableHealthRecording()
+      refreshProjection()
+      Task { [weak self] in
+        guard let self else { return }
+        await self.runtime.waitForOptionalCapabilityWork()
+        self.refreshProjection()
+      }
     }
 
     public func recordAttempt(source: CaptureSource) {
@@ -193,6 +233,7 @@
       projection = runtime.projection
       syncStatus = runtime.syncStatus
       workoutStatus = runtime.workoutStatus
+      healthRecordingPreference = runtime.healthRecordingPreference
       latestHealthKitWorkoutSummary = runtime.latestHealthKitWorkoutSummary
     }
 
@@ -393,6 +434,23 @@
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityLabel("End visit")
             } else {
+              if model.healthRecordingPreference == .manualOnly {
+                Text(model.healthRecordingPurposeMessage)
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .fixedSize(horizontal: false, vertical: true)
+                Button("Enable Health Recording") { model.enableHealthRecording() }
+                  .frame(maxWidth: .infinity, minHeight: 44)
+                  .accessibilityHint("Requests Health access only after this explicit choice")
+              } else {
+                Label("Health Recording selected", systemImage: "heart.circle")
+                  .font(.caption2)
+                  .accessibilityLabel("Health Recording selected for future Visits")
+                Text(model.healthRecordingStatusText)
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .fixedSize(horizontal: false, vertical: true)
+              }
               Button("Start Visit") { model.startVisit(source: .watch) }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity, minHeight: 50)
