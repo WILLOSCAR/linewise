@@ -1,149 +1,110 @@
-# LineWise Climb Watch App
+# LineWise / 线感
 
-Date: 2026-08-11
-Status: P0 semantic contract settled; pure Swift domain foundation and parallel Intelligence Nursery prototypes started
+LineWise is a local-first bouldering companion for Apple Watch and iPhone. The Watch captures low-interruption attempt, result, and rest anchors; the iPhone owns route/project memory, explicit review, correction, recall, rehearsal, and training follow-through.
 
-## Naming
+The repository now contains an end-to-end implementation foundation. P0 remains manual-first: AI and deterministic analysis can suggest, but they cannot silently rewrite confirmed user history.
 
-`抱石` in English is **Bouldering**.
+## Implemented Product Surface
 
-This directory is named `climb` because the broader product lane is climbing. The current working product name is **LineWise**. The Chinese working name is **线感**. The current MVP opportunity is specifically indoor bouldering.
+### Manual P0 loop
 
-`LineWise` means the product is not only a workout recorder. It should eventually become a bouldering companion for route memory, line reading, movement explanation, training, and partner workflows.
+- One-tap `Attempt`, explicit `Send` / `Not Sent`, exact-target `Undo`, and rest timing.
+- Honest unresolved outcomes when a result has not been confirmed.
+- Route cards, repeatable project cycles, gym visits, quick review, and next-session recall.
+- Route rename, availability correction, archive/restore, merge/unmerge, attempt reassignment, and project archive with an audit trail.
+- Late and out-of-order events reopen review instead of being silently discarded.
 
-## Current Product Thesis
+### Persistence and cross-device behavior
 
-The current external product thesis is:
+- Local-first Watch and iPhone capture with stable action IDs and deterministic replay.
+- Versioned JSON stores, migration, atomic file replacement, inbox/outbox, acknowledgements, retry, and duplicate suppression.
+- Full export and deletion APIs; redacted diagnostics omit route labels, health values, timestamps, and device IDs.
+- Persistent experience state covers review, recall, training, physiology context, rehearsal, and active rest.
 
-> LineWise is a bouldering companion: use Apple Watch to capture low-interruption attempt/rest anchors, use iPhone to remember routes and movement cues, and eventually help the user read lines, understand movement, train deliberately, and climb with better partners.
+### Physiology context
 
-The internal model remains useful, but should not replace the user-facing category:
+- Subjective fatigue and pump are the primary user inputs.
+- HealthKit workout summaries are optional supporting context and never block manual capture.
+- Physiology output is explicitly non-diagnostic; raw sensor streams are not treated as proof of muscle state.
 
-> Rhythm Capture + Recall Retrieval + Proof/Trust: Watch owns low-interruption rhythm anchors; iPhone owns project memory, correction, and next-session recall.
+### Route rehearsal and learning
 
-The broader product vision now has five pillars:
+- Editable 2D route scenes and hold contacts for both hands and feet.
+- Stick-figure pose solving, contact locks, keyframe add/duplicate/delete/reorder, downstream stale marking, and recompute.
+- Plan and Actual timelines, continuous playback, looping, scrubbing, and single-step inspection.
+- Deterministic Plan/Actual comparison across limb contacts, torso movement, and timing.
+- Failure episode → move cue → next-session cue, plus approved micro-drills, training paths, and proof checks.
+- Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance.
 
-1. 攀岩搭子: first as an AI/private companion, later maybe human partner workflows.
-2. 自动读线: photo-based route reading and editable movement suggestions.
-3. 趣味交互: stick-figure movement overlays and playful movement explanation.
-4. 定线解析: routesetter-lens interpretation of movement, key difficulty, wall style, and training intent.
-5. 教学与训练: route-failure-driven videos, drills, and functional training paths.
+### Media and replaceable AI adapters
 
-P0 remains deliberately narrower as a production contract, while Intelligence Nursery probes may run in parallel:
+- Consent-gated source/derived route media with lineage, hashes, annotations, correction revisions, retention, deletion tombstones, and manifest export.
+- Local media loading is path-contained and does not expose filesystem paths to model requests.
+- Replaceable HTTP adapters for route reading and rehearsal suggestions with runtime credential injection, cancellation, limits, and typed failures.
+- Every remote model result is forced to `suggested + modelAdapter`; user confirmation remains a separate action.
 
-> Prove the manual-first `capture -> quick review -> next-session recall` loop as the reliable product core. Promote AI route reading, automated photo analysis, video, coach workflows, or training-platform expansion only through their own evidence gates.
+### Apple surfaces
 
-## Active Docs
+- SwiftUI Watch capture/rest surface and iPhone experience/review/rehearsal surfaces.
+- HealthKit and WatchConnectivity adapters with explicit unavailable/denied/failure states.
+- Dynamic Type, VoiceOver labels, and text-plus-symbol status treatment in the main experience flow.
 
-| File | Role |
+## Repository Layout
+
+| Path | Purpose |
 | --- | --- |
-| `CONTEXT.md` | Concise single-context product and domain source of truth for future agents |
-| `docs/linewise_product_requirements_map_v0.md` | Cross-module ownership, dependencies, degradation, gates, and contract-resolution ledger |
-| `docs/linewise_p0_domain_and_lifecycle_contract_v0.md` | Normative Attempt, GymVisit, RouteCard, Project, review, and cross-device event semantics |
-| `docs/linewise_end_to_end_experience_contract_v0.md` | Normal and degraded iPhone/Watch journeys, recovery, Inbox, accessibility, and localization |
-| `docs/linewise_physiology_data_contract_v0.md` | HealthKit, subjective fatigue/pump, load context, retention, deletion, provenance, and Research Mode boundaries |
-| `docs/linewise_ai_route_rehearsal_requirements_v0.md` | Intelligence Nursery requirements for AI route reading, personalized body rehearsal, continuous animation, and single-step debugging |
-| `docs/linewise_ai_route_rehearsal_evaluation_protocol_v0.md` | X0-X5 tasks, baselines, metrics, failure taxonomy, promotion rules, and claim ceilings |
-| `docs/linewise_setter_lens_and_training_path_requirements_v0.md` | Inferred/authored route interpretation, MicroDrill, ProofCheck, and learning-loop requirements |
-| `docs/project_background.md` | Project background, market gap, strategy, and product principles |
-| `docs/climbing_bouldering_prd_v0_1.md` | Active P0/P0.5 requirements contract |
-| `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and field validation metrics |
-| `docs/climbing_bouldering_data_collection_plan.md` | Real-gym data collection and annotation protocol |
-| `docs/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
-| `docs/climbing_bouldering_implementation_plan.md` | Module interfaces, delivery phases, issue-ready backlog, tests, and current toolchain boundary |
-| `docs/product_initialization_v0.md` | Historical initialization snapshot; later focused contracts take precedence |
-| `docs/adr/0004-attempt-anchor-and-project-cycles.md` | Durable one-tap Attempt, honest unresolved outcome, RouteCard axes, and repeatable Project-cycle decision |
-| `docs/adr/0002-linewise-expanded-product-vision.md` | Durable decision: use LineWise / 线感 as the broader working frame while preserving Gym Visit Memory as P0 |
-| `docs/adr/0003-canonical-p0-domain-model-and-terms.md` | Durable decision: canonical P0 entities, event vocabulary, and term aliases |
-| `docs/adr/0001-gym-visit-memory-system.md` | Durable product decision: start from route/project-centered gym visit memory, not generic session logging |
+| `Sources/LineWiseDomain/` | Pure domain reducers, models, replay, rehearsal, comparison, dataset, and learning logic |
+| `Sources/LineWiseApplication/` | App coordinators, durable experience archive, rehearsal orchestration, and opt-in field evidence |
+| `Sources/LineWiseAppleAdapters/` | HealthKit, WatchConnectivity, Apple runtime, media library, and SwiftUI surfaces |
+| `Sources/LineWiseAIAdapters/` | Replaceable HTTP model adapters and media-aware request boundary |
+| `Apps/` | iPhone and watchOS app entry points, entitlements, and property lists |
+| `LineWise.xcodeproj/` | iPhone plus single-target watchOS companion project and shared schemes |
+| `Specs/` | Executable public-interface behavior specifications |
+| `Sources/LineWiseDemo/` | End-to-end command-line scenario |
+| `prototypes/` | Throwaway interaction probes; not production state |
+| `docs/` | Product contracts, gates, data plan, ADRs, and research context |
 
-## Historical Research
+## Run Locally
 
-These files are source material. They do not override `CONTEXT.md`, the active PRD, or ADRs.
-
-| File | Role |
-| --- | --- |
-| `docs/bouldering_field_research_v2.md` | Field-observation-oriented V2 research; reframed the product from training recorder to gym visit memory system |
-| `docs/climbing_bouldering_research_report_v1.md` | Primary expanded five-PM research and product-direction report |
-| `docs/bouldering_industry_history_business_report.md` | Bouldering industry history, Beijing/Shanghai brand landscape, business model, coaching mode, and trend report |
-| `docs/bouldering_market_mvp_report.md` | Original broad market research and MVP opportunity report, kept as source material |
-
-## Agent Workflow
-
-This project uses a lightweight local adaptation of the Matt workflow:
-
-- read `AGENTS.md` and `CONTEXT.md` before product or implementation work;
-- use `docs/adr/` for decisions that should survive across sessions;
-- track implementation issues in GitHub Issues after the PRD and validation gates are settled;
-- cut production issues from the focused contracts and implementation slices only after their acceptance behavior is explicit;
-- keep real-device Watch/HealthKit claims pending until a full Xcode SDK and paired-device evidence exist;
-- run bounded Intelligence Nursery prototypes independently from P0 release dependencies.
-
-## Executable Domain Foundation
-
-The current environment can compile the platform-independent Swift domain module but does not expose a watchOS SDK. Run the public-interface behavior specifications with:
+Swift 6 is required.
 
 ```sh
+swift build
 swift run LineWiseDomainSpec
+swift run LineWiseApplicationSpec
+swift run LineWiseAppleAdaptersSpec
+swift run LineWiseAIAdaptersSpec
+swift run linewise-demo
 ```
 
-The first implementation covers one-tap Attempt capture, honest unresolved outcomes, Mark Send without a second Attempt, exact-target Undo, idempotency, business-time result projection under out-of-order delivery, explicit review for same-time opposing results, late-event review reopening, RouteCard successors, and repeatable Project cycles. Watch UI, persistence adapters, HealthKit, and WatchConnectivity remain later verified slices.
+Run the same checks with `-c release` before shipping a branch.
 
-## Execution Tracker
+For the Apple apps, open `LineWise.xcodeproj` in a full Xcode installation, choose the shared `LineWise` or `LineWise-Watch` scheme, configure signing, and run on a paired iPhone/Apple Watch. HealthKit and WatchConnectivity behavior must be verified on real signed devices; Swift Package tests alone do not establish that evidence.
 
-The first issue-backed execution set is live in [GitHub Issues](https://github.com/WILLOSCAR/linewise/issues). The immediate anchors are [#1 Domain foundation review](https://github.com/WILLOSCAR/linewise/issues/1), [#3 persistence and replay](https://github.com/WILLOSCAR/linewise/issues/3), [#5 iPhone-only manual loop](https://github.com/WILLOSCAR/linewise/issues/5), and [#11 RouteRehearsal X0 evaluation](https://github.com/WILLOSCAR/linewise/issues/11). The complete mapping and readiness boundary live in the implementation plan.
+Remote AI is optional. Construct a provider with an endpoint and a runtime bearer-token source; no credential is stored in the repository. The manual and deterministic-local flows remain usable when the endpoint is absent or fails.
 
-## Directory Layout
+## Product and Evidence Boundary
 
-| Directory | Purpose |
-| --- | --- |
-| `docs/` | Product research, PRD, data collection plan, MVP gates |
-| `docs/agents/` | Local Matt-style workflow configuration |
-| `docs/adr/` | Durable product and architecture decisions |
-| `Sources/LineWiseDomain/` | Platform-independent P0 domain interface and implementation |
-| `Specs/LineWiseDomainSpec/` | Executable behavior specifications through the public interface |
-| `prototypes/` | Explicitly throwaway, directly runnable product probes |
-| `app/` | Future climbing Watch/iPhone implementation |
-| `ui/` | Future climbing-specific Watch and iPhone UI design |
-| `tests/` | Future simulator, real-device, adapter, field-test, and data-quality validation |
+Implemented code is not the same as validated product value. The repository proves deterministic behavior through executable specifications, while these claims still require external evidence:
 
-## Project Boundary
+- real-device HealthKit authorization, workout capture, and WatchConnectivity recovery;
+- remote model quality on representative route photos and videos;
+- fatigue or hand-muscle usefulness beyond subjective, non-diagnostic context;
+- completion time, tap burden, review completion, cue reuse, and retention in real gym visits.
 
-Climbing owns:
+Field evidence recording is disabled by default and requires explicit session consent. It stores controlled event categories and aggregate numerators/denominators, not route labels, health payloads, media, free text, or stable user identity.
 
-- bouldering Attempt/rest/result/Project semantics;
-- climbing market and competitor research;
-- climbing-specific Watch/iPhone UX;
-- climbing-specific HealthKit/Core Motion data collection plan;
-- future climbing PRD, validation gate, and implementation plan.
+## Product Contracts
 
-Climbing does not own:
+Start with [CONTEXT.md](CONTEXT.md), then use these focused contracts:
 
-- existing badminton `ShuttleCoachSpike` code;
-- badminton overhead-drill algorithm;
-- badminton release gate or coach-share promise.
+- [Product requirements map](docs/linewise_product_requirements_map_v0.md)
+- [P0 domain and lifecycle](docs/linewise_p0_domain_and_lifecycle_contract_v0.md)
+- [End-to-end experience](docs/linewise_end_to_end_experience_contract_v0.md)
+- [Physiology data contract](docs/linewise_physiology_data_contract_v0.md)
+- [AI route rehearsal requirements](docs/linewise_ai_route_rehearsal_requirements_v0.md)
+- [Routesetter lens and training path](docs/linewise_setter_lens_and_training_path_requirements_v0.md)
+- [MVP gate](docs/climbing_bouldering_mvp_gate.md)
+- [Data collection plan](docs/climbing_bouldering_data_collection_plan.md)
 
-## Shared Learnings From Badminton
-
-Reusable:
-
-- local-first recording before sync;
-- uncertainty routes to review;
-- motion data needs timestamp discipline and replay fixtures;
-- HealthKit success must be explicit, not assumed;
-- Watch UI must stay low-interruption.
-
-Not reusable directly:
-
-- rep counting;
-- set boundary detection;
-- high-clear drill copy;
-- badminton validation metrics.
-
-## Next Execution Steps
-
-1. Review and publish the local `work/full-product-foundation` branch.
-2. Execute [#3 persistence and deterministic replay](https://github.com/WILLOSCAR/linewise/issues/3) against the public domain interface.
-3. Install/select full Xcode before creating or claiming verification for Watch, HealthKit, or WatchConnectivity targets.
-4. Execute the [#5 iPhone-only manual loop](https://github.com/WILLOSCAR/linewise/issues/5) and prove it in real gym visits.
-5. Run the [#11 RouteRehearsal X0 task set](https://github.com/WILLOSCAR/linewise/issues/11) with representative climbers before extracting production code.
+The core rule is simple: manual capture must remain trustworthy and recoverable; automation may accelerate interpretation, but it must expose provenance, uncertainty, correction, and a safe fallback.

@@ -103,7 +103,7 @@ _Avoid_: Safety alert, injury risk
 - `docs/climbing_bouldering_data_collection_plan.md`: active real-gym data collection protocol.
 - `docs/climbing_bouldering_platform_contract.md`: active Apple Watch/iPhone/HealthKit/privacy contract.
 - `docs/product_initialization_v0.md`: current Matt-style initialization note, working name, expanded product pillars, and near-term settlement plan.
-- `docs/climbing_bouldering_implementation_plan.md`: issue-ready implementation slices; activates after focused P0 conflicts are reconciled.
+- `docs/climbing_bouldering_implementation_plan.md`: current implementation architecture, completed slices, verification commands, and remaining real-device/field evidence.
 - `docs/adr/0004-attempt-anchor-and-project-cycles.md`: durable decision for one-tap Attempt capture, honest unresolved outcomes, separate RouteCard axes, and repeatable Project cycles.
 - `docs/adr/0002-linewise-expanded-product-vision.md`: durable decision to keep Gym Visit Memory as P0 while naming the broader product `LineWise` / `线感`.
 - `docs/adr/0003-canonical-p0-domain-model-and-terms.md`: durable decision for canonical P0 entities and terminology.
@@ -121,4 +121,4 @@ _Avoid_: Safety alert, injury risk
 - Product validation comes first: real gym visits, RouteCard creation, Watch tap burden, next-session recall, and review usage.
 - Data collection should start before complex AI promises: route photos, start/top labels, attempt outcomes, failure reasons, movement cues, and Watch timelines are the first useful dataset.
 - Simulator validation will matter after implementation begins, but it cannot replace physical Apple Watch validation for motion recording, background behavior, HealthKit writes, WatchConnectivity, and in-gym usability.
-- Any PRD must define Go/No-Go metrics before implementation issues are created.
+- Any PRD must define Go/No-Go metrics before a feature is promoted from implementation to a product claim.
