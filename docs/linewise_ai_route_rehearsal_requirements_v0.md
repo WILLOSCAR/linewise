@@ -795,3 +795,10 @@ A capability is promoted only when:
 3. uncertainty and correction remain understandable;
 4. at least one real-gym consequence is demonstrated;
 5. privacy and claim contracts remain intact.
+
+## 21. Current X0 Artifacts
+
+- `prototypes/PROTOTYPE-route-rehearsal-x0.html`: throwaway single-file manual RouteScene/contact/keyframe/debug/playback prototype with deterministic suggested stubs and Plan/Actual comparison placeholders.
+- `docs/linewise_ai_route_rehearsal_evaluation_protocol_v0.md`: X0-X5 task corpus, annotations, metrics, failure taxonomy, promotion/pivot/kill rules, and claim ceilings.
+
+The prototype has passed JavaScript syntax and pure reducer checks for contact locks, downstream stale propagation, deterministic suggested provenance, Undo/Redo, playback boundaries, manual hold insertion, and state invariants. Browser visual rendering remains unverified in the current environment because the in-app browser rejects direct `file://` navigation; this is a known QA gap, not evidence against the interaction model.

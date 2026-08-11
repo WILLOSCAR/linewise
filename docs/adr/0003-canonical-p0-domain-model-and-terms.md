@@ -2,6 +2,8 @@
 
 Date: 2026-07-01
 
+Status: Accepted; Watch action vocabulary and Project-status implications superseded by ADR 4
+
 ## Decision
 
 LineWise P0 uses this canonical domain model:
@@ -11,6 +13,8 @@ GymVisit -> RouteCard -> Attempt -> FailureEpisode -> MoveCue -> NextSessionCue
 ```
 
 Watch owns `Try`, `Send`, `Fail`, and `Undo`. `Flash` is a useful result attribute but is not a required separate Watch button in P0.
+
+This Watch-action sentence is retained as historical context and is superseded by `0004-attempt-anchor-and-project-cycles.md`: P0 records one Attempt, optionally marks Send on that Attempt, and has no required Watch Fail action.
 
 `MoveCue` is the user-facing term for route-specific movement advice. Older terms such as `BetaNote`, `Cue`, and generic `beta` should be treated as historical aliases in older research documents, not active product language.
 

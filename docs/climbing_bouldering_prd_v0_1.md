@@ -76,9 +76,9 @@ Primary P0 user:
 | Before gym | Remember last projects | Show recent Project cards and NextSessionCue | P0 |
 | Start session | Begin recording without friction | Start Watch climbing session and local app session | P0 |
 | Find route | Create or select RouteCard | Minimal route identity: label, color, wall area, grade, optional photo | P0/P0.5 |
-| Attempt | Mark try/send/fail with low interruption | Watch one-tap capture during rest | P0 |
+| Attempt | Record that one try happened with low interruption | Watch one-tap Attempt anchor; optional Send result | P0 |
 | Rest | Pace next attempt | Rest timer and sparse haptic cue | P0 |
-| Review | Convert attempt into memory | iPhone timeline, FailureEpisode, MoveCue, project status | P0 |
+| Review | Resolve only what is known and convert useful failures into memory | Review Inbox, explicit result, FailureEpisode, MoveCue, Project cycle | P0 |
 | Leave gym | Preserve next action | Save NextSessionCue | P0 |
 | Next visit | Resume project intelligently | Show what to try first and what cue to remember | P0 |
 | Dataset mode | Build AI foundation | Add route photo annotations and correction events | P0.5 |
@@ -98,11 +98,26 @@ P0 must support RouteCards with these fields:
 | `route_color` | optional | Color or tag style |
 | `grade_text` | optional | Keep as text because gyms use varied systems |
 | `subjective_grade` | optional | User's felt difficulty |
-| `status` | yes | `new`, `active_project`, `sent`, `archived`, `gone` |
+| `record_visibility` | yes | `active`, `archived`, or `merged` |
+| `availability` | yes | `unknown`, `present`, or `gone` |
+| `successor_route_card_id` | optional | New physical route incarnation after a material reset; old history remains unchanged |
 | `photo_ref` | optional P0 / important P0.5 | Use explicit user-selected/captured photo only |
 | `created_at`, `updated_at` | yes | Local auditing |
 
-Route identity must not require an official gym database.
+Route identity must not require an official gym database. Project progress and send history are separate from RouteCard visibility and availability; user-facing labels such as "active project" or "sent" are derived.
+
+P0 must also support repeatable Project cycles:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `id` | yes | Durable Project-cycle identity |
+| `route_card_id` | yes | Exactly one RouteCard incarnation |
+| `state` | yes | `active`, `sent`, `archived`, or `gone` |
+| `started_at` | yes | Start of this revisit intention |
+| `closed_at` | optional | Required for a terminal cycle |
+| `supporting_attempt_id` | required when sent | Active sent Attempt on the same RouteCard |
+
+A RouteCard may have several historical Project cycles but at most one active Project.
 
 ### 6.2 Watch: Session Capture
 
@@ -111,10 +126,9 @@ Watch P0 actions:
 - Start session
 - End session
 - Select or continue current project
-- Mark `Try`
-- Mark `Send`
-- Mark `Fail`
-- Undo last event
+- `Record Attempt` with one primary tap
+- optionally `Mark Send` on the selected or just-recorded Attempt
+- exact-target `Undo` for the last reversible Watch action
 - See current rest timer
 - Receive sparse rest haptic if enabled
 
@@ -127,19 +141,19 @@ Watch P0 non-actions:
 - no detailed HealthKit troubleshooting;
 - no social or coach workflow.
 
-### 6.3 Attempt Events
+### 6.3 Attempt And Result Events
 
 Canonical P0 event vocabulary:
 
 | Event | Meaning | Capture Surface |
 | --- | --- | --- |
-| `Try` | User made an attempt without specifying outcome yet | Watch |
-| `Send` | User completed the route | Watch |
-| `Fail` | User did not complete the route | Watch |
-| `Undo` | Remove or reverse last event | Watch |
+| `Record Attempt` | Create one Attempt with outcome `unresolved` | Watch or iPhone degraded path |
+| `Mark Send` | Change one existing Attempt to user-confirmed `sent`; never create another Attempt | Watch or iPhone review |
+| `Confirm Not Sent` | Change one existing Attempt to user-confirmed `not_sent` | iPhone review; no required P0 Watch action |
+| `Undo` | Retract the exact action selected when Undo was invoked; preserve audit history | Watch or iPhone review |
 | `Flash` | Sent on first attempt | iPhone review or optional quick result, not required as a separate Watch button |
 
-`Flash` is valuable but should not add Watch UI burden unless field tests prove it is needed.
+Starting rest, recording another Attempt, switching routes, ending the visit, or receiving sensor evidence must not resolve an Attempt automatically. `Flash` is valuable but should not add Watch UI burden unless field tests prove it is needed.
 
 ### 6.4 iPhone: Review
 
@@ -155,14 +169,15 @@ Review must support:
 
 - edit attempt timeline;
 - attach attempt to RouteCard;
-- mark Project status;
+- leave honest unresolved outcomes or explicitly confirm `sent` / `not_sent`;
+- start or close a Project cycle;
 - add one primary FailureEpisode per meaningful failure;
 - add one short MoveCue;
 - create or update NextSessionCue.
 
 ### 6.5 FailureEpisode
 
-`FailureEpisode` converts a failed attempt into learning.
+`FailureEpisode` converts an explicitly confirmed meaningful breakdown into learning. Confirming `not_sent` does not require or automatically create a FailureEpisode.
 
 P0 fields:
 
@@ -261,8 +276,8 @@ P0.5 does not promise automatic route reading. It makes route reading possible l
 ## 9. User Stories
 
 1. As a boulderer, I want to create a route card in under 30 seconds, so that I can remember the route without interrupting training.
-2. As a boulderer, I want to mark try/send/fail on my Watch, so that I do not need to take out my phone after every attempt.
-3. As a boulderer, I want to undo the last Watch event, so that accidental taps do not pollute my session.
+2. As a boulderer, I want one Watch tap to record one Attempt and an optional second action to mark a Send, so that unknown outcomes do not create extra work or false failures.
+3. As a boulderer, I want to undo the exact Watch action I just made, so that accidental taps do not pollute my session or affect a newer event after delayed sync.
 4. As a boulderer, I want to see a rest timer after an attempt, so that I can pace retries without opening another timer app.
 5. As a boulderer, I want to review my attempts on iPhone, so that I can correct mistakes after training.
 6. As a boulderer, I want to add a short movement cue, so that I remember what to try next time.
@@ -274,18 +289,20 @@ P0.5 does not promise automatic route reading. It makes route reading possible l
 12. As a data-focused user, I want exportable structured records, so that I can inspect my own dataset.
 13. As a future AI user, I want to correct route photo suggestions, so that LineWise learns from trustworthy data.
 14. As a coach-assisted user, I want to save a coach's note to a route, so that advice survives beyond the session.
-15. As a user whose route has been reset, I want to archive it as gone, so that my project history stays meaningful.
+15. As a user whose route has been reset, I want to mark the old RouteCard gone and create a successor without rewriting old attempts, so that my Project history stays meaningful.
 
 ## 10. Implementation Decisions
 
 No production implementation has started yet. These decisions define the first implementation direction.
 
 - Use a local-first data model. Cloud sync can come later.
-- Watch owns workout/session start and low-interruption event capture.
+- Watch owns optional workout start and low-interruption capture; the app-domain GymVisit remains valid in an iPhone-only or HealthKit-denied path.
 - iPhone owns RouteCards, review, corrections, movement cues, and dataset annotation.
 - HealthKit workout data is a supporting system record. App-private objects are the source of truth for bouldering semantics.
 - Sensor inference must produce `SuggestedTimeline` or `SuggestionProvenance`, never ground truth.
 - The P0 model should include `GymVisit`, `RouteCard`, `Project`, `Attempt`, `RestInterval`, `FailureEpisode`, `MoveCue`, `NextSessionCue`, `CorrectionEvent`, and thin `SuggestionProvenance`.
+- Attempt outcome is `unresolved`, `sent`, or `not_sent`; retraction is a separate record state. `Mark Send` never increments attempt count.
+- RouteCard visibility, route availability, and Project-cycle state are separate. A material reset creates a successor RouteCard.
 - `Photo`, `HoldInstance`, `RouteGroup`, `RouteRole`, and `MoveSequence` belong to P0.5 dataset mode, not the minimum P0 loop.
 - `Flash` is a result attribute, not a required Watch button.
 - No open social graph, public feed, or stranger matching in P0/P1.
@@ -296,8 +313,10 @@ Testing should verify behavior from user-visible outcomes, not internal implemen
 
 P0 tests should cover:
 
-- RouteCard can be created, edited, archived, and marked gone.
-- Watch event stream can create try/send/fail/undo events.
+- RouteCard can be created, revised, archived/restored, marked gone, merged/unmerged, and linked to a successor without losing history.
+- Project cycles can start, close sent/archived/gone, and restart later without overwriting prior cycles.
+- Watch event stream can record one Attempt, optionally mark its Send result, and apply exact-target Undo.
+- Unresolved Attempt outcomes remain unresolved across rest, route switch, another Attempt, visit end, and sync delay.
 - Attempt events survive temporary phone disconnection.
 - Review can attach attempts to RouteCards and create NextSessionCue.
 - HealthKit denied state still allows local session recording.
@@ -320,19 +339,19 @@ Field tests must cover:
 | Metric | Target |
 | --- | --- |
 | Minimal RouteCard creation time | <= 30 seconds |
-| Watch action burden | 1-2 taps after an attempt |
+| Watch action burden | 1 primary tap per Attempt; optional second action for Send; <= 2 total |
 | Session local save success | >= 95% |
 | Review open rate | >= 60% of completed sessions |
 | NextSessionCue creation | >= 50% of reviewed sessions |
 | NextSessionCue reuse | >= 50% of next gym visits |
 | Project revisit rate | >= 40% within next two visits |
 | User-rated usefulness | >= 7/10 after 3 sessions |
-| Data quality for P0.5 | 30 RouteCards and 100 attempts before AI work |
+| P0.5 field-start evidence | 30 RouteCards and 100 Attempts before model-development claims; bounded manual/fixture-based Intelligence Nursery probes may run earlier |
 
 ## 13. Out Of Scope For P0
 
 - Full automatic route reading.
-- Automatic send/fail judgment.
+- Automatic send/not-sent judgment.
 - Real-time technique coaching.
 - Medical, safety, recovery, or injury-prevention advice.
 - Public feed, ranking, or open social matching.
@@ -362,6 +381,8 @@ These questions should be resolved by prototype or field testing:
 
 - Is a minimal RouteCard useful without a photo, or is optional photo capture needed immediately?
 - Does the user reliably tap Watch after every attempt, or only after meaningful attempts?
+- Is optional Mark Send useful enough on Watch, or should all result confirmation move to Review Inbox?
+- Does leaving `unresolved` outcomes honest create acceptable review burden without an in-session Not Sent action?
 - Should NextSessionCue appear on Watch before a session or only on iPhone?
 - How many FailureEpisode categories can users tolerate?
 - Should MoveCue start as text, voice, tags, or all three?
@@ -379,3 +400,6 @@ These questions should be resolved by prototype or field testing:
 - `CONTEXT.md`
 - `docs/adr/0001-gym-visit-memory-system.md`
 - `docs/adr/0002-linewise-expanded-product-vision.md`
+- `docs/adr/0003-canonical-p0-domain-model-and-terms.md`
+- `docs/adr/0004-attempt-anchor-and-project-cycles.md`
+- `docs/linewise_p0_domain_and_lifecycle_contract_v0.md`

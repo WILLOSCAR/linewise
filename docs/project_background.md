@@ -40,7 +40,7 @@ The long-term product can grow into:
 PersonalClimbingDataset -> RouteRead -> StickFigureCue -> SetterLens -> TrainingPath -> private sharing
 ```
 
-The important ordering is intentional. AI route reading should come after a reliable route memory and data collection loop, not before it.
+The dependency ordering is intentional: AI route reading must not become a production dependency before the reliable route-memory loop and relevant data gate pass. Bounded manual, synthetic, and fixture-based Intelligence Nursery probes may run in parallel now.
 
 ## 4. Target Context
 
@@ -151,11 +151,19 @@ The second bet is:
 
 | Document | Purpose |
 | --- | --- |
+| `docs/linewise_product_requirements_map_v0.md` | Cross-module ownership, dependencies, gates, and resolution ledger |
+| `docs/linewise_p0_domain_and_lifecycle_contract_v0.md` | Normative Attempt, GymVisit, RouteCard, Project, review, and event semantics |
+| `docs/linewise_end_to_end_experience_contract_v0.md` | Normal and degraded Watch/iPhone journeys |
+| `docs/linewise_physiology_data_contract_v0.md` | HealthKit, subjective fatigue/pump, retention, provenance, and Research Mode boundaries |
+| `docs/linewise_ai_route_rehearsal_requirements_v0.md` | Plan/Replay/Compare, keyframe editor, animation, and X0-X5 requirements |
+| `docs/linewise_ai_route_rehearsal_evaluation_protocol_v0.md` | AI rehearsal baselines, tasks, metrics, failure modes, and promotion rules |
+| `docs/linewise_setter_lens_and_training_path_requirements_v0.md` | Qualitative analysis, MicroDrill, and ProofCheck learning loop |
 | `docs/climbing_bouldering_prd_v0_1.md` | Main P0/P0.5 product requirements |
 | `docs/project_background.md` | Project context and strategic framing |
 | `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and validation metrics |
 | `docs/climbing_bouldering_data_collection_plan.md` | Real gym visit data collection protocol |
 | `docs/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
+| `docs/climbing_bouldering_implementation_plan.md` | Module interfaces and issue-ready vertical delivery slices |
 | `CONTEXT.md` | Canonical product language |
 | `docs/adr/` | Durable decisions |
 

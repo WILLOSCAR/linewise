@@ -48,13 +48,16 @@ After the visit:
 | Object | Required Fields | Optional Fields |
 | --- | --- | --- |
 | `GymVisit` | start_at, end_at, modality=indoor_bouldering, review_state | gym_label, session_focus |
-| `RouteCard` | label, status | gym_label, wall_area, color, grade_text, subjective_grade, photo_ref |
-| `Attempt` | route_card_id?, result, timestamp | duration, rest_after, source |
+| `RouteCard` | label, record_visibility, availability | gym_label, wall_area, color, grade_text, subjective_grade, photo_ref, successor_route_card_id |
+| `Project` | route_card_id, state, started_at | closed_at, supporting_attempt_id |
+| `Attempt` | gym_visit_id, record_state, outcome=`unresolved`, recorded_at, source | route_card_id or explicit unassigned state, occurred_at, duration, rest_after |
 | `RestInterval` | start_at, end_at | route_card_id, reason |
 | `FailureEpisode` | route_card_id, primary_blocker | attempt_id, location_note, confidence |
 | `MoveCue` | route_card_id, text | source, linked_failure_episode |
 | `NextSessionCue` | route_card_id, cue_text | reminder_context |
 | `CorrectionEvent` | object_type, event_type, timestamp | before, after, latency_ms |
+
+`Attempt.outcome` is not required to be resolved at capture. It changes to `sent` or `not_sent` only through explicit user confirmation. Starting rest, switching routes, recording another Attempt, or ending the GymVisit leaves it `unresolved`.
 
 ## 5. P0.5 Photo Data
 

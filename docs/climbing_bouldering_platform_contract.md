@@ -13,7 +13,7 @@ It is written to prevent a common failure mode: building a product that looks sm
 
 | Surface | Owns | Does Not Own |
 | --- | --- | --- |
-| Apple Watch | Start/end session, workout capture, try/send/fail/undo, rest timer, sparse haptic | Route editing, photo annotation, AI route reading, long text, social flow |
+| Apple Watch | Optional workout start/end, one-tap Attempt, optional Send, exact-target Undo, rest timer, sparse haptic | Route editing, Not Sent/failure interpretation, photo annotation, AI route reading, long text, social flow |
 | iPhone | RouteCard, review, MoveCue, NextSessionCue, photo/annotation, export, privacy controls | Real-time on-wall coaching |
 | HealthKit | System workout record, heart rate/time/energy support | Route, attempt, send/fail, failure reason, movement truth |
 | Core Motion | Suggested timeline evidence and future experiments | Guaranteed attempt detection |
@@ -28,10 +28,9 @@ Watch must support:
 - `End Session`;
 - elapsed time;
 - current rest timer;
-- `Try`;
-- `Send`;
-- `Fail`;
-- `Undo`;
+- `Record Attempt` as one primary action;
+- optional `Mark Send` on one existing Attempt;
+- exact-target `Undo`;
 - sparse haptic cue;
 - local persistence when iPhone is absent;
 - eventual sync to iPhone.
@@ -47,18 +46,23 @@ Watch should avoid:
 - dense charts;
 - medical/safety suggestions.
 
-## 4. Session Ownership
+## 4. GymVisit And Workout Ownership
 
-P0 session owner should be Apple Watch.
+The app-domain `GymVisit` and the optional HealthKit workout have separate ownership.
 
-Rationale:
+- LineWise app-private storage owns GymVisit identity and bouldering semantics.
+- Apple Watch owns an authorized HealthKit workout session when the user starts one on Watch.
+- iPhone-only use creates a valid GymVisit without fabricating a Watch or HealthKit workout.
+- HealthKit denial, workout failure, or phone-only capture must not block RouteCard, Attempt, review, or recall.
+
+Why Watch remains the preferred workout surface:
 
 - a workout session should start on Watch to access Watch workout data reliably;
 - Watch is available during rest;
 - iPhone may be away, locked, or in a bag;
 - HealthKit climbing workout is best represented as a Watch workout.
 
-iPhone may mirror state, but Watch must be able to record locally and sync later.
+iPhone may mirror state, but Watch must be able to record locally and sync later. A GymVisit may also begin on iPhone when Watch is absent; that degraded path has no requirement to create a HealthKit workout.
 
 ## 5. HealthKit Contract
 
@@ -175,6 +179,8 @@ Must support:
 - idempotent sync;
 - duplicate prevention;
 - replay after disconnect;
+- stable event identities and exact causal targets for Send, Undo, route assignment, and corrections;
+- unresolved dependent events when a target arrives later;
 - clear sync status in debug/review.
 
 Must not assume:
@@ -256,6 +262,8 @@ Must test on real paired Watch/iPhone:
 - local save after crash or app termination;
 - battery drain over a full gym visit;
 - haptic usefulness and annoyance.
+
+The normative Attempt, Project, review, and cross-device event meanings are defined by `docs/linewise_p0_domain_and_lifecycle_contract_v0.md` and ADR 4. Platform adapters must preserve those meanings rather than reinterpret delayed events from arrival order.
 
 ## 16. Official Apple Sources
 

@@ -1,7 +1,7 @@
 # LineWise Product Initialization v0
 
 Date: 2026-06-30  
-Status: Requirements settlement, market research, naming, and data-collection design. No implementation PRD yet.
+Status: Historical initialization snapshot. Active contracts and execution order now live in the product requirements map, focused contracts, ADR 4, and implementation plan.
 
 ## 1. Why This Doc Exists
 
@@ -218,7 +218,7 @@ The most useful near-term move is to build a thin app or workflow that helps the
 | Official grade | manual tag | Baseline difficulty |
 | Subjective grade | quick rating | Personal progression and mismatch detection |
 | Start/top holds | tap on photo | Training data for future AI |
-| Attempt result | Watch Try/Send/Fail/Flash | Core bouldering event |
+| Attempt and result | Watch one-tap Record Attempt, optional Mark Send; review confirms `not_sent` or Flash | Core bouldering event without forced outcome |
 | Failure point | tap hold or select reason | Turns failure into training signal |
 | MoveCue | short text/voice/photo annotation | Memory and next-session recall |
 | Rest interval | Watch timer | Pacing and intensity context |
@@ -247,7 +247,7 @@ This dataset can answer:
 
 | Phase | Product Goal | Main Features | Key Risk |
 | --- | --- | --- | --- |
-| P0 | Prove gym visit memory | RouteCard, Watch attempt/rest, Send/Fail, iPhone review, next-session cues | Too much manual input |
+| P0 | Prove gym visit memory | RouteCard, Watch Attempt/rest, optional Send, iPhone Review Inbox, next-session cues | Too much manual input |
 | P0.5 | Build personal dataset | Route photos, hold taps, failure reasons, movement cues, corrected timelines | Data quality |
 | P1 | AI-assisted route reading | photo-to-route draft, start/top suggestions, movement hypotheses | AI trust |
 | P1.5 | Stick-figure movement cue | manual/assisted skeleton overlay, step cards, movement replay | Visual accuracy |
@@ -284,6 +284,8 @@ Open questions before PRD:
 4. Prototype the iPhone route photo capture + manual hold tapping flow.
 5. Prototype the Watch attempt/rest capture flow.
 6. Only then evaluate AI route reading and stick-figure movement cues.
+
+Current clarification: bounded Intelligence Nursery probes may run in parallel using manual, synthetic, or fixture inputs. They do not become P0 dependencies or production claims before the corresponding evidence gates pass.
 
 ## 9. Name Usage Guidance
 

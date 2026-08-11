@@ -18,7 +18,7 @@ capture -> review -> next-session recall
 | Gate | Question | Go Criteria | No-Go Signal |
 | --- | --- | --- | --- |
 | G1: Route memory | Can users create useful RouteCards quickly? | Minimal RouteCard <= 30 sec; user creates 3+ per session | User prefers camera roll/notes |
-| G2: Watch burden | Does Watch capture help without interrupting climbing? | 1-2 taps per attempt; low annoyance | User stops tapping by session 2 |
+| G2: Watch burden | Does one-tap Attempt capture help without interrupting climbing? | 1 primary tap; optional Send keeps total <= 2; low annoyance | User stops tapping by session 2 or outcome entry creates false data |
 | G3: Review value | Does review produce better next-session memory? | >= 60% sessions reviewed; clear NextSessionCue | Review feels like admin |
 | G4: Recall value | Does the user reopen before next gym visit? | >= 50% next-visit reopen | User never checks old records |
 | G5: Data quality | Can P0.5 produce useful AI training data? | 30 RouteCards + 100 attempts + corrections | Photos/labels too noisy |
@@ -30,7 +30,7 @@ capture -> review -> next-session recall
 P0 can proceed to implementation when the team can clearly specify:
 
 - RouteCard minimum fields;
-- Watch event vocabulary;
+- Attempt, result, Undo, and unresolved-review vocabulary;
 - iPhone review flow;
 - NextSessionCue format;
 - local storage and sync rules;
@@ -51,7 +51,7 @@ P0 should not proceed if:
 | --- | --- | --- |
 | `route_card_creation_time` | Time to create a minimum RouteCard | <= 30 sec |
 | `route_card_per_session` | Meaningful RouteCards created per gym visit | >= 3 |
-| `watch_action_taps` | Tap count after an attempt | <= 2 |
+| `watch_action_taps` | Tap count for one Attempt anchor plus optional Send | 1 primary tap; <= 2 total |
 | `watch_annoyance_score` | User-rated interruption, 1-10 | <= 3 |
 | `session_local_save_rate` | Sessions saved locally without data loss | >= 95% |
 | `review_open_rate` | Completed sessions opened in review | >= 60% |
@@ -63,9 +63,9 @@ P0 should not proceed if:
 
 ## 5. P0.5 Dataset Gate
 
-Do not start serious AI route-reading work until the dataset gate is met.
+Bounded manual, synthetic, or fixture-based Intelligence Nursery probes may start before this gate. Do not make model-development, product-promotion, or training claims from personal route data until the relevant dataset and correction-quality gate is met.
 
-Minimum dataset:
+Minimum **field-start evidence** for deciding whether corrected capture is viable:
 
 | Data | Minimum |
 | --- | --- |
@@ -80,13 +80,15 @@ Minimum dataset:
 | Watch timelines | 3+ full sessions |
 | CorrectionEvents | Every model/user correction captured once P0.5 begins |
 
-Better target before P1:
+Minimum **model-development corpus target** before making broad assisted RouteRead claims:
 
 - 100 RouteCards;
 - 500 attempts;
 - 200 corrected route photos;
 - 50 routes with start/top/hold annotations;
 - 20 short attempt videos with explicit consent and no unrelated people visible.
+
+These counts do not promote a model by themselves. Production promotion also requires the task, correction, trust, privacy, and field-consequence criteria in the relevant AI evaluation protocol. Historical `50-100` / `200-500` ranges are planning ranges between the field-start and model-development levels, not a third gate.
 
 ## 6. Field Test Protocol
 
@@ -116,7 +118,7 @@ Goal: Test Watch action burden.
 Record:
 
 - Start/End session;
-- Try/Send/Fail/Undo;
+- Record Attempt, optional Mark Send, exact-target Undo, and unresolved outcome behavior;
 - rest timer;
 - local save behavior;
 - battery impact;
@@ -126,6 +128,7 @@ Pass if:
 
 - Watch does not feel intrusive;
 - no attempt data is lost;
+- unresolved outcomes are not converted to failures by session end or later events;
 - user still wants to use it next session.
 
 ### Visit 3: Dataset Mode
@@ -194,8 +197,17 @@ What did I try, where did I fail, and what should I try next time?
 | Outcome | Action |
 | --- | --- |
 | P0 passes, P0.5 not ready | Build private alpha without AI |
-| P0 passes, P0.5 passes | Start RouteRead prototype |
+| P0 passes, P0.5 passes | Promote controlled RouteRead experiments beyond fixture/manual probes |
 | P0 fails due to Watch burden | Try iPhone-only or fewer Watch actions |
 | P0 fails due to RouteCard burden | Reduce fields or postpone photo |
 | Recall fails | Rework NextSessionCue before adding features |
 | Trust fails | Remove automation until manual loop works |
+
+## 11. Contract Alignment
+
+The normative P0 event and lifecycle semantics are defined by:
+
+- `docs/linewise_p0_domain_and_lifecycle_contract_v0.md`;
+- `docs/adr/0004-attempt-anchor-and-project-cycles.md`.
+
+Field tests must distinguish an unresolved Attempt from a confirmed `not_sent` outcome and a FailureEpisode. They must also test duplicate, delayed, and out-of-order delivery on a real paired Watch/iPhone before the platform-reliability gate passes.
