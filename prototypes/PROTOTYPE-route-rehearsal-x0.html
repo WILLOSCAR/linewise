@@ -760,16 +760,20 @@
           newFrame.id = `${state.activeTrack === "plan" ? "P" : "A"}${state.nextFrameNumber}`;
           newFrame.label = action.type === "ADD_FRAME" ? "新手工姿势" : `${current.label} · copy`;
           newFrame.provenance = { source: "user", status: "confirmed" };
-          newFrame.validity = "valid";
-          newFrame.staleReason = null;
-          const nextFrames = [...frames.slice(0, frameIndex + 1), newFrame, ...frames.slice(frameIndex + 1)];
-          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: frameIndex + 1, nextFrameNumber: state.nextFrameNumber + 1, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: frameIndex + 1 }, lastEvent: { kind: "changed", text: `${newFrame.id} 已插入 ${current.id} 后。` } };
+          newFrame.validity = current.validity;
+          newFrame.staleReason = current.validity === "stale"
+            ? `继承 ${current.id}：${current.staleReason || "上游状态待重算"}`
+            : null;
+          const insertedFrames = [...frames.slice(0, frameIndex + 1), newFrame, ...frames.slice(frameIndex + 1)];
+          const nextFrames = markDownstreamStale(insertedFrames, frameIndex + 1, `${newFrame.id} 已插入时间线`);
+          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: frameIndex + 1, nextFrameNumber: state.nextFrameNumber + 1, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: frameIndex + 1 }, lastEvent: { kind: "changed", text: `${newFrame.id} 已插入 ${current.id} 后；原有下游已标记 stale。` } };
         }
         case "DELETE_FRAME": {
           if (frames.length === 1) return { ...state, lastEvent: { kind: "rejected", text: "至少保留一个 PoseKeyframe。" } };
-          const nextFrames = frames.filter((_, i) => i !== frameIndex);
+          const remainingFrames = frames.filter((_, i) => i !== frameIndex);
+          const nextFrames = markDownstreamStale(remainingFrames, frameIndex - 1, `${current.id} 已从时间线删除`);
           const nextIndex = clamp(frameIndex, 0, nextFrames.length - 1);
-          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: nextIndex, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: nextIndex }, lastEvent: { kind: "changed", text: `${current.id} 已删除；稳定 ID 不重排。` } };
+          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: nextIndex, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: nextIndex }, lastEvent: { kind: "changed", text: `${current.id} 已删除；稳定 ID 不重排，删除点后的帧已标记 stale。` } };
         }
         case "MOVE_FRAME": {
           if (state.playback.playing) return { ...state, lastEvent: { kind: "rejected", text: "播放中不能排序；先 Pause，避免时间线与画面竞态。" } };
@@ -841,7 +845,10 @@
               playing = false;
             }
           }
-          return { ...state, selectedFrameIndex: transitionIndex, playback: { ...state.playback, playing, transitionIndex, progress } };
+          const selectedIndex = !playing && state.playback.scope === "all" && transitionIndex === frames.length - 2 && progress === 1
+            ? frames.length - 1
+            : transitionIndex;
+          return { ...state, selectedFrameIndex: selectedIndex, playback: { ...state.playback, playing, transitionIndex, progress } };
         }
         default: return state;
       }
