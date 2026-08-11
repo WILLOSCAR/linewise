@@ -337,7 +337,25 @@ Exit:
 
 ## 7. Issue-Ready Backlog
 
-The following are candidate GitHub issues after S0. They are intentionally vertical and independently verifiable.
+The following backlog slices were used to cut the live GitHub issues after S0. They are intentionally vertical and independently verifiable.
+
+### Live Issue Index
+
+The first execution set was opened on 2026-08-11. `ready-for-agent` means the written contract is sufficient for another bounded implementation pass; `needs-info` means full Xcode, real devices, real users, consent copy, or dataset ownership is still required.
+
+| Issue | Execution slice | Current readiness |
+| --- | --- | --- |
+| [#1](https://github.com/WILLOSCAR/linewise/issues/1) | Pure Swift domain foundation review | `ready-for-human` |
+| [#2](https://github.com/WILLOSCAR/linewise/issues/2) | Review Inbox and recall objects | `ready-for-agent` |
+| [#3](https://github.com/WILLOSCAR/linewise/issues/3) | Persistence, replay, and migration | `ready-for-agent` |
+| [#4](https://github.com/WILLOSCAR/linewise/issues/4) | Device event envelopes and reconciliation | `ready-for-agent` |
+| [#5](https://github.com/WILLOSCAR/linewise/issues/5) | iPhone-only manual vertical slice | `needs-info`: full Xcode |
+| [#6](https://github.com/WILLOSCAR/linewise/issues/6) | Watch offline capture | `needs-info`: full Xcode and paired devices |
+| [#7](https://github.com/WILLOSCAR/linewise/issues/7) | HealthKit and physiology | `needs-info`: consent review and real devices |
+| [#8](https://github.com/WILLOSCAR/linewise/issues/8) | Export, deletion, and debug bundle | `ready-for-agent` |
+| [#9](https://github.com/WILLOSCAR/linewise/issues/9) | Field-validation instrumentation | `needs-info`: study operations |
+| [#10](https://github.com/WILLOSCAR/linewise/issues/10) | P0.5 route-media dataset | `needs-info`: rights and consent |
+| [#11](https://github.com/WILLOSCAR/linewise/issues/11) | RouteRehearsal X0 formative evaluation | `needs-info`: representative participants |
 
 ### P0-001 — Bootstrap Pure Swift Domain Package
 
@@ -641,9 +659,14 @@ Completed in the first foundation batch:
 - stable action-ID idempotency and conflicting-ID detection;
 - exact-target Undo for Attempt and Send actions;
 - pending Send/Undo resolution when dependencies arrive out of order;
+- deterministic result projection by source business time rather than delivery order;
+- explicit reconciliation when opposing user-confirmed results have indistinguishable business time;
+- reviewed visits returning to `needs_recheck` after a late Attempt, result, or retraction;
+- conflicting cross-cycle corrections, dependent Undo, and results targeting retracted Attempts retained as reconciliation items and reopening completed review;
+- rejection of reused durable GymVisit identities;
 - RouteCard identity, availability, successor-after-reset, and independent Project cycles;
-- sent Project support invariant and automatic reopen when its only supporting Send is undone;
-- executable public-interface specifications for the implemented behaviors.
+- sent Project support projection, reversible correction, gone-route dominance, and an explicit conflict instead of overlapping active cycles;
+- 27 passing debug and release public-interface specifications for the implemented behaviors.
 
 Not yet implemented:
 

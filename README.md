@@ -87,7 +87,11 @@ The current environment can compile the platform-independent Swift domain module
 swift run LineWiseDomainSpec
 ```
 
-The first implementation covers one-tap Attempt capture, honest unresolved outcomes, Mark Send without a second Attempt, exact-target Undo, idempotency, out-of-order dependencies, late-event review reopening, RouteCard successors, and repeatable Project cycles. Watch UI, persistence adapters, HealthKit, and WatchConnectivity remain later verified slices.
+The first implementation covers one-tap Attempt capture, honest unresolved outcomes, Mark Send without a second Attempt, exact-target Undo, idempotency, business-time result projection under out-of-order delivery, explicit review for same-time opposing results, late-event review reopening, RouteCard successors, and repeatable Project cycles. Watch UI, persistence adapters, HealthKit, and WatchConnectivity remain later verified slices.
+
+## Execution Tracker
+
+The first issue-backed execution set is live in [GitHub Issues](https://github.com/WILLOSCAR/linewise/issues). The immediate anchors are [#1 Domain foundation review](https://github.com/WILLOSCAR/linewise/issues/1), [#3 persistence and replay](https://github.com/WILLOSCAR/linewise/issues/3), [#5 iPhone-only manual loop](https://github.com/WILLOSCAR/linewise/issues/5), and [#11 RouteRehearsal X0 evaluation](https://github.com/WILLOSCAR/linewise/issues/11). The complete mapping and readiness boundary live in the implementation plan.
 
 ## Directory Layout
 
@@ -138,8 +142,8 @@ Not reusable directly:
 
 ## Next Execution Steps
 
-1. Review and commit the contract-alignment batch on `work/full-product-foundation`.
-2. Add persistence and replay contract tests around the domain interface.
+1. Review and publish the local `work/full-product-foundation` branch.
+2. Execute [#3 persistence and deterministic replay](https://github.com/WILLOSCAR/linewise/issues/3) against the public domain interface.
 3. Install/select full Xcode before creating or claiming verification for Watch, HealthKit, or WatchConnectivity targets.
-4. Run the manual P0 visit script and the X0 RouteRehearsal task set with real users.
-5. Cut issue-backed vertical slices only after the branch is accepted.
+4. Execute the [#5 iPhone-only manual loop](https://github.com/WILLOSCAR/linewise/issues/5) and prove it in real gym visits.
+5. Run the [#11 RouteRehearsal X0 task set](https://github.com/WILLOSCAR/linewise/issues/11) with representative climbers before extracting production code.
