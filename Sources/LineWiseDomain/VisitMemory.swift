@@ -81,6 +81,31 @@ public struct AttemptSnapshot: Equatable, Codable, Sendable {
   }
 }
 
+public struct AttemptRouteCorrectionSnapshot: Equatable, Codable, Sendable {
+  public let actionID: ActionID
+  public let attemptID: AttemptID
+  public let previousRouteCardID: RouteCardID?
+  public let correctedRouteCardID: RouteCardID?
+  public let occurredAt: Instant
+  public let source: CaptureSource
+
+  public init(
+    actionID: ActionID,
+    attemptID: AttemptID,
+    previousRouteCardID: RouteCardID?,
+    correctedRouteCardID: RouteCardID?,
+    occurredAt: Instant,
+    source: CaptureSource
+  ) {
+    self.actionID = actionID
+    self.attemptID = attemptID
+    self.previousRouteCardID = previousRouteCardID
+    self.correctedRouteCardID = correctedRouteCardID
+    self.occurredAt = occurredAt
+    self.source = source
+  }
+}
+
 public struct VisitSnapshot: Equatable, Sendable {
   public let visits: [GymVisitSnapshot]
   public let attempts: [AttemptSnapshot]
@@ -88,6 +113,7 @@ public struct VisitSnapshot: Equatable, Sendable {
   public let projects: [ProjectSnapshot]
   public let pendingActionIDs: [ActionID]
   public let reconciliationIssues: [ReconciliationIssueSnapshot]
+  public let attemptRouteCorrections: [AttemptRouteCorrectionSnapshot]
 
   public init(
     visits: [GymVisitSnapshot],
@@ -95,7 +121,8 @@ public struct VisitSnapshot: Equatable, Sendable {
     routeCards: [RouteCardSnapshot],
     projects: [ProjectSnapshot],
     pendingActionIDs: [ActionID],
-    reconciliationIssues: [ReconciliationIssueSnapshot]
+    reconciliationIssues: [ReconciliationIssueSnapshot],
+    attemptRouteCorrections: [AttemptRouteCorrectionSnapshot] = []
   ) {
     self.visits = visits
     self.attempts = attempts
@@ -103,10 +130,24 @@ public struct VisitSnapshot: Equatable, Sendable {
     self.projects = projects
     self.pendingActionIDs = pendingActionIDs
     self.reconciliationIssues = reconciliationIssues
+    self.attemptRouteCorrections = attemptRouteCorrections
   }
 
   public var activeAttempts: [AttemptSnapshot] {
     attempts.filter { $0.recordState == .active }
+  }
+
+  public var selectableRouteCards: [RouteCardSnapshot] {
+    routeCards.filter {
+      $0.recordVisibility == .active && $0.availability != .gone
+    }
+  }
+
+  public func canonicalRouteCardID(for routeCardID: RouteCardID) -> RouteCardID? {
+    guard let routeCard = routeCards.first(where: { $0.id == routeCardID }) else {
+      return nil
+    }
+    return routeCard.mergedIntoRouteCardID ?? routeCard.id
   }
 }
 
@@ -115,7 +156,9 @@ public struct VisitState: Equatable, Sendable {
   var visitsByID: [GymVisitID: GymVisitSnapshot]
   var attemptsByID: [AttemptID: AttemptSnapshot]
   var attemptOutcomeRecordsByActionID: [ActionID: AttemptOutcomeRecord]
+  var attemptRouteCorrectionsByActionID: [ActionID: AttemptRouteCorrectionSnapshot]
   var routeCardsByID: [RouteCardID: RouteCardSnapshot]
+  var routeVisibilityBeforeMergeByRouteCardID: [RouteCardID: RouteCardRecordVisibility]
   var projectsByID: [ProjectID: ProjectSnapshot]
   var appliedCommands: [ActionID: VisitCommand]
   var appliedEffects: [ActionID: AppliedEffect]
@@ -130,7 +173,9 @@ public struct VisitState: Equatable, Sendable {
     visitsByID = [:]
     attemptsByID = [:]
     attemptOutcomeRecordsByActionID = [:]
+    attemptRouteCorrectionsByActionID = [:]
     routeCardsByID = [:]
+    routeVisibilityBeforeMergeByRouteCardID = [:]
     projectsByID = [:]
     appliedCommands = [:]
     appliedEffects = [:]
@@ -165,6 +210,12 @@ public struct VisitState: Equatable, Sendable {
       pendingActionIDs: pendingCommands.keys.sorted { $0.rawValue < $1.rawValue },
       reconciliationIssues: reconciliationIssuesByActionID.values.sorted {
         $0.actionID.rawValue < $1.actionID.rawValue
+      },
+      attemptRouteCorrections: attemptRouteCorrectionsByActionID.values.sorted {
+        if $0.occurredAt != $1.occurredAt {
+          return $0.occurredAt < $1.occurredAt
+        }
+        return $0.actionID.rawValue < $1.actionID.rawValue
       }
     )
   }
@@ -229,6 +280,52 @@ public enum VisitCommand: Equatable, Sendable {
     occurredAt: Instant,
     source: CaptureSource
   )
+  case reviseRouteCard(
+    actionID: ActionID,
+    routeCardID: RouteCardID,
+    revisedLabel: String,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case archiveRouteCard(
+    actionID: ActionID,
+    routeCardID: RouteCardID,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case restoreRouteCard(
+    actionID: ActionID,
+    routeCardID: RouteCardID,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case correctRouteAvailability(
+    actionID: ActionID,
+    routeCardID: RouteCardID,
+    availability: RouteAvailability,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case confirmRouteCardMerge(
+    actionID: ActionID,
+    duplicateRouteCardID: RouteCardID,
+    canonicalRouteCardID: RouteCardID,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case unmergeRouteCard(
+    actionID: ActionID,
+    mergedRouteCardID: RouteCardID,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case correctAttemptRoute(
+    actionID: ActionID,
+    attemptID: AttemptID,
+    routeCardID: RouteCardID?,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
   case startProject(
     actionID: ActionID,
     projectID: ProjectID,
@@ -240,6 +337,12 @@ public enum VisitCommand: Equatable, Sendable {
     actionID: ActionID,
     projectID: ProjectID,
     supportingAttemptID: AttemptID,
+    occurredAt: Instant,
+    source: CaptureSource
+  )
+  case archiveProject(
+    actionID: ActionID,
+    projectID: ProjectID,
     occurredAt: Instant,
     source: CaptureSource
   )
@@ -268,6 +371,13 @@ public enum VisitRejection: Equatable, Sendable {
   case routeCardAlreadyExists
   case routeCardDoesNotExist
   case routeCardIsNotAvailable
+  case routeCardVisibilityCannotChange
+  case routeCardIsMerged
+  case routeCardIsNotMerged
+  case routeCardCannotMergeIntoSelf
+  case routeCardMergeWouldCreateChain
+  case routeAvailabilityUnchanged
+  case attemptRouteUnchanged
   case projectAlreadyExists
   case activeProjectAlreadyExists
   case projectDoesNotExist
@@ -282,11 +392,17 @@ public enum VisitConflict: Equatable, Sendable {
   case projectCycleWouldOverlap(RouteCardID)
   case targetIsRetracted(AttemptID)
   case targetHasDependentActions
+  case routeMergeHasActiveProjectConflict(
+    duplicateRouteCardID: RouteCardID,
+    canonicalRouteCardID: RouteCardID
+  )
 }
 
 public enum VisitDeferredReason: Equatable, Sendable {
   case missingAttempt(AttemptID)
   case missingAction(ActionID)
+  case missingRouteCard(RouteCardID)
+  case missingProject(ProjectID)
 }
 
 public enum CommandOutcome: Equatable, Sendable {
@@ -527,8 +643,10 @@ public enum VisitMemory {
         }
         markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
 
-      case .visitStarted, .visitEnded, .reviewStateChanged, .routeCardCreated, .routeReplaced,
-        .projectStarted, .projectClosed, .undo:
+      case .visitStarted, .visitEnded, .reviewStateChanged, .routeCardCreated,
+        .routeCardRevised, .routeCardVisibilityChanged, .routeCardAvailabilityChanged,
+        .routeCardMerged, .routeCardUnmerged, .routeReplaced, .projectStarted, .projectClosed,
+        .projectArchived, .attemptRouteCorrected, .undo:
         return VisitTransition(state: state, outcome: .rejected(.actionIsNotReversible))
       }
 
@@ -612,6 +730,193 @@ public enum VisitMemory {
       )
       effect = .routeCardCreated(routeCardID)
 
+    case .reviseRouteCard(_, let routeCardID, let revisedLabel, _, _):
+      guard let routeCard = next.routeCardsByID[routeCardID] else {
+        return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
+      }
+      next.routeCardsByID[routeCardID] = routeCard.revising(label: revisedLabel)
+      effect = .routeCardRevised(routeCardID)
+
+    case .archiveRouteCard(_, let routeCardID, _, _):
+      guard let routeCard = next.routeCardsByID[routeCardID] else {
+        return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
+      }
+      guard routeCard.recordVisibility == .active else {
+        return VisitTransition(
+          state: state, outcome: .rejected(.routeCardVisibilityCannotChange))
+      }
+      next.routeCardsByID[routeCardID] = routeCard.changingVisibility(
+        to: .archived,
+        mergedIntoRouteCardID: nil
+      )
+      effect = .routeCardVisibilityChanged(routeCardID)
+
+    case .restoreRouteCard(_, let routeCardID, _, _):
+      guard let routeCard = next.routeCardsByID[routeCardID] else {
+        return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
+      }
+      guard routeCard.recordVisibility == .archived else {
+        return VisitTransition(
+          state: state, outcome: .rejected(.routeCardVisibilityCannotChange))
+      }
+      next.routeCardsByID[routeCardID] = routeCard.changingVisibility(
+        to: .active,
+        mergedIntoRouteCardID: nil
+      )
+      effect = .routeCardVisibilityChanged(routeCardID)
+
+    case .correctRouteAvailability(_, let routeCardID, let availability, let occurredAt, _):
+      guard let routeCard = next.routeCardsByID[routeCardID] else {
+        return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
+      }
+      guard routeCard.recordVisibility != .merged else {
+        return VisitTransition(state: state, outcome: .rejected(.routeCardIsMerged))
+      }
+      guard routeCard.availability != availability else {
+        return VisitTransition(state: state, outcome: .rejected(.routeAvailabilityUnchanged))
+      }
+      next.routeCardsByID[routeCardID] = routeCard.changingAvailability(to: availability)
+      if availability == .gone {
+        closeActiveProjects(
+          canonicallyLinkedTo: routeCardID,
+          as: .gone,
+          at: occurredAt,
+          in: &next
+        )
+      }
+      effect = .routeCardAvailabilityChanged(routeCardID)
+
+    case .confirmRouteCardMerge(
+      _, let duplicateRouteCardID, let canonicalRouteCardID, _, _
+    ):
+      guard duplicateRouteCardID != canonicalRouteCardID else {
+        return VisitTransition(state: state, outcome: .rejected(.routeCardCannotMergeIntoSelf))
+      }
+      guard let duplicateRouteCard = next.routeCardsByID[duplicateRouteCardID] else {
+        return deferred(
+          command, reason: .missingRouteCard(duplicateRouteCardID), from: state)
+      }
+      guard let canonicalRouteCard = next.routeCardsByID[canonicalRouteCardID] else {
+        return deferred(
+          command, reason: .missingRouteCard(canonicalRouteCardID), from: state)
+      }
+      guard duplicateRouteCard.recordVisibility != .merged else {
+        return VisitTransition(state: state, outcome: .rejected(.routeCardIsMerged))
+      }
+      guard canonicalRouteCard.recordVisibility != .merged else {
+        return VisitTransition(state: state, outcome: .rejected(.routeCardIsMerged))
+      }
+      guard
+        !next.routeCardsByID.values.contains(where: {
+          $0.mergedIntoRouteCardID == duplicateRouteCardID
+        })
+      else {
+        return VisitTransition(
+          state: state, outcome: .rejected(.routeCardMergeWouldCreateChain))
+      }
+
+      let duplicateHasActiveProject = hasActiveProject(
+        canonicallyLinkedTo: duplicateRouteCardID,
+        in: next
+      )
+      let canonicalHasActiveProject = hasActiveProject(
+        canonicallyLinkedTo: canonicalRouteCardID,
+        in: next
+      )
+      guard !(duplicateHasActiveProject && canonicalHasActiveProject) else {
+        return preservedConflict(
+          command,
+          reason: .routeMergeHasActiveProjectConflict(
+            duplicateRouteCardID: duplicateRouteCardID,
+            canonicalRouteCardID: canonicalRouteCardID
+          ),
+          from: state
+        )
+      }
+
+      next.routeVisibilityBeforeMergeByRouteCardID[duplicateRouteCardID] =
+        duplicateRouteCard.recordVisibility
+      next.routeCardsByID[duplicateRouteCardID] = duplicateRouteCard.changingVisibility(
+        to: .merged,
+        mergedIntoRouteCardID: canonicalRouteCardID
+      )
+      effect = .routeCardMerged(
+        duplicate: duplicateRouteCardID,
+        canonical: canonicalRouteCardID
+      )
+
+    case .unmergeRouteCard(_, let mergedRouteCardID, _, _):
+      guard let routeCard = next.routeCardsByID[mergedRouteCardID] else {
+        return deferred(command, reason: .missingRouteCard(mergedRouteCardID), from: state)
+      }
+      guard routeCard.recordVisibility == .merged,
+        let canonicalRouteCardID = routeCard.mergedIntoRouteCardID
+      else {
+        return VisitTransition(state: state, outcome: .rejected(.routeCardIsNotMerged))
+      }
+      let restoredVisibility =
+        next.routeVisibilityBeforeMergeByRouteCardID[mergedRouteCardID] ?? .active
+      next.routeCardsByID[mergedRouteCardID] = routeCard.changingVisibility(
+        to: restoredVisibility,
+        mergedIntoRouteCardID: nil
+      )
+      next.routeVisibilityBeforeMergeByRouteCardID[mergedRouteCardID] = nil
+      reprojectProjects(in: &next)
+      effect = .routeCardUnmerged(
+        recovered: mergedRouteCardID,
+        formerCanonical: canonicalRouteCardID
+      )
+
+    case .correctAttemptRoute(
+      let actionID, let attemptID, let routeCardID, let occurredAt, let source
+    ):
+      guard let attempt = next.attemptsByID[attemptID] else {
+        return deferred(command, reason: .missingAttempt(attemptID), from: state)
+      }
+      guard attempt.recordState == .active else {
+        return VisitTransition(state: state, outcome: .rejected(.attemptIsRetracted))
+      }
+      if let routeCardID {
+        guard let routeCard = next.routeCardsByID[routeCardID] else {
+          return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
+        }
+        guard routeCard.recordVisibility != .merged else {
+          return VisitTransition(state: state, outcome: .rejected(.routeCardIsMerged))
+        }
+      }
+      guard attempt.routeCardID != routeCardID else {
+        return VisitTransition(state: state, outcome: .rejected(.attemptRouteUnchanged))
+      }
+
+      next.attemptsByID[attemptID] = AttemptSnapshot(
+        id: attempt.id,
+        visitID: attempt.visitID,
+        routeCardID: routeCardID,
+        occurredAt: attempt.occurredAt,
+        recordedBy: attempt.recordedBy,
+        recordState: attempt.recordState,
+        outcome: attempt.outcome
+      )
+      next.attemptRouteCorrectionsByActionID[actionID] = AttemptRouteCorrectionSnapshot(
+        actionID: actionID,
+        attemptID: attemptID,
+        previousRouteCardID: attempt.routeCardID,
+        correctedRouteCardID: routeCardID,
+        occurredAt: occurredAt,
+        source: source
+      )
+      reprojectProjects(in: &next)
+      if let overlappingRouteCardID = routeCardWithOverlappingActiveProjects(in: next) {
+        return preservedConflict(
+          command,
+          reason: .projectCycleWouldOverlap(overlappingRouteCardID),
+          visitID: attempt.visitID,
+          from: state
+        )
+      }
+      markVisitNeedsRecheckIfReviewed(attempt.visitID, in: &next)
+      effect = .attemptRouteCorrected(attemptID)
+
     case .startProject(_, let projectID, let routeCardID, let occurredAt, _):
       guard next.projectsByID[projectID] == nil else {
         return VisitTransition(state: state, outcome: .rejected(.projectAlreadyExists))
@@ -624,7 +929,8 @@ public enum VisitMemory {
       }
       guard
         !next.projectsByID.values.contains(where: {
-          $0.routeCardID == routeCardID && $0.state == .active
+          $0.state == .active
+            && canonicalRouteCardID(for: $0.routeCardID, in: next) == routeCardID
         })
       else {
         return VisitTransition(state: state, outcome: .rejected(.activeProjectAlreadyExists))
@@ -652,7 +958,10 @@ public enum VisitMemory {
       else {
         return VisitTransition(state: state, outcome: .rejected(.supportingAttemptIsNotSent))
       }
-      guard attempt.routeCardID == project.routeCardID else {
+      guard
+        attempt.routeCardID.flatMap({ canonicalRouteCardID(for: $0, in: next) })
+          == canonicalRouteCardID(for: project.routeCardID, in: next)
+      else {
         return VisitTransition(state: state, outcome: .rejected(.supportingAttemptRouteMismatch))
       }
       next.projectsByID[projectID] = ProjectSnapshot(
@@ -664,6 +973,23 @@ public enum VisitMemory {
         supportingAttemptID: supportingAttemptID
       )
       effect = .projectClosed(projectID)
+
+    case .archiveProject(_, let projectID, let occurredAt, _):
+      guard let project = next.projectsByID[projectID] else {
+        return deferred(command, reason: .missingProject(projectID), from: state)
+      }
+      guard project.state == .active else {
+        return VisitTransition(state: state, outcome: .rejected(.projectIsNotActive))
+      }
+      next.projectsByID[projectID] = ProjectSnapshot(
+        id: project.id,
+        routeCardID: project.routeCardID,
+        state: .archived,
+        startedAt: project.startedAt,
+        closedAt: occurredAt,
+        supportingAttemptID: nil
+      )
+      effect = .projectArchived(projectID)
 
     case .replaceRouteAfterReset(
       _,
@@ -733,7 +1059,7 @@ public enum VisitMemory {
   private static func preservedConflict(
     _ command: VisitCommand,
     reason: VisitConflict,
-    visitID: GymVisitID,
+    visitID: GymVisitID? = nil,
     from state: VisitState
   ) -> VisitTransition {
     var next = state
@@ -742,7 +1068,9 @@ public enum VisitMemory {
       actionID: command.actionID,
       reason: .conflict(reason)
     )
-    markVisitNeedsRecheckIfReviewed(visitID, in: &next)
+    if let visitID {
+      markVisitNeedsRecheckIfReviewed(visitID, in: &next)
+    }
     return VisitTransition(state: next, outcome: .conflict(reason))
   }
 
@@ -839,7 +1167,7 @@ public enum VisitMemory {
   private static func reprojectProjects(in state: inout VisitState) {
     let projects = Array(state.projectsByID.values)
 
-    for project in projects where project.state != .archived {
+    for project in projects where project.state != .archived && project.state != .gone {
       let closureCommands = state.appliedCommands.values.filter { command in
         guard
           case .closeProjectSent(let actionID, let projectID, _, _, _) = command,
@@ -869,9 +1197,13 @@ public enum VisitMemory {
       let hasValidSupport =
         supportingAttempt?.recordState == .active
         && supportingAttempt?.outcome == .sent
-        && supportingAttempt?.routeCardID == project.routeCardID
+        && supportingAttempt?.routeCardID.flatMap({
+          canonicalRouteCardID(for: $0, in: state)
+        }) == canonicalRouteCardID(for: project.routeCardID, in: state)
 
-      let routeIsGone = state.routeCardsByID[project.routeCardID]?.availability == .gone
+      let routeIsGone =
+        canonicalRouteCardID(for: project.routeCardID, in: state)
+        .flatMap { state.routeCardsByID[$0]?.availability } == .gone
       let resetAt = state.appliedCommands.values
         .filter { command in
           guard case .replaceRouteAfterReset(_, let oldRouteCardID, _, _, _, _) = command else {
@@ -899,11 +1231,56 @@ public enum VisitMemory {
   ) -> RouteCardID? {
     var seenRouteCardIDs: Set<RouteCardID> = []
     for project in state.projectsByID.values where project.state == .active {
-      guard seenRouteCardIDs.insert(project.routeCardID).inserted else {
-        return project.routeCardID
+      let routeCardID =
+        canonicalRouteCardID(for: project.routeCardID, in: state)
+        ?? project.routeCardID
+      guard seenRouteCardIDs.insert(routeCardID).inserted else {
+        return routeCardID
       }
     }
     return nil
+  }
+
+  private static func canonicalRouteCardID(
+    for routeCardID: RouteCardID,
+    in state: VisitState
+  ) -> RouteCardID? {
+    guard let routeCard = state.routeCardsByID[routeCardID] else {
+      return nil
+    }
+    return routeCard.mergedIntoRouteCardID ?? routeCard.id
+  }
+
+  private static func hasActiveProject(
+    canonicallyLinkedTo routeCardID: RouteCardID,
+    in state: VisitState
+  ) -> Bool {
+    state.projectsByID.values.contains {
+      $0.state == .active
+        && canonicalRouteCardID(for: $0.routeCardID, in: state) == routeCardID
+    }
+  }
+
+  private static func closeActiveProjects(
+    canonicallyLinkedTo routeCardID: RouteCardID,
+    as projectState: ProjectState,
+    at occurredAt: Instant,
+    in state: inout VisitState
+  ) {
+    for project in state.projectsByID.values
+    where
+      project.state == .active
+      && canonicalRouteCardID(for: project.routeCardID, in: state) == routeCardID
+    {
+      state.projectsByID[project.id] = ProjectSnapshot(
+        id: project.id,
+        routeCardID: project.routeCardID,
+        state: projectState,
+        startedAt: project.startedAt,
+        closedAt: occurredAt,
+        supportingAttemptID: nil
+      )
+    }
   }
 
   private static func markVisitNeedsRecheckIfReviewed(
@@ -998,8 +1375,16 @@ extension VisitCommand {
       .beginReview(let actionID, _, _, _),
       .completeReview(let actionID, _, _, _),
       .createRouteCard(let actionID, _, _, _, _, _),
+      .reviseRouteCard(let actionID, _, _, _, _),
+      .archiveRouteCard(let actionID, _, _, _),
+      .restoreRouteCard(let actionID, _, _, _),
+      .correctRouteAvailability(let actionID, _, _, _, _),
+      .confirmRouteCardMerge(let actionID, _, _, _, _),
+      .unmergeRouteCard(let actionID, _, _, _),
+      .correctAttemptRoute(let actionID, _, _, _, _),
       .startProject(let actionID, _, _, _, _),
       .closeProjectSent(let actionID, _, _, _, _),
+      .archiveProject(let actionID, _, _, _),
       .replaceRouteAfterReset(let actionID, _, _, _, _, _):
       actionID
     }
@@ -1016,8 +1401,16 @@ extension VisitCommand {
       .beginReview(_, _, let occurredAt, _),
       .completeReview(_, _, let occurredAt, _),
       .createRouteCard(_, _, _, _, let occurredAt, _),
+      .reviseRouteCard(_, _, _, let occurredAt, _),
+      .archiveRouteCard(_, _, let occurredAt, _),
+      .restoreRouteCard(_, _, let occurredAt, _),
+      .correctRouteAvailability(_, _, _, let occurredAt, _),
+      .confirmRouteCardMerge(_, _, _, let occurredAt, _),
+      .unmergeRouteCard(_, _, let occurredAt, _),
+      .correctAttemptRoute(_, _, _, let occurredAt, _),
       .startProject(_, _, _, let occurredAt, _),
       .closeProjectSent(_, _, _, let occurredAt, _),
+      .archiveProject(_, _, let occurredAt, _),
       .replaceRouteAfterReset(_, _, _, _, let occurredAt, _):
       occurredAt
     }
@@ -1029,11 +1422,18 @@ enum AppliedEffect: Equatable, Sendable {
   case visitEnded(GymVisitID)
   case reviewStateChanged(visitID: GymVisitID, previous: GymVisitReviewState)
   case routeCardCreated(RouteCardID)
+  case routeCardRevised(RouteCardID)
+  case routeCardVisibilityChanged(RouteCardID)
+  case routeCardAvailabilityChanged(RouteCardID)
+  case routeCardMerged(duplicate: RouteCardID, canonical: RouteCardID)
+  case routeCardUnmerged(recovered: RouteCardID, formerCanonical: RouteCardID)
   case routeReplaced(old: RouteCardID, successor: RouteCardID)
   case projectStarted(ProjectID)
   case projectClosed(ProjectID)
+  case projectArchived(ProjectID)
   case attemptRecorded(AttemptID)
   case outcomeRecorded(AttemptID)
+  case attemptRouteCorrected(AttemptID)
   case undo(ActionID)
 }
 

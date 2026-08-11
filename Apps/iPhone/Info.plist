@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>LineWise</string>
+  <key>NSHealthShareUsageDescription</key>
+  <string>LineWise reads optional workout summaries to add context to your private climbing journal.</string>
+  <key>NSHealthUpdateUsageDescription</key>
+  <string>LineWise saves a climbing workout only when you explicitly start one.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>LineWise uses the camera only when you choose to capture a private route photo.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>LineWise imports only the route photo you explicitly select for your private climbing record.</string>
+</dict>
+</plist>

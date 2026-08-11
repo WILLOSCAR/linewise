@@ -38,6 +38,47 @@ public struct RouteCardSnapshot: Equatable, Codable, Sendable {
   }
 }
 
+extension RouteCardSnapshot {
+  func revising(label: String) -> RouteCardSnapshot {
+    RouteCardSnapshot(
+      id: id,
+      label: label,
+      recordVisibility: recordVisibility,
+      availability: availability,
+      mergedIntoRouteCardID: mergedIntoRouteCardID,
+      successorRouteCardID: successorRouteCardID,
+      createdAt: createdAt
+    )
+  }
+
+  func changingVisibility(
+    to visibility: RouteCardRecordVisibility,
+    mergedIntoRouteCardID: RouteCardID?
+  ) -> RouteCardSnapshot {
+    RouteCardSnapshot(
+      id: id,
+      label: label,
+      recordVisibility: visibility,
+      availability: availability,
+      mergedIntoRouteCardID: mergedIntoRouteCardID,
+      successorRouteCardID: successorRouteCardID,
+      createdAt: createdAt
+    )
+  }
+
+  func changingAvailability(to availability: RouteAvailability) -> RouteCardSnapshot {
+    RouteCardSnapshot(
+      id: id,
+      label: label,
+      recordVisibility: recordVisibility,
+      availability: availability,
+      mergedIntoRouteCardID: mergedIntoRouteCardID,
+      successorRouteCardID: successorRouteCardID,
+      createdAt: createdAt
+    )
+  }
+}
+
 public enum ProjectState: String, Codable, Sendable {
   case active
   case sent

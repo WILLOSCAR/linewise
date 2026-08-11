@@ -1752,7 +1752,7 @@ func deferredCommandConflictRemainsVisibleForReview() throws {
     ], "expected conflicting pending Undo to remain visible for review")
 }
 
-let specifications: [(String, () throws -> Void)] = [
+var specifications: [(String, () throws -> Void)] = [
   (
     "one Record Attempt command creates one unresolved Attempt",
     oneRecordAttemptCommandCreatesOneUnresolvedAttempt
@@ -1847,6 +1847,14 @@ let specifications: [(String, () throws -> Void)] = [
     deferredCommandConflictRemainsVisibleForReview
   ),
 ]
+
+specifications += restSpecifications()
+specifications += persistenceSyncSpecifications()
+specifications += recallTrainingSpecifications()
+specifications += rehearsalEngineSpecifications()
+specifications += correctionSpecifications()
+specifications += datasetCompareSpecifications()
+specifications += qualitativeRouteAnalysisSpecifications()
 
 var failures: [String] = []
 
