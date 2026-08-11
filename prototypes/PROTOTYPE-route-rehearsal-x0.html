@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROTOTYPE — LineWise RouteRehearsal X0</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111310;
+      --panel: #1b1e19;
+      --panel-2: #232720;
+      --line: #3a4035;
+      --text: #f3f2e9;
+      --muted: #aaaE9f;
+      --accent: #d8ff63;
+      --actual: #61dbe6;
+      --danger: #ff8878;
+      --warn: #ffc95d;
+      --ok: #86e29a;
+      --suggested: #c7a6ff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, select, input { font: inherit; }
+    button, select {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #292d25;
+      color: var(--text);
+      padding: 8px 11px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: #6a735f; }
+    button:disabled { opacity: .38; cursor: not-allowed; }
+    button.active, button.primary {
+      color: #11150b;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    button.actual-active { background: var(--actual); border-color: var(--actual); color: #081416; font-weight: 700; }
+    button.danger { color: #ffd2cc; border-color: #74463f; }
+    label.checkbox { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+    input[type="range"] { accent-color: var(--accent); }
+
+    .prototype-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 18px;
+      color: #19140a;
+      background: repeating-linear-gradient(135deg, #ffcd57 0, #ffcd57 12px, #ffd975 12px, #ffd975 24px);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+    .wrap { max-width: 1500px; margin: 0 auto; padding: 22px; }
+    h1 { margin: 0 0 6px; font-size: clamp(26px, 4vw, 46px); line-height: 1.05; }
+    h2 { margin: 0; font-size: 18px; }
+    h3 { margin: 0 0 8px; font-size: 15px; }
+    p { margin: 6px 0; }
+    .lede { color: var(--muted); max-width: 1000px; }
+    .question {
+      margin: 16px 0 20px;
+      padding: 13px 15px;
+      border-left: 4px solid var(--accent);
+      background: #1c2118;
+      border-radius: 0 10px 10px 0;
+    }
+    .question strong { color: var(--accent); }
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .badge.suggested { color: var(--suggested); border-color: #755fa0; }
+    .badge.stale { color: var(--warn); border-color: #80682e; }
+    .badge.confirmed { color: var(--ok); border-color: #3f7448; }
+    .badge.observed { color: var(--actual); border-color: #3b7780; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(560px, 1.5fr) minmax(330px, .8fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-body { padding: 13px 14px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .stack { display: grid; gap: 10px; }
+    .small { color: var(--muted); font-size: 12px; }
+
+    .canvas-wrap { position: relative; background: #777768; }
+    #route-canvas {
+      display: block;
+      width: 100%;
+      max-height: 660px;
+      min-height: 510px;
+      touch-action: none;
+      user-select: none;
+    }
+    .canvas-help {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      max-width: 390px;
+      padding: 7px 9px;
+      color: #f4f4ea;
+      background: rgba(13, 15, 12, .82);
+      border-radius: 8px;
+      font-size: 11px;
+      pointer-events: none;
+    }
+    .hold { cursor: crosshair; }
+    .hold:hover .hold-shape { stroke-width: 5; }
+    .hold-label { pointer-events: none; font-size: 12px; font-weight: 800; fill: #10120e; text-anchor: middle; dominant-baseline: central; }
+    .limb-end { cursor: grab; stroke: #111; stroke-width: 2.5; }
+    .limb-end:active { cursor: grabbing; }
+    .limb-label { font-size: 11px; font-weight: 900; fill: #111; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+    .transport, .timeline, .editor { border-top: 1px solid var(--line); padding: 12px 14px; }
+    .transport { display: grid; gap: 10px; }
+    .scrub { display: grid; grid-template-columns: auto minmax(140px, 1fr) 42px; align-items: center; gap: 8px; }
+    .timeline-track { display: flex; gap: 7px; overflow-x: auto; padding: 3px 0 7px; }
+    .keyframe {
+      min-width: 118px;
+      padding: 9px;
+      text-align: left;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #242820;
+      color: var(--text);
+    }
+    .keyframe.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .keyframe.actual.selected { outline-color: var(--actual); }
+    .keyframe .kf-title { display: flex; justify-content: space-between; gap: 6px; font-weight: 800; }
+    .keyframe .kf-meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
+
+    .inspector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .field {
+      min-width: 0;
+      padding: 9px;
+      background: var(--panel-2);
+      border: 1px solid #343a30;
+      border-radius: 9px;
+    }
+    .field dt { color: var(--muted); font-size: 11px; }
+    .field dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+    .findings { margin: 0; padding-left: 18px; }
+    .findings li { margin: 4px 0; }
+    .finding-warn { color: var(--warn); }
+    .finding-ok { color: var(--ok); }
+    .diff-box {
+      padding: 10px;
+      border: 1px dashed #606955;
+      border-radius: 9px;
+      background: #171a15;
+      font-size: 12px;
+    }
+    .suggestion-box {
+      padding: 10px;
+      border: 1px solid #695489;
+      border-radius: 9px;
+      background: #211c29;
+    }
+    .event {
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      background: #171a15;
+      border-radius: 0 8px 8px 0;
+    }
+    .event.rejected { border-color: var(--danger); color: #ffd0ca; }
+
+    .scenarios { margin-top: 16px; }
+    .scenario-tabs { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 14px 0; }
+    .scenario-content { padding: 14px; }
+    .walk-steps { display: grid; gap: 8px; margin-top: 12px; }
+    .walk-step { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 9px; padding: 9px; background: var(--panel-2); border-radius: 9px; }
+    .walk-step.done { opacity: .58; }
+    .step-num { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #383e32; font-weight: 800; }
+
+    .state-section { margin-top: 16px; }
+    .state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .invariants { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+    .invariants li::before { content: "✓"; margin-right: 7px; color: var(--ok); }
+    .invariants li.bad::before { content: "×"; color: var(--danger); }
+    pre {
+      margin: 0;
+      max-height: 520px;
+      overflow: auto;
+      padding: 13px;
+      background: #0d0f0c;
+      color: #d8ddcf;
+      border-radius: 10px;
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    footer { padding: 22px 0 4px; color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 980px) {
+      .workspace, .state-grid { grid-template-columns: 1fr; }
+      #route-canvas { min-height: 460px; }
+    }
+    @media (max-width: 620px) {
+      .wrap { padding: 14px; }
+      .workspace { display: block; }
+      .workspace > * { margin-bottom: 12px; }
+      .inspector-grid { grid-template-columns: 1fr; }
+      .walk-step { grid-template-columns: 28px 1fr; }
+      .walk-step button { grid-column: 2; justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-bar">
+    <span>PROTOTYPE · THROWAWAY · X0 MANUAL ROUTE REHEARSAL</span>
+    <span>单文件 / 内存状态 / 非产品承诺</span>
+  </div>
+
+  <main class="wrap">
+    <h1>RouteRehearsal X0</h1>
+    <p class="lede">这是一个故意可丢弃的手工 2D 状态模型。没有真实 AI、没有生物力学保证、没有持久化；所有“重生成”都是固定规则的 deterministic stub。</p>
+    <div class="question"><strong>要回答的问题：</strong>在没有 AI 的前提下，用户能否靠 RouteScene、四肢接触、PoseKeyframe 与 MovementStep，完成可理解的手工编排、单步调试、连续动画，以及 Plan / Actual 对比？</div>
+
+    <section class="workspace">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>RouteScene · 手工 2D 墙面</h2>
+            <div class="small" id="canvas-subtitle"></div>
+          </div>
+          <div class="row">
+            <button data-mode="plan">Plan</button>
+            <button data-mode="actual">Actual</button>
+            <label class="checkbox"><input id="compare-toggle" type="checkbox"> Compare overlay</label>
+          </div>
+        </div>
+        <div class="canvas-wrap">
+          <svg id="route-canvas" viewBox="0 0 720 640" role="img" aria-label="RouteScene 和攀爬人形编辑画布"></svg>
+          <div class="canvas-help">先选 LH / RH / LF / RF，再点目标岩点；或直接把四肢端点拖到岩点。被锁定的接触必须先解锁。双击空白可增加手工岩点。</div>
+        </div>
+
+        <div class="transport">
+          <div class="row">
+            <button data-action="PREV_FRAME">◀ Prev</button>
+            <button data-action="NEXT_FRAME">Next ▶</button>
+            <button data-action="PLAY_CURRENT">▶ 本步</button>
+            <button data-action="PLAY_ALL">▶ 全部</button>
+            <button data-action="PAUSE">Ⅱ Pause</button>
+            <label class="checkbox"><input id="loop-toggle" type="checkbox"> Loop</label>
+            <label>速度
+              <select id="speed-select">
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+          </div>
+          <div class="scrub">
+            <span>Scrub</span>
+            <input id="scrub-input" type="range" min="0" max="100" value="0">
+            <output id="scrub-output">0%</output>
+          </div>
+          <div class="row">
+            <label class="checkbox"><input id="ghost-toggle" type="checkbox" checked> 前后 Ghost</label>
+            <label class="checkbox"><input id="diff-toggle" type="checkbox" checked> Contact diff</label>
+          </div>
+        </div>
+
+        <div class="timeline">
+          <div class="row" style="justify-content:space-between">
+            <h3>PoseKeyframes / MovementSteps</h3>
+            <span class="small">点击卡片定位；排序时保留稳定 ID</span>
+          </div>
+          <div id="timeline-track" class="timeline-track"></div>
+          <div class="row">
+            <button data-action="ADD_FRAME">＋ 新关键帧</button>
+            <button data-action="DUPLICATE_FRAME">复制</button>
+            <button data-action="DELETE_FRAME" class="danger">删除</button>
+            <button data-action="MOVE_FRAME_LEFT">← 前移</button>
+            <button data-action="MOVE_FRAME_RIGHT">后移 →</button>
+          </div>
+        </div>
+
+        <div class="editor">
+          <div class="row" style="justify-content:space-between">
+            <h3>四肢接触编辑</h3>
+            <span class="small">显式接触，不允许 solver 静默换点</span>
+          </div>
+          <div class="row" id="limb-buttons"></div>
+          <div class="row" style="margin-top:9px">
+            <button data-action="TOGGLE_LOCK" id="lock-button">锁定 / 解锁</button>
+            <label>接触类型
+              <select id="contact-mode-select">
+                <option value="hold">hold</option>
+                <option value="heel">heel</option>
+                <option value="toe">toe</option>
+                <option value="hook">hook</option>
+                <option value="smear">smear</option>
+                <option value="free">free</option>
+              </select>
+            </label>
+            <button data-action="NUDGE_TORSO_LEFT">躯干 ←</button>
+            <button data-action="NUDGE_TORSO_RIGHT">躯干 →</button>
+            <button data-action="NUDGE_TORSO_UP">躯干 ↑</button>
+            <button data-action="NUDGE_TORSO_DOWN">躯干 ↓</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <h2>单步调试器</h2>
+          <span id="frame-counter" class="badge"></span>
+        </div>
+        <div class="panel-body stack">
+          <dl id="frame-facts" class="inspector-grid"></dl>
+
+          <div>
+            <h3>ConstraintFindings（定性，不是安全判断）</h3>
+            <ul id="finding-list" class="findings"></ul>
+          </div>
+
+          <div id="contact-diff-box" class="diff-box"></div>
+
+          <div>
+            <h3>局部重生成占位</h3>
+            <p class="small">以下操作无模型调用，只用帧序号计算固定 offset；结果必须保持 <span class="badge suggested">suggested</span>。</p>
+            <div class="row">
+              <button data-action="STUB_CURRENT">重算当前 · stub</button>
+              <button data-action="STUB_DOWNSTREAM">重算下游 · stub</button>
+            </div>
+          </div>
+          <div id="suggestion-slot"></div>
+
+          <div id="last-event" class="event"></div>
+          <div class="row">
+            <button data-action="UNDO">↶ Undo</button>
+            <button data-action="REDO">↷ Redo</button>
+            <button data-action="RESET">重置 X0</button>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel scenarios">
+      <div class="panel-head">
+        <div>
+          <h2>Awkward walkthroughs</h2>
+          <div class="small">切换场景会重置为已知状态；每一步都是真实 reducer action。</div>
+        </div>
+      </div>
+      <div id="scenario-tabs" class="scenario-tabs"></div>
+      <div id="scenario-content" class="scenario-content"></div>
+    </section>
+
+    <section class="state-section state-grid">
+      <div class="panel">
+        <div class="panel-head"><h2>状态不变量</h2><span id="invariant-count" class="badge"></span></div>
+        <div class="panel-body"><ul id="invariant-list" class="invariants"></ul></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>完整当前状态</h2>
+          <span id="history-depth" class="badge"></span>
+        </div>
+        <div class="panel-body"><pre id="raw-state"></pre></div>
+      </div>
+    </section>
+
+    <footer>PROTOTYPE — 只用于判断交互与状态模型是否值得继续。这里的 pose solver、动画与“AI”不构成可行性、正确动作、安全或训练效果证据。</footer>
+  </main>
+
+  <script>
+  /*
+   * Portable logic module. It has no DOM/document references.
+   * The UI shell below only dispatches actions and renders derived state.
+   */
+  const RouteRehearsalModel = (() => {
+    "use strict";
+
+    const LIMBS = ["LH", "RH", "LF", "RF"];
+    const HANDS = new Set(["LH", "RH"]);
+    const EPHEMERAL = new Set([
+      "SELECT_LIMB", "SELECT_FRAME", "SET_ACTIVE_TRACK", "TOGGLE_COMPARE",
+      "TOGGLE_GHOST", "TOGGLE_DIFF", "PREV_FRAME", "NEXT_FRAME",
+      "PLAY_CURRENT", "PLAY_ALL", "PAUSE", "TICK", "SCRUB",
+      "SET_LOOP", "SET_SPEED"
+    ]);
+
+    const clone = value => JSON.parse(JSON.stringify(value));
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+    function contact(targetId, locked = true, mode = "hold", source = "user", status = "confirmed") {
+      return { targetId, locked, mode, provenance: { source, status } };
+    }
+
+    function baseHolds() {
+      return [
+        { id: "H1", x: 205, y: 515, radius: 25, role: "start", kind: "hold" },
+        { id: "H2", x: 342, y: 516, radius: 27, role: "start", kind: "hold" },
+        { id: "H3", x: 446, y: 436, radius: 24, role: "route", kind: "hold" },
+        { id: "H4", x: 267, y: 392, radius: 23, role: "route", kind: "hold" },
+        { id: "H5", x: 500, y: 326, radius: 27, role: "route", kind: "hold" },
+        { id: "H6", x: 334, y: 273, radius: 25, role: "route", kind: "hold" },
+        { id: "H7", x: 528, y: 205, radius: 24, role: "route", kind: "hold" },
+        { id: "H8", x: 382, y: 118, radius: 30, role: "top", kind: "hold" },
+        { id: "V1", x: 147, y: 295, radius: 43, role: "shared-volume", kind: "volume" },
+        { id: "GROUND-L", x: 255, y: 598, radius: 12, role: "ground", kind: "ground" },
+        { id: "GROUND-R", x: 370, y: 598, radius: 12, role: "ground", kind: "ground" }
+      ];
+    }
+
+    function frame(id, label, contacts, torsoOffset = { x: 0, y: 0 }, provenance = { source: "user", status: "confirmed" }) {
+      return {
+        id, label, contacts, torsoOffset, durationMs: 1200,
+        validity: "valid", staleReason: null,
+        provenance,
+        branch: "main"
+      };
+    }
+
+    function basePlanFrames() {
+      return [
+        frame("P1", "双起步", {
+          LH: contact("H1"), RH: contact("H2"), LF: contact("GROUND-L"), RF: contact("GROUND-R")
+        }),
+        frame("P2", "右手探 H3", {
+          LH: contact("H1"), RH: contact("H3"), LF: contact("GROUND-L"), RF: contact("H2")
+        }, { x: 6, y: 0 }),
+        frame("P3", "左脚 H4", {
+          LH: contact("H1"), RH: contact("H3"), LF: contact("H4"), RF: contact("H2")
+        }, { x: 2, y: -8 }),
+        frame("P4", "左手 H6", {
+          LH: contact("H6"), RH: contact("H3"), LF: contact("H4"), RF: contact("H2")
+        }, { x: 7, y: -10 }),
+        frame("P5", "右手 H7", {
+          LH: contact("H6"), RH: contact("H7"), LF: contact("H4"), RF: contact("H5")
+        }, { x: 0, y: -12 })
+      ];
+    }
+
+    function baseActualFrames() {
+      const observed = { source: "manual-observation", status: "observed" };
+      return [
+        frame("A1", "实际起步", {
+          LH: contact("H1", true, "hold", "manual-observation", "observed"),
+          RH: contact("H2", true, "hold", "manual-observation", "observed"),
+          LF: contact("GROUND-L", true, "hold", "manual-observation", "observed"),
+          RF: contact("GROUND-R", true, "hold", "manual-observation", "observed")
+        }, { x: -4, y: 2 }, observed),
+        frame("A2", "实际先上左脚", {
+          LH: contact("H1", true, "hold", "manual-observation", "observed"),
+          RH: contact("H2", true, "hold", "manual-observation", "observed"),
+          LF: contact("H4", true, "toe", "manual-observation", "observed"),
+          RF: contact("GROUND-R", true, "hold", "manual-observation", "observed")
+        }, { x: -10, y: -2 }, observed),
+        frame("A3", "实际右手 H3", {
+          LH: contact("H1", true, "hold", "manual-observation", "observed"),
+          RH: contact("H3", true, "hold", "manual-observation", "observed"),
+          LF: contact("H4", true, "toe", "manual-observation", "observed"),
+          RF: contact("H2", true, "toe", "manual-observation", "observed")
+        }, { x: -2, y: -7 }, observed),
+        frame("A4", "实际左手 H6", {
+          LH: contact("H6", true, "hold", "manual-observation", "observed"),
+          RH: contact("H3", true, "hold", "manual-observation", "observed"),
+          LF: contact("H4", true, "toe", "manual-observation", "observed"),
+          RF: contact("H2", true, "toe", "manual-observation", "observed")
+        }, { x: -5, y: -12 }, observed)
+      ];
+    }
+
+    function makeState(preset = "base") {
+      const state = {
+        schema: "linewise.route-rehearsal-x0/v0",
+        prototype: true,
+        question: "Can a manual RouteScene + contacts + keyframes support useful rehearsal and debugging without AI?",
+        routeScene: {
+          id: "SCENE-X0-1",
+          source: "embedded synthetic wall",
+          geometry: "2D only",
+          scale: { source: "manual placeholder", confidence: "unknown" },
+          holds: baseHolds(),
+          revision: 1
+        },
+        tracks: {
+          plan: { id: "PLAN-1", kind: "planned", frames: basePlanFrames() },
+          actual: { id: "ACTUAL-1", kind: "manually-observed", frames: baseActualFrames() }
+        },
+        activeTrack: "plan",
+        selectedFrameIndex: 0,
+        selectedLimb: "RH",
+        settings: { compare: false, showGhosts: true, showDiff: true },
+        playback: { playing: false, scope: "current", transitionIndex: 0, progress: 0, speed: 1, loop: false },
+        pendingSuggestion: null,
+        nextFrameNumber: 6,
+        nextHoldNumber: 9,
+        lastEvent: { kind: "info", text: "X0 已载入：先选一条 awkward walkthrough，或自由编辑。" }
+      };
+
+      if (preset === "matched-lock") {
+        const first = state.tracks.plan.frames[0];
+        first.label = "双手 match H1";
+        first.contacts.RH = contact("H1", true, "hold");
+        state.lastEvent = { kind: "info", text: "场景已重置：LH 与 RH 都锁在 H1。" };
+      }
+      if (preset === "stale-chain") {
+        state.selectedFrameIndex = 1;
+        state.selectedLimb = "LF";
+        state.tracks.plan.frames[1].contacts.LF.locked = false;
+        state.lastEvent = { kind: "info", text: "场景已重置：定位 P2，LF 已解锁，后面还有三个依赖帧。" };
+      }
+      if (preset === "playing-reorder") {
+        state.selectedFrameIndex = 2;
+        state.playback.playing = true;
+        state.playback.scope = "all";
+        state.playback.transitionIndex = 2;
+        state.playback.progress = .25;
+        state.lastEvent = { kind: "info", text: "场景已重置：正在从 P3 连续播放。" };
+      }
+      if (preset === "compare-mismatch") {
+        state.settings.compare = true;
+        state.activeTrack = "actual";
+        state.selectedFrameIndex = 3;
+        state.lastEvent = { kind: "info", text: "场景已重置：Actual 只有 4 帧，Plan 有 5 帧。" };
+      }
+      return state;
+    }
+
+    const framesOf = state => state.tracks[state.activeTrack].frames;
+    const selectedFrame = state => framesOf(state)[state.selectedFrameIndex];
+    const holdMap = state => Object.fromEntries(state.routeScene.holds.map(h => [h.id, h]));
+
+    function resolveTarget(state, contactValue, limb) {
+      if (contactValue.mode === "free" || !contactValue.targetId) {
+        const x = limb.startsWith("L") ? 255 : 385;
+        const y = HANDS.has(limb) ? 360 : 555;
+        return { x, y, id: null };
+      }
+      const found = holdMap(state)[contactValue.targetId];
+      return found ? { x: found.x, y: found.y, id: found.id } : { x: 320, y: 400, id: null };
+    }
+
+    function solvePose(state, currentFrame) {
+      const targets = Object.fromEntries(LIMBS.map(limb => [limb, resolveTarget(state, currentFrame.contacts[limb], limb)]));
+      const handMidX = (targets.LH.x + targets.RH.x) / 2;
+      const handMidY = (targets.LH.y + targets.RH.y) / 2;
+      const footMidX = (targets.LF.x + targets.RF.x) / 2;
+      const footMidY = (targets.LF.y + targets.RF.y) / 2;
+      const pelvis = {
+        x: (handMidX * .43 + footMidX * .57) + currentFrame.torsoOffset.x,
+        y: (handMidY * .42 + footMidY * .58) + currentFrame.torsoOffset.y
+      };
+      const shoulder = { x: pelvis.x, y: pelvis.y - 72 };
+      const head = { x: shoulder.x, y: shoulder.y - 38 };
+      const elbow = (limb, target, side) => ({
+        x: (shoulder.x + target.x) / 2 + side * 22,
+        y: (shoulder.y + target.y) / 2 + 6
+      });
+      const knee = (limb, target, side) => ({
+        x: (pelvis.x + target.x) / 2 + side * 28,
+        y: (pelvis.y + target.y) / 2 - 4
+      });
+      return {
+        head, shoulder, pelvis, targets,
+        joints: {
+          LE: elbow("LH", targets.LH, -1), RE: elbow("RH", targets.RH, 1),
+          LK: knee("LF", targets.LF, -1), RK: knee("RF", targets.RF, 1)
+        }
+      };
+    }
+
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+    function findings(state, currentFrame) {
+      const pose = solvePose(state, currentFrame);
+      const out = [];
+      for (const limb of ["LH", "RH"]) {
+        const d = distance(pose.shoulder, pose.targets[limb]);
+        if (d > 190) out.push({ severity: "warning", code: "reach", text: `${limb} 肩到接触约 ${Math.round(d)}px；2D stub 标记为伸展，不能解释为不可行。` });
+      }
+      for (const limb of ["LF", "RF"]) {
+        const d = distance(pose.pelvis, pose.targets[limb]);
+        if (d > 205) out.push({ severity: "warning", code: "reach", text: `${limb} 髋到接触约 ${Math.round(d)}px；比例与墙角未知。` });
+      }
+      const groups = {};
+      for (const limb of LIMBS) {
+        const id = currentFrame.contacts[limb].targetId;
+        if (id) (groups[id] ||= []).push(limb);
+        if (currentFrame.contacts[limb].mode === "free") out.push({ severity: "info", code: "free", text: `${limb} 是 free；动画不把它当作保留接触。` });
+      }
+      for (const [targetId, limbs] of Object.entries(groups)) {
+        if (limbs.length > 1) out.push({ severity: "info", code: "match", text: `${limbs.join(" + ")} match 在 ${targetId}；允许，但需要真人判断空间。` });
+      }
+      if (currentFrame.validity === "stale") out.push({ severity: "warning", code: "stale", text: currentFrame.staleReason || "上游已改变，本帧待重算。" });
+      if (currentFrame.provenance.status === "suggested") out.push({ severity: "info", code: "suggested", text: "本帧来自 deterministic stub，仍是 suggested，未被用户确认。" });
+      if (!out.length) out.push({ severity: "ok", code: "none", text: "未发现 X0 规则警告；这不代表动作正确或安全。" });
+      return out;
+    }
+
+    function contactDiff(fromFrame, toFrame) {
+      if (!fromFrame || !toFrame) return [];
+      return LIMBS.flatMap(limb => {
+        const from = fromFrame.contacts[limb];
+        const to = toFrame.contacts[limb];
+        if (from.targetId === to.targetId && from.mode === to.mode) return [];
+        return [{ limb, from: from.targetId || from.mode, to: to.targetId || to.mode, retained: false }];
+      });
+    }
+
+    function markDownstreamStale(frames, index, reason) {
+      return frames.map((item, i) => i > index
+        ? { ...item, validity: "stale", staleReason: reason }
+        : item);
+    }
+
+    function replaceTrackFrames(state, frames) {
+      return {
+        ...state,
+        tracks: {
+          ...state.tracks,
+          [state.activeTrack]: { ...state.tracks[state.activeTrack], frames }
+        }
+      };
+    }
+
+    function mutateSelectedFrame(state, updater, description) {
+      const index = state.selectedFrameIndex;
+      const frames = framesOf(state).map((item, i) => i === index ? updater(clone(item)) : item);
+      const staleFrames = markDownstreamStale(frames, index, `${frames[index].id} 已编辑：${description}`);
+      return {
+        ...replaceTrackFrames(state, staleFrames),
+        pendingSuggestion: null,
+        playback: { ...state.playback, playing: false, progress: 0, transitionIndex: index },
+        lastEvent: { kind: "changed", text: `${frames[index].id}：${description}；下游已标记 stale。` }
+      };
+    }
+
+    function stubFrames(state, scope) {
+      const start = state.selectedFrameIndex;
+      const frames = framesOf(state);
+      const indexes = scope === "current"
+        ? [start]
+        : frames.map((_, i) => i).filter(i => i > start);
+      return indexes.map(index => {
+        const source = clone(frames[index]);
+        const offsetX = ((index + 1) * 17 % 25) - 12;
+        const offsetY = -(((index + 1) * 11) % 16);
+        return {
+          ...source,
+          torsoOffset: { x: offsetX, y: offsetY },
+          validity: "valid",
+          staleReason: null,
+          provenance: { source: "deterministic-stub-v0", status: "suggested" }
+        };
+      });
+    }
+
+    function domainReducer(state, action) {
+      const frames = framesOf(state);
+      const frameIndex = state.selectedFrameIndex;
+      const current = selectedFrame(state);
+      const limb = action.limb || state.selectedLimb;
+
+      switch (action.type) {
+        case "LOAD_PRESET": return makeState(action.preset);
+        case "RESET": return makeState("base");
+        case "SELECT_LIMB": return { ...state, selectedLimb: action.limb, lastEvent: { kind: "info", text: `已选择 ${action.limb}。` } };
+        case "SELECT_FRAME": {
+          const nextIndex = clamp(action.index, 0, frames.length - 1);
+          return { ...state, selectedFrameIndex: nextIndex, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: nextIndex }, lastEvent: { kind: "info", text: `定位 ${frames[nextIndex].id}。` } };
+        }
+        case "SET_ACTIVE_TRACK": {
+          const nextFrames = state.tracks[action.track].frames;
+          const nextIndex = clamp(state.selectedFrameIndex, 0, nextFrames.length - 1);
+          return { ...state, activeTrack: action.track, selectedFrameIndex: nextIndex, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: nextIndex }, pendingSuggestion: null, lastEvent: { kind: "info", text: `切换到 ${action.track === "plan" ? "Plan" : "Actual"}。` } };
+        }
+        case "TOGGLE_COMPARE": return { ...state, settings: { ...state.settings, compare: action.value }, lastEvent: { kind: "info", text: action.value ? "已叠加 Plan / Actual。" : "已关闭对比叠加。" } };
+        case "TOGGLE_GHOST": return { ...state, settings: { ...state.settings, showGhosts: action.value } };
+        case "TOGGLE_DIFF": return { ...state, settings: { ...state.settings, showDiff: action.value } };
+        case "TOGGLE_LOCK": return mutateSelectedFrame(state, item => {
+          item.contacts[limb].locked = !item.contacts[limb].locked;
+          item.contacts[limb].provenance = { source: "user", status: "confirmed" };
+          return item;
+        }, `${limb} ${current.contacts[limb].locked ? "解锁" : "锁定"}`);
+        case "SET_CONTACT": {
+          if (current.contacts[limb].locked && current.contacts[limb].targetId !== action.targetId) {
+            return { ...state, lastEvent: { kind: "rejected", text: `${limb} 锁在 ${current.contacts[limb].targetId}；先解锁，未发生静默换点。` } };
+          }
+          if (current.contacts[limb].targetId === action.targetId && current.contacts[limb].mode !== "free") {
+            return { ...state, lastEvent: { kind: "info", text: `${limb} 已在 ${action.targetId}；接触和锁定状态未改变。` } };
+          }
+          if (!state.routeScene.holds.some(hold => hold.id === action.targetId)) {
+            return { ...state, lastEvent: { kind: "rejected", text: `目标 ${action.targetId} 不存在。` } };
+          }
+          return mutateSelectedFrame(state, item => {
+            item.contacts[limb] = contact(action.targetId, false, item.contacts[limb].mode === "free" ? "hold" : item.contacts[limb].mode, "user", "confirmed");
+            item.provenance = { source: "user", status: "confirmed" };
+            return item;
+          }, `${limb} → ${action.targetId}`);
+        }
+        case "SET_CONTACT_MODE": return mutateSelectedFrame(state, item => {
+          item.contacts[limb].mode = action.mode;
+          if (action.mode === "free") {
+            item.contacts[limb].targetId = null;
+            item.contacts[limb].locked = false;
+          }
+          item.contacts[limb].provenance = { source: "user", status: "confirmed" };
+          item.provenance = { source: "user", status: "confirmed" };
+          return item;
+        }, `${limb} contact mode → ${action.mode}`);
+        case "NUDGE_TORSO": return mutateSelectedFrame(state, item => {
+          item.torsoOffset.x = clamp(item.torsoOffset.x + action.dx, -60, 60);
+          item.torsoOffset.y = clamp(item.torsoOffset.y + action.dy, -60, 60);
+          item.provenance = { source: "user", status: "confirmed" };
+          return item;
+        }, `躯干 offset (${action.dx}, ${action.dy})`);
+        case "ADD_HOLD": {
+          const id = `H${state.nextHoldNumber}`;
+          return {
+            ...state,
+            routeScene: { ...state.routeScene, revision: state.routeScene.revision + 1, holds: [...state.routeScene.holds, { id, x: Math.round(action.x), y: Math.round(action.y), radius: 24, role: "manual", kind: "hold" }] },
+            nextHoldNumber: state.nextHoldNumber + 1,
+            lastEvent: { kind: "changed", text: `手工增加 ${id}；RouteScene revision +1。` }
+          };
+        }
+        case "ADD_FRAME":
+        case "DUPLICATE_FRAME": {
+          const newFrame = clone(current);
+          newFrame.id = `${state.activeTrack === "plan" ? "P" : "A"}${state.nextFrameNumber}`;
+          newFrame.label = action.type === "ADD_FRAME" ? "新手工姿势" : `${current.label} · copy`;
+          newFrame.provenance = { source: "user", status: "confirmed" };
+          newFrame.validity = "valid";
+          newFrame.staleReason = null;
+          const nextFrames = [...frames.slice(0, frameIndex + 1), newFrame, ...frames.slice(frameIndex + 1)];
+          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: frameIndex + 1, nextFrameNumber: state.nextFrameNumber + 1, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: frameIndex + 1 }, lastEvent: { kind: "changed", text: `${newFrame.id} 已插入 ${current.id} 后。` } };
+        }
+        case "DELETE_FRAME": {
+          if (frames.length === 1) return { ...state, lastEvent: { kind: "rejected", text: "至少保留一个 PoseKeyframe。" } };
+          const nextFrames = frames.filter((_, i) => i !== frameIndex);
+          const nextIndex = clamp(frameIndex, 0, nextFrames.length - 1);
+          return { ...replaceTrackFrames(state, nextFrames), selectedFrameIndex: nextIndex, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: nextIndex }, lastEvent: { kind: "changed", text: `${current.id} 已删除；稳定 ID 不重排。` } };
+        }
+        case "MOVE_FRAME": {
+          if (state.playback.playing) return { ...state, lastEvent: { kind: "rejected", text: "播放中不能排序；先 Pause，避免时间线与画面竞态。" } };
+          const target = frameIndex + action.delta;
+          if (target < 0 || target >= frames.length) return { ...state, lastEvent: { kind: "rejected", text: "已到时间线边界。" } };
+          const nextFrames = [...frames];
+          [nextFrames[frameIndex], nextFrames[target]] = [nextFrames[target], nextFrames[frameIndex]];
+          const stale = markDownstreamStale(nextFrames, Math.min(frameIndex, target) - 1, "关键帧顺序改变");
+          return { ...replaceTrackFrames(state, stale), selectedFrameIndex: target, playback: { ...state.playback, progress: 0, transitionIndex: target }, lastEvent: { kind: "changed", text: `${current.id} 已${action.delta < 0 ? "前移" : "后移"}；顺序受影响帧标记 stale。` } };
+        }
+        case "STUB_CURRENT": {
+          const candidates = stubFrames(state, "current");
+          return { ...state, pendingSuggestion: { id: `S-${state.activeTrack}-${current.id}-current`, scope: "current", source: "deterministic-stub-v0", status: "suggested", indexes: [frameIndex], frames: candidates }, lastEvent: { kind: "info", text: "已生成当前帧固定候选；尚未接受。" } };
+        }
+        case "STUB_DOWNSTREAM": {
+          const indexes = frames.map((_, i) => i).filter(i => i > frameIndex);
+          if (!indexes.length) return { ...state, lastEvent: { kind: "rejected", text: "当前已是末帧，没有下游可重算。" } };
+          return { ...state, pendingSuggestion: { id: `S-${state.activeTrack}-${current.id}-downstream`, scope: "downstream", source: "deterministic-stub-v0", status: "suggested", indexes, frames: stubFrames(state, "downstream") }, lastEvent: { kind: "info", text: `已生成 ${indexes.length} 个下游固定候选；尚未接受。` } };
+        }
+        case "ACCEPT_SUGGESTION": {
+          if (!state.pendingSuggestion) return state;
+          const nextFrames = [...frames];
+          state.pendingSuggestion.indexes.forEach((index, i) => { nextFrames[index] = state.pendingSuggestion.frames[i]; });
+          return { ...replaceTrackFrames(state, nextFrames), pendingSuggestion: null, lastEvent: { kind: "changed", text: "候选已写入，但 provenance 仍为 suggested；需要用户显式确认。" } };
+        }
+        case "REJECT_SUGGESTION": return { ...state, pendingSuggestion: null, lastEvent: { kind: "info", text: "候选已拒绝；原帧未改变。" } };
+        case "CONFIRM_FRAME": return mutateSelectedFrame(state, item => {
+          item.provenance = { source: item.provenance.source === "deterministic-stub-v0" ? "user-confirmed-stub" : "user", status: "confirmed" };
+          for (const key of LIMBS) item.contacts[key].provenance.status = "confirmed";
+          return item;
+        }, "用户确认 suggested 帧");
+        case "PREV_FRAME": {
+          const index = clamp(frameIndex - 1, 0, frames.length - 1);
+          return { ...state, selectedFrameIndex: index, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: index }, lastEvent: { kind: "info", text: `定位 ${frames[index].id}。` } };
+        }
+        case "NEXT_FRAME": {
+          const index = clamp(frameIndex + 1, 0, frames.length - 1);
+          return { ...state, selectedFrameIndex: index, playback: { ...state.playback, playing: false, progress: 0, transitionIndex: index }, lastEvent: { kind: "info", text: `定位 ${frames[index].id}。` } };
+        }
+        case "PLAY_CURRENT": {
+          if (frames.length < 2 || frameIndex >= frames.length - 1) return { ...state, lastEvent: { kind: "rejected", text: "末帧没有下一段可播放。" } };
+          return { ...state, playback: { ...state.playback, playing: true, scope: "current", transitionIndex: frameIndex, progress: state.playback.progress >= 1 ? 0 : state.playback.progress }, lastEvent: { kind: "info", text: `播放 ${frames[frameIndex].id} → ${frames[frameIndex + 1].id}。` } };
+        }
+        case "PLAY_ALL": {
+          if (frames.length < 2) return state;
+          const start = frameIndex >= frames.length - 1 ? 0 : frameIndex;
+          return { ...state, selectedFrameIndex: start, playback: { ...state.playback, playing: true, scope: "all", transitionIndex: start, progress: 0 }, lastEvent: { kind: "info", text: `从 ${frames[start].id} 连续播放。` } };
+        }
+        case "PAUSE": return { ...state, playback: { ...state.playback, playing: false }, lastEvent: { kind: "info", text: "播放已暂停。" } };
+        case "SCRUB": return { ...state, playback: { ...state.playback, playing: false, transitionIndex: Math.max(0, Math.min(frameIndex, frames.length - 2)), progress: clamp(action.progress, 0, 1) }, lastEvent: { kind: "info", text: `本步 scrub 到 ${Math.round(action.progress * 100)}%。` } };
+        case "SET_LOOP": return { ...state, playback: { ...state.playback, loop: action.value } };
+        case "SET_SPEED": return { ...state, playback: { ...state.playback, speed: action.value } };
+        case "TICK": {
+          if (!state.playback.playing || frames.length < 2) return state;
+          let transitionIndex = clamp(state.playback.transitionIndex, 0, frames.length - 2);
+          let progress = state.playback.progress + action.deltaMs * state.playback.speed / frames[transitionIndex + 1].durationMs;
+          let playing = true;
+          while (progress >= 1 && playing) {
+            progress -= 1;
+            if (state.playback.scope === "current") {
+              if (state.playback.loop) progress = progress % 1;
+              else { progress = 1; playing = false; }
+            } else if (transitionIndex < frames.length - 2) {
+              transitionIndex += 1;
+            } else if (state.playback.loop) {
+              transitionIndex = 0;
+            } else {
+              progress = 1;
+              playing = false;
+            }
+          }
+          return { ...state, selectedFrameIndex: transitionIndex, playback: { ...state.playback, playing, transitionIndex, progress } };
+        }
+        default: return state;
+      }
+    }
+
+    function historyReducer(history, action) {
+      if (action.type === "UNDO") {
+        if (!history.past.length) return { ...history, present: { ...history.present, lastEvent: { kind: "rejected", text: "没有可 Undo 的动作。" } } };
+        const previous = history.past[history.past.length - 1];
+        return { past: history.past.slice(0, -1), present: { ...previous, lastEvent: { kind: "info", text: "已 Undo。" } }, future: [history.present, ...history.future] };
+      }
+      if (action.type === "REDO") {
+        if (!history.future.length) return { ...history, present: { ...history.present, lastEvent: { kind: "rejected", text: "没有可 Redo 的动作。" } } };
+        const next = history.future[0];
+        return { past: [...history.past, history.present], present: { ...next, lastEvent: { kind: "info", text: "已 Redo。" } }, future: history.future.slice(1) };
+      }
+      const next = domainReducer(history.present, action);
+      if (next === history.present) return history;
+      if (action.type === "LOAD_PRESET" || action.type === "RESET") return { past: [], present: next, future: [] };
+      if (next.lastEvent?.kind === "rejected") return { ...history, present: next };
+      if (EPHEMERAL.has(action.type) || action.type === "STUB_CURRENT" || action.type === "STUB_DOWNSTREAM" || action.type === "REJECT_SUGGESTION") {
+        return { ...history, present: next };
+      }
+      return { past: [...history.past, history.present].slice(-80), present: next, future: [] };
+    }
+
+    function interpolatePose(state, fromFrame, toFrame, t) {
+      const a = solvePose(state, fromFrame);
+      const b = solvePose(state, toFrame);
+      const point = (p, q) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+      const result = {
+        head: point(a.head, b.head), shoulder: point(a.shoulder, b.shoulder), pelvis: point(a.pelvis, b.pelvis),
+        joints: {}, targets: {}
+      };
+      for (const key of Object.keys(a.joints)) result.joints[key] = point(a.joints[key], b.joints[key]);
+      for (const limb of LIMBS) {
+        const retained = fromFrame.contacts[limb].targetId && fromFrame.contacts[limb].targetId === toFrame.contacts[limb].targetId;
+        result.targets[limb] = retained ? a.targets[limb] : point(a.targets[limb], b.targets[limb]);
+      }
+      return result;
+    }
+
+    function validate(state) {
+      const checks = [];
+      const add = (label, ok) => checks.push({ label, ok });
+      const allFrames = [...state.tracks.plan.frames, ...state.tracks.actual.frames];
+      add("每个 PoseKeyframe 都显式包含 LH / RH / LF / RF", allFrames.every(item => LIMBS.every(limb => item.contacts[limb])));
+      add("Plan 与 Actual 的关键帧 ID 各自唯一", ["plan", "actual"].every(track => {
+        const ids = state.tracks[track].frames.map(item => item.id);
+        return new Set(ids).size === ids.length;
+      }));
+      add("当前关键帧索引在活动轨范围内", state.selectedFrameIndex >= 0 && state.selectedFrameIndex < framesOf(state).length);
+      add("所有非 free 接触指向现有 RouteScene 目标", allFrames.every(item => LIMBS.every(limb => item.contacts[limb].mode === "free" || state.routeScene.holds.some(hold => hold.id === item.contacts[limb].targetId))));
+      add("播放 transitionIndex 不越界", state.playback.transitionIndex >= 0 && state.playback.transitionIndex <= Math.max(0, framesOf(state).length - 1));
+      add("AI 占位候选始终标注 suggested", !state.pendingSuggestion || (state.pendingSuggestion.status === "suggested" && state.pendingSuggestion.frames.every(item => item.provenance.status === "suggested")));
+      add("原型与 2D / synthetic source 边界可见", state.prototype === true && state.routeScene.geometry === "2D only" && state.routeScene.source.includes("synthetic"));
+      return checks;
+    }
+
+    return {
+      LIMBS, makeState, solvePose, findings, contactDiff, interpolatePose, validate,
+      framesOf, selectedFrame, historyReducer,
+      createHistory: preset => ({ past: [], present: makeState(preset), future: [] })
+    };
+  })();
+
+  /* Thin throwaway DOM shell. */
+  (() => {
+    "use strict";
+    const M = RouteRehearsalModel;
+    const svg = document.getElementById("route-canvas");
+    const NS = "http://www.w3.org/2000/svg";
+    let history = M.createHistory("base");
+    let rafId = null;
+    let lastTick = null;
+    let draggingLimb = null;
+    let activeScenario = 0;
+    let completedScenarioSteps = new Set();
+
+    const scenarios = [
+      {
+        title: "锁定的 match",
+        preset: "matched-lock",
+        description: "LH 与 RH 同时 match 在 H1，而且两者都锁定。先故意尝试把 RH 移走，确认状态拒绝静默换点；再显式解锁并移动。",
+        watch: "失败动作只更新 lastEvent，不改 contact；真正移动后下游 stale。",
+        steps: [
+          { label: "选择 RH", action: { type: "SELECT_LIMB", limb: "RH" } },
+          { label: "在锁定状态点击 H3（应拒绝）", action: { type: "SET_CONTACT", targetId: "H3" } },
+          { label: "显式解锁 RH", action: { type: "TOGGLE_LOCK" } },
+          { label: "RH → H3", action: { type: "SET_CONTACT", targetId: "H3" } },
+          { label: "重新锁定 RH", action: { type: "TOGGLE_LOCK" } }
+        ]
+      },
+      {
+        title: "上游变更 / stale",
+        preset: "stale-chain",
+        description: "P2 的 LF 已解锁。修改 P2 后，P3–P5 都不应继续假装有效；只重算当前也不能偷偷清掉下游 stale。",
+        watch: "current stub 与 downstream stub 是两个不同 scope；两者都保留 suggested provenance。",
+        steps: [
+          { label: "LF → H4，制造上游变更", action: { type: "SET_CONTACT", targetId: "H4" } },
+          { label: "只生成当前固定候选", action: { type: "STUB_CURRENT" } },
+          { label: "接受当前候选（仍 suggested）", action: { type: "ACCEPT_SUGGESTION" } },
+          { label: "生成下游固定候选", action: { type: "STUB_DOWNSTREAM" } },
+          { label: "接受下游候选", action: { type: "ACCEPT_SUGGESTION" } },
+          { label: "Next 检查下游 provenance", action: { type: "NEXT_FRAME" } },
+          { label: "用户确认当前帧", action: { type: "CONFIRM_FRAME" } }
+        ]
+      },
+      {
+        title: "播放中排序",
+        preset: "playing-reorder",
+        description: "连续动画正在 P3 → P4 之间。此时改变关键帧顺序会让可见姿势与 timeline 竞态，所以 reducer 应拒绝。",
+        watch: "Pause 后允许排序；稳定 ID 不因序号位置改变而重命名。",
+        steps: [
+          { label: "播放中把 P3 前移（应拒绝）", action: { type: "MOVE_FRAME", delta: -1 } },
+          { label: "Pause", action: { type: "PAUSE" } },
+          { label: "把 P3 前移", action: { type: "MOVE_FRAME", delta: -1 } },
+          { label: "Undo 排序", action: { type: "UNDO" } },
+          { label: "Redo 排序", action: { type: "REDO" } }
+        ]
+      },
+      {
+        title: "Plan / Actual 步数不齐",
+        preset: "compare-mismatch",
+        description: "Actual 只有 4 帧，Plan 有 5 帧。索引对齐只是 X0 占位，不应假装已经完成语义对齐。",
+        watch: "Actual 末帧仍可显示同索引 Plan ghost；Next 不越界；比较面板明确写出未对齐尾部。",
+        steps: [
+          { label: "Next（Actual 已在末帧）", action: { type: "NEXT_FRAME" } },
+          { label: "切换到 Plan", action: { type: "SET_ACTIVE_TRACK", track: "plan" } },
+          { label: "Next 到 Plan 独有末帧", action: { type: "NEXT_FRAME" } },
+          { label: "从 Plan 末帧 Play all（应从头）", action: { type: "PLAY_ALL" } },
+          { label: "Pause", action: { type: "PAUSE" } }
+        ]
+      }
+    ];
+
+    function el(name, attrs = {}, text = null) {
+      const node = document.createElementNS(NS, name);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      if (text !== null) node.textContent = text;
+      return node;
+    }
+
+    function dispatch(action) {
+      history = M.historyReducer(history, action);
+      render();
+      syncAnimation();
+    }
+
+    function activeFrames(state) { return M.framesOf(state); }
+
+    function drawWall(state) {
+      svg.replaceChildren();
+      const defs = el("defs");
+      const pattern = el("pattern", { id: "wall-grid", width: 44, height: 44, patternUnits: "userSpaceOnUse", patternTransform: "rotate(8)" });
+      pattern.append(el("rect", { width: 44, height: 44, fill: "#7c7a6d" }), el("path", { d: "M 44 0 L 0 0 0 44", fill: "none", stroke: "#898779", "stroke-width": 1 }));
+      defs.append(pattern);
+      svg.append(defs, el("rect", { x: 0, y: 0, width: 720, height: 640, fill: "url(#wall-grid)" }));
+      svg.append(el("path", { d: "M70 590 L620 570 L682 70 L94 45 Z", fill: "none", stroke: "#5f5d52", "stroke-width": 5, "stroke-dasharray": "12 10" }));
+      svg.append(el("text", { x: 28, y: 28, fill: "#262820", "font-size": 14, "font-weight": 800 }, "SYNTHETIC 2D ROUTE SCENE · DOUBLE CLICK BLANK TO ADD HOLD"));
+
+      for (const hold of state.routeScene.holds) {
+        const group = el("g", { class: "hold", "data-hold-id": hold.id, transform: `translate(${hold.x} ${hold.y})` });
+        const fill = hold.kind === "ground" ? "#55584f" : hold.kind === "volume" ? "#c3bba0" : hold.role === "top" ? "#e9ff9f" : hold.role === "start" ? "#d8ff63" : "#b8d559";
+        const shape = hold.kind === "volume"
+          ? el("polygon", { class: "hold-shape", points: `0,-${hold.radius} ${hold.radius},${hold.radius * .55} -${hold.radius},${hold.radius * .55}`, fill, stroke: "#25271f", "stroke-width": 3 })
+          : el("ellipse", { class: "hold-shape", rx: hold.radius, ry: Math.max(10, hold.radius * .55), transform: `rotate(${(hold.x + hold.y) % 48 - 24})`, fill, stroke: "#25271f", "stroke-width": 3 });
+        group.append(shape, el("text", { class: "hold-label", y: 1 }, hold.id));
+        svg.append(group);
+      }
+    }
+
+    function drawPose(pose, options = {}) {
+      const { opacity = 1, color = "#f6f4e8", dashed = false, label = "", selectedLimb = null } = options;
+      const group = el("g", { opacity, "pointer-events": opacity < .95 ? "none" : "auto" });
+      const lineAttrs = { stroke: color, "stroke-width": 8, "stroke-linecap": "round", fill: "none" };
+      if (dashed) lineAttrs["stroke-dasharray"] = "10 8";
+      const path = points => group.append(el("polyline", { ...lineAttrs, points: points.map(p => `${p.x},${p.y}`).join(" ") }));
+      path([pose.targets.LH, pose.joints.LE, pose.shoulder]);
+      path([pose.targets.RH, pose.joints.RE, pose.shoulder]);
+      path([pose.shoulder, pose.pelvis]);
+      path([pose.pelvis, pose.joints.LK, pose.targets.LF]);
+      path([pose.pelvis, pose.joints.RK, pose.targets.RF]);
+      group.append(el("circle", { cx: pose.head.x, cy: pose.head.y, r: 23, fill: "none", stroke: color, "stroke-width": 7 }));
+      group.append(el("circle", { cx: pose.pelvis.x, cy: pose.pelvis.y, r: 8, fill: color }));
+      if (label) group.append(el("text", { x: pose.head.x + 30, y: pose.head.y, fill: color, "font-size": 13, "font-weight": 900 }, label));
+      if (opacity >= .95) {
+        for (const limb of M.LIMBS) {
+          const p = pose.targets[limb];
+          const fill = limb === selectedLimb ? "#ffdf6b" : limb.endsWith("H") ? "#ff9d8c" : "#8fe5ff";
+          group.append(el("circle", { class: "limb-end", "data-limb": limb, cx: p.x, cy: p.y, r: 15, fill }));
+          group.append(el("text", { class: "limb-label", x: p.x, y: p.y + 1 }, limb));
+        }
+      }
+      svg.append(group);
+    }
+
+    function poseForPlayback(state) {
+      const frames = activeFrames(state);
+      const index = Math.min(state.playback.transitionIndex, Math.max(0, frames.length - 2));
+      if (frames.length > 1 && state.playback.progress > 0) return M.interpolatePose(state, frames[index], frames[index + 1], state.playback.progress);
+      return M.solvePose(state, frames[state.selectedFrameIndex]);
+    }
+
+    function renderCanvas(state) {
+      drawWall(state);
+      const frames = activeFrames(state);
+      const index = state.selectedFrameIndex;
+      if (state.settings.showGhosts && index > 0) drawPose(M.solvePose(state, frames[index - 1]), { opacity: .23, color: "#ffffff", dashed: true, label: "PREV" });
+      if (state.settings.showGhosts && index < frames.length - 1) drawPose(M.solvePose(state, frames[index + 1]), { opacity: .24, color: "#d8ff63", dashed: true, label: "NEXT" });
+      if (state.settings.compare) {
+        const otherTrack = state.activeTrack === "plan" ? "actual" : "plan";
+        const otherFrames = state.tracks[otherTrack].frames;
+        if (otherFrames[index]) drawPose(M.solvePose(state, otherFrames[index]), { opacity: .48, color: state.activeTrack === "plan" ? "#61dbe6" : "#d8ff63", dashed: true, label: otherTrack.toUpperCase() });
+      }
+      drawPose(poseForPlayback(state), { color: state.activeTrack === "actual" ? "#61dbe6" : "#f7f5e9", selectedLimb: state.selectedLimb, label: state.activeTrack.toUpperCase() });
+    }
+
+    function provenanceBadge(item) {
+      const status = item.provenance.status;
+      const klass = status === "suggested" ? "suggested" : status === "observed" ? "observed" : "confirmed";
+      return `<span class="badge ${klass}">${status}</span>`;
+    }
+
+    function renderTimeline(state) {
+      const track = document.getElementById("timeline-track");
+      const frames = activeFrames(state);
+      track.innerHTML = frames.map((item, index) => {
+        const moved = index === 0 ? "起始接触" : M.contactDiff(frames[index - 1], item).map(d => d.limb).join("+") || "保持";
+        return `<button class="keyframe ${index === state.selectedFrameIndex ? "selected" : ""} ${state.activeTrack === "actual" ? "actual" : ""}" data-frame-index="${index}">
+          <span class="kf-title"><span>${item.id}</span>${item.validity === "stale" ? '<span class="badge stale">stale</span>' : ""}</span>
+          <span>${item.label}</span>
+          <span class="kf-meta">${index === 0 ? "—" : "← "}${moved} · ${item.provenance.status}</span>
+        </button>`;
+      }).join("");
+    }
+
+    function renderInspector(state) {
+      const frames = activeFrames(state);
+      const current = frames[state.selectedFrameIndex];
+      const next = frames[state.selectedFrameIndex + 1];
+      const selectedContact = current.contacts[state.selectedLimb];
+      document.getElementById("frame-counter").textContent = `${state.selectedFrameIndex + 1} / ${frames.length}`;
+      document.getElementById("canvas-subtitle").textContent = `${state.activeTrack.toUpperCase()} · ${current.id} · RouteScene rev ${state.routeScene.revision} · ${state.routeScene.geometry}`;
+      document.getElementById("frame-facts").innerHTML = `
+        <div class="field"><dt>PoseKeyframe</dt><dd>${current.id} · ${current.label}</dd></div>
+        <div class="field"><dt>Provenance</dt><dd>${current.provenance.source} ${provenanceBadge(current)}</dd></div>
+        <div class="field"><dt>选中四肢</dt><dd>${state.selectedLimb} → ${selectedContact.targetId || selectedContact.mode} · ${selectedContact.locked ? "locked" : "unlocked"}</dd></div>
+        <div class="field"><dt>Validity</dt><dd>${current.validity}${current.staleReason ? ` · ${current.staleReason}` : ""}</dd></div>`;
+
+      const findingList = document.getElementById("finding-list");
+      findingList.innerHTML = M.findings(state, current).map(f => `<li class="${f.severity === "warning" ? "finding-warn" : "finding-ok"}">${f.text}</li>`).join("");
+
+      const diff = M.contactDiff(current, next);
+      const otherTrack = state.activeTrack === "plan" ? "actual" : "plan";
+      const other = state.tracks[otherTrack].frames[state.selectedFrameIndex];
+      const compareDiff = state.settings.compare && other ? M.contactDiff(current, other) : [];
+      const diffBox = document.getElementById("contact-diff-box");
+      diffBox.hidden = !state.settings.showDiff;
+      diffBox.innerHTML = `<strong>本步 Contact diff</strong><br>${next ? (diff.length ? diff.map(d => `${d.limb}: ${d.from} → ${d.to}`).join("<br>") : "四肢接触都保留") : "末帧，没有下一步"}
+        ${state.settings.compare ? `<hr><strong>${state.activeTrack} vs ${otherTrack}（仅索引占位）</strong><br>${other ? (compareDiff.length ? compareDiff.map(d => `${d.limb}: ${d.from} ≠ ${d.to}`).join("<br>") : "同索引接触一致") : `${otherTrack} 没有同索引帧，未对齐尾部`}` : ""}`;
+
+      const slot = document.getElementById("suggestion-slot");
+      if (state.pendingSuggestion) {
+        slot.innerHTML = `<div class="suggestion-box"><strong>${state.pendingSuggestion.id}</strong> <span class="badge suggested">suggested</span><p>scope: ${state.pendingSuggestion.scope} · ${state.pendingSuggestion.indexes.length} frame(s) · deterministic-stub-v0</p><div class="row"><button data-action="ACCEPT_SUGGESTION">接受候选</button><button data-action="REJECT_SUGGESTION">拒绝</button></div></div>`;
+      } else if (current.provenance.status === "suggested") {
+        slot.innerHTML = `<div class="suggestion-box">当前帧仍是 <span class="badge suggested">suggested</span>。<button data-action="CONFIRM_FRAME">用户确认当前帧</button></div>`;
+      } else {
+        slot.innerHTML = "";
+      }
+
+      const event = document.getElementById("last-event");
+      event.textContent = state.lastEvent.text;
+      event.className = `event ${state.lastEvent.kind === "rejected" ? "rejected" : ""}`;
+      document.getElementById("lock-button").textContent = selectedContact.locked ? `解锁 ${state.selectedLimb}` : `锁定 ${state.selectedLimb}`;
+      document.getElementById("contact-mode-select").value = selectedContact.mode;
+    }
+
+    function renderControls(state) {
+      document.querySelectorAll("[data-mode]").forEach(button => {
+        const selected = button.dataset.mode === state.activeTrack;
+        button.classList.toggle("active", selected && state.activeTrack === "plan");
+        button.classList.toggle("actual-active", selected && state.activeTrack === "actual");
+      });
+      document.getElementById("compare-toggle").checked = state.settings.compare;
+      document.getElementById("ghost-toggle").checked = state.settings.showGhosts;
+      document.getElementById("diff-toggle").checked = state.settings.showDiff;
+      document.getElementById("loop-toggle").checked = state.playback.loop;
+      document.getElementById("speed-select").value = String(state.playback.speed);
+      document.getElementById("scrub-input").value = Math.round(state.playback.progress * 100);
+      document.getElementById("scrub-output").value = `${Math.round(state.playback.progress * 100)}%`;
+      document.getElementById("limb-buttons").innerHTML = M.LIMBS.map(limb => `<button data-limb-select="${limb}" class="${state.selectedLimb === limb ? "primary" : ""}">${limb}</button>`).join("");
+    }
+
+    function renderState(state) {
+      const checks = M.validate(state);
+      document.getElementById("invariant-list").innerHTML = checks.map(check => `<li class="${check.ok ? "" : "bad"}">${check.label}</li>`).join("");
+      document.getElementById("invariant-count").textContent = `${checks.filter(c => c.ok).length}/${checks.length} pass`;
+      document.getElementById("history-depth").textContent = `undo ${history.past.length} · redo ${history.future.length}`;
+      document.getElementById("raw-state").textContent = JSON.stringify(state, null, 2);
+    }
+
+    function renderScenario() {
+      document.getElementById("scenario-tabs").innerHTML = scenarios.map((scenario, index) => `<button data-scenario="${index}" class="${index === activeScenario ? "primary" : ""}">${scenario.title}</button>`).join("");
+      const scenario = scenarios[activeScenario];
+      document.getElementById("scenario-content").innerHTML = `
+        <h3>${scenario.title}</h3>
+        <p>${scenario.description}</p>
+        <p class="small"><strong>观察：</strong>${scenario.watch}</p>
+        <div class="walk-steps">${scenario.steps.map((step, index) => `<div class="walk-step ${completedScenarioSteps.has(index) ? "done" : ""}"><span class="step-num">${index + 1}</span><span>${step.label}</span><button data-scenario-step="${index}" ${completedScenarioSteps.has(index) ? "disabled" : ""}>执行</button></div>`).join("")}</div>`;
+    }
+
+    function render() {
+      const state = history.present;
+      renderCanvas(state);
+      renderTimeline(state);
+      renderInspector(state);
+      renderControls(state);
+      renderState(state);
+      renderScenario();
+    }
+
+    function syncAnimation() {
+      const shouldRun = history.present.playback.playing;
+      if (shouldRun && rafId === null) {
+        lastTick = performance.now();
+        rafId = requestAnimationFrame(tick);
+      } else if (!shouldRun && rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        lastTick = null;
+      }
+    }
+
+    function tick(now) {
+      const delta = Math.min(50, now - lastTick);
+      lastTick = now;
+      history = M.historyReducer(history, { type: "TICK", deltaMs: delta });
+      render();
+      if (history.present.playback.playing) rafId = requestAnimationFrame(tick);
+      else { rafId = null; lastTick = null; }
+    }
+
+    function svgPoint(event) {
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      return point.matrixTransform(svg.getScreenCTM().inverse());
+    }
+
+    function nearestHold(state, point, maxDistance = 55) {
+      let best = null;
+      for (const hold of state.routeScene.holds) {
+        const d = Math.hypot(point.x - hold.x, point.y - hold.y);
+        if (d <= maxDistance && (!best || d < best.distance)) best = { hold, distance: d };
+      }
+      return best && best.hold;
+    }
+
+    document.addEventListener("click", event => {
+      const mode = event.target.closest("[data-mode]");
+      if (mode) return dispatch({ type: "SET_ACTIVE_TRACK", track: mode.dataset.mode });
+      const limb = event.target.closest("[data-limb-select]");
+      if (limb) return dispatch({ type: "SELECT_LIMB", limb: limb.dataset.limbSelect });
+      const frame = event.target.closest("[data-frame-index]");
+      if (frame) return dispatch({ type: "SELECT_FRAME", index: Number(frame.dataset.frameIndex) });
+      const actionButton = event.target.closest("[data-action]");
+      if (actionButton) {
+        const type = actionButton.dataset.action;
+        const map = {
+          MOVE_FRAME_LEFT: { type: "MOVE_FRAME", delta: -1 },
+          MOVE_FRAME_RIGHT: { type: "MOVE_FRAME", delta: 1 },
+          NUDGE_TORSO_LEFT: { type: "NUDGE_TORSO", dx: -8, dy: 0 },
+          NUDGE_TORSO_RIGHT: { type: "NUDGE_TORSO", dx: 8, dy: 0 },
+          NUDGE_TORSO_UP: { type: "NUDGE_TORSO", dx: 0, dy: -8 },
+          NUDGE_TORSO_DOWN: { type: "NUDGE_TORSO", dx: 0, dy: 8 },
+          STUB_CURRENT: { type: "STUB_CURRENT" },
+          STUB_DOWNSTREAM: { type: "STUB_DOWNSTREAM" }
+        };
+        return dispatch(map[type] || { type });
+      }
+      const scenarioTab = event.target.closest("[data-scenario]");
+      if (scenarioTab) {
+        activeScenario = Number(scenarioTab.dataset.scenario);
+        completedScenarioSteps = new Set();
+        history = M.createHistory(scenarios[activeScenario].preset);
+        render();
+        syncAnimation();
+        return;
+      }
+      const scenarioStep = event.target.closest("[data-scenario-step]");
+      if (scenarioStep) {
+        const index = Number(scenarioStep.dataset.scenarioStep);
+        dispatch(scenarios[activeScenario].steps[index].action);
+        completedScenarioSteps.add(index);
+        renderScenario();
+      }
+    });
+
+    document.getElementById("compare-toggle").addEventListener("change", event => dispatch({ type: "TOGGLE_COMPARE", value: event.target.checked }));
+    document.getElementById("ghost-toggle").addEventListener("change", event => dispatch({ type: "TOGGLE_GHOST", value: event.target.checked }));
+    document.getElementById("diff-toggle").addEventListener("change", event => dispatch({ type: "TOGGLE_DIFF", value: event.target.checked }));
+    document.getElementById("loop-toggle").addEventListener("change", event => dispatch({ type: "SET_LOOP", value: event.target.checked }));
+    document.getElementById("speed-select").addEventListener("change", event => dispatch({ type: "SET_SPEED", value: Number(event.target.value) }));
+    document.getElementById("scrub-input").addEventListener("input", event => dispatch({ type: "SCRUB", progress: Number(event.target.value) / 100 }));
+    document.getElementById("contact-mode-select").addEventListener("change", event => dispatch({ type: "SET_CONTACT_MODE", mode: event.target.value }));
+
+    svg.addEventListener("click", event => {
+      const holdNode = event.target.closest("[data-hold-id]");
+      if (holdNode) dispatch({ type: "SET_CONTACT", targetId: holdNode.dataset.holdId });
+    });
+    svg.addEventListener("dblclick", event => {
+      if (event.target.closest("[data-hold-id], .limb-end")) return;
+      const p = svgPoint(event);
+      dispatch({ type: "ADD_HOLD", x: p.x, y: p.y });
+    });
+    svg.addEventListener("pointerdown", event => {
+      const endpoint = event.target.closest(".limb-end");
+      if (!endpoint) return;
+      draggingLimb = endpoint.dataset.limb;
+      dispatch({ type: "SELECT_LIMB", limb: draggingLimb });
+      svg.setPointerCapture(event.pointerId);
+    });
+    svg.addEventListener("pointerup", event => {
+      if (!draggingLimb) return;
+      const target = nearestHold(history.present, svgPoint(event));
+      if (target) dispatch({ type: "SET_CONTACT", limb: draggingLimb, targetId: target.id });
+      else history = M.historyReducer(history, { type: "SELECT_LIMB", limb: draggingLimb });
+      draggingLimb = null;
+      if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+      render();
+    });
+
+    render();
+  })();
+  </script>
+</body>
+</html>
