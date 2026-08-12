@@ -687,27 +687,8 @@
       else {
         return rejectValidation("Open the route rehearsal before saving edits.")
       }
-      let selectedTrack = editor.projection.activeTrack
-      _ = editor.handle(.selectTrack(.plan))
-      let plan = editor.projection.keyframes
-      let actual: [PoseKeyframe]
-      if editor.projection.actualAttemptID != nil {
-        _ = editor.handle(.selectTrack(.actual))
-        actual = editor.projection.keyframes
-      } else {
-        actual = []
-      }
-      _ = editor.handle(.selectTrack(selectedTrack))
-      let current = editor.projection
       do {
-        var replacement = try RouteRehearsalEngine(
-          rehearsalID: rehearsalID,
-          scene: current.scene,
-          bodyProfile: current.bodyProfile,
-          planKeyframes: plan,
-          actualKeyframes: actual
-        )
-        replacement.selectTrack(selectedTrack)
+        let replacement = try RouteRehearsalEngine(reopening: editor.rehearsalSnapshot)
         _ = try coordinator.updateRehearsal(rehearsalID) { engine in
           engine = replacement
         }

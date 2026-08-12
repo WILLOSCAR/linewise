@@ -19,7 +19,77 @@ func rehearsalCoordinatorSpecifications() -> [(String, () throws -> Void)] {
       "Actual draft requires an Attempt and copied Plan remains user authored",
       actualDraftRequiresAttemptAndRemainsUserAuthored
     ),
+    (
+      "movement focus annotates loops pins and compares one practice segment",
+      movementFocusAnnotatesLoopsPinsAndComparesPracticeSegment
+    ),
   ]
+}
+
+private func movementFocusAnnotatesLoopsPinsAndComparesPracticeSegment() throws {
+  var coordinator = try makeRehearsalCoordinator()
+  let intent = MovementIntent(
+    purpose: .stabilize,
+    family: .staticMove,
+    expectedDurationSeconds: 1.25,
+    cue: "Keep pressure through the left toe while the hips rise.",
+    uncertainty: "The wall angle is approximate.",
+    provenance: .manual
+  )
+  let annotated = coordinator.handle(.setCurrentMovementIntent(intent))
+  try expect(annotated.isSuccess, "the current movement should accept a user-authored intent")
+  try expect(
+    annotated.projection.currentMovementStep?.intent == intent,
+    "the current step should expose its purpose, rhythm, cue, and uncertainty"
+  )
+
+  let cue = try coordinator.makeCurrentStickFigureCue(
+    id: StickFigureCueID("focused-cue"),
+    stepCount: 2
+  )
+  try expect(
+    cue.track == .plan && cue.steps.count == 2 && cue.keyframes.count == 3,
+    "the focused StickFigureCue should pin two continuous Plan steps"
+  )
+  try expect(
+    cue.steps.first?.intent == intent,
+    "the pinned cue should preserve the user-authored MovementIntent"
+  )
+
+  let playing = coordinator.handle(.playPracticeSegment(stepCount: 2, loop: true))
+  try expect(playing.isSuccess && playing.projection.isLooping, "focused playback should loop")
+  let advanced = coordinator.handle(.tick(elapsedSeconds: 2.5))
+  try expect(
+    advanced.projection.playback.cursor.transitionIndex == 0
+      && advanced.projection.playback.cursor.progress == 0.2,
+    "focused playback should wrap inside the two-step segment using its authored rhythm"
+  )
+
+  let copied = coordinator.handle(.copyPlanIntoActualDraft)
+  try expect(copied.isSuccess, "the linked Attempt should allow an Actual draft")
+  let actualSecondID = try required(
+    coordinator.projection.keyframes.dropFirst().first?.id,
+    "second Actual keyframe"
+  )
+  _ = coordinator.handle(.selectKeyframe(actualSecondID))
+  _ = coordinator.handle(.selectLimb(.rightHand))
+  let changed = coordinator.handle(.assignHold(holdID: HoldID("hold-mid-left")))
+  try expect(changed.isSuccess, "the Actual contact should remain editable")
+  let actualFirstID = try required(
+    coordinator.projection.keyframes.first?.id,
+    "first Actual keyframe"
+  )
+  _ = coordinator.handle(.selectKeyframe(actualFirstID))
+  let focused = try required(
+    coordinator.projection.focusedComparisonStep,
+    "focused Plan/Actual comparison"
+  )
+  try expect(
+    focused.limbDivergences.contains {
+      $0.limb == .rightHand && $0.state == .different
+    },
+    "the focused comparison should expose the changed right-hand choice"
+  )
 }
 
 private func actualDraftRequiresAttemptAndRemainsUserAuthored() throws {

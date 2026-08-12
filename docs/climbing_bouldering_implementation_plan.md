@@ -105,6 +105,8 @@ flowchart TB
 - Contact locks and deterministic 2D stick-figure solver.
 - Keyframe insert, duplicate, delete, reorder, downstream stale propagation, and recompute.
 - Plan and Actual tracks, scrub, single-step, continuous playback, and loop.
+- Per-step MovementIntent covering purpose, movement family, authored rhythm, felt cue, uncertainty, and automatic needs-review state after relevant contact changes.
+- Current one-to-three-step practice selection, bounded segment looping, and pinned StickFigureCue input to qualitative analysis.
 - Deterministic comparison for limb, torso, and timing evidence.
 - Codable pinned StickFigureCue replay over a bounded move range.
 
@@ -159,7 +161,7 @@ git diff --check
 
 The executable specification targets are used because the currently selected Command Line Tools installation does not expose the full Xcode test runtime. They exercise only public module interfaces and exit nonzero on a violated expectation.
 
-Current baseline: 76 Domain + 36 Application + 41 Apple adapter + 15 AI adapter behaviors = 168 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+Current baseline: 78 Domain + 37 Application + 42 Apple adapter + 15 AI adapter behaviors = 172 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
 
 ## 6. Apple Validation Procedure
 

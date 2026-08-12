@@ -652,12 +652,12 @@ extension RehearsalCompare {
     let diagonal = max(hypot(scene.size.width, scene.size.height), 0.000_1)
     let torsoCost = (planFrame.torsoPosition.distance(to: actualFrame.torsoPosition) / diagonal) * 2
     let maxDuration = max(
-      planStep.expectedDurationSeconds,
-      actualStep.expectedDurationSeconds,
+      planStep.effectiveDurationSeconds,
+      actualStep.effectiveDurationSeconds,
       0.05
     )
     let timingCost =
-      abs(planStep.expectedDurationSeconds - actualStep.expectedDurationSeconds) / maxDuration
+      abs(planStep.effectiveDurationSeconds - actualStep.effectiveDurationSeconds) / maxDuration
       * 0.5
     return contactCost + torsoCost + timingCost
   }
@@ -741,8 +741,8 @@ extension RehearsalCompare {
       state: torsoState
     )
 
-    let planDuration = planStep?.expectedDurationSeconds
-    let actualDuration = actualStep?.expectedDurationSeconds
+    let planDuration = planStep?.effectiveDurationSeconds
+    let actualDuration = actualStep?.effectiveDurationSeconds
     let timingDelta: Double? = {
       guard let planDuration, let actualDuration else { return nil }
       return actualDuration - planDuration

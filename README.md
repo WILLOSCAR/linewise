@@ -35,6 +35,8 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 - Editable 2D route scenes and hold contacts for both hands and feet.
 - Stick-figure pose solving, contact locks, keyframe add/duplicate/delete/reorder, downstream stale marking, and recompute.
 - Plan and Actual timelines, continuous playback, looping, scrubbing, and single-step inspection.
+- Per-step MovementIntent for purpose, movement family, rhythm, felt cue, and explicit uncertainty; related contact edits mark old guidance for review.
+- One-to-three-step practice segments that can be pinned as a StickFigureCue, looped independently, and supplied to qualitative analysis.
 - Deterministic Plan/Actual comparison across limb contacts, torso movement, and timing.
 - Failure episode → move cue → next-session cue, plus approved micro-drills, training paths, and proof checks.
 - Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance.
@@ -84,7 +86,7 @@ swift run linewise-demo
 
 Run the same checks with `-c release` before shipping a branch.
 
-The current executable-spec baseline is 168 passing behaviors in both Debug and Release: Domain 76, Application 36, Apple adapters 41, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+The current executable-spec baseline is 172 passing behaviors in both Debug and Release: Domain 78, Application 37, Apple adapters 42, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
 
 For the Apple apps, open `LineWise.xcodeproj` in a full Xcode installation, choose the shared `LineWise` or `LineWise-Watch` scheme, configure signing, and run on a paired iPhone/Apple Watch. HealthKit and WatchConnectivity behavior must be verified on real signed devices; Swift Package tests alone do not establish that evidence.
 

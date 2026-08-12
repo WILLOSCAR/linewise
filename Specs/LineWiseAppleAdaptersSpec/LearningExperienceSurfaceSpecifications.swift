@@ -8,7 +8,76 @@ func runLearningExperienceSurfaceSpecifications() async throws -> Int {
   try await qualitativeReadingAndTrainingPathCompleteThroughPublicSurface()
   try await persistenceFailureKeepsThePendingReadingVisible()
   try suggestedRouteReadAndAttemptLinkedActualUsePublicSurface()
-  return 3
+  try await movementFocusPinsAndReopensThroughPublicSurface()
+  return 4
+}
+
+@MainActor
+private func movementFocusPinsAndReopensThroughPublicSurface() async throws {
+  let store = MemoryExperienceArchiveStore()
+  let model = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(store: store)
+  )
+  let routeID = RouteCardID("movement-focus-route")
+  let rehearsalID = RouteRehearsalID("movement-focus-rehearsal")
+  try expect(
+    model.createRoute(label: "Movement focus", routeCardID: routeID),
+    "expected movement-focus RouteCard"
+  )
+  try expect(
+    model.createManualRehearsalStarter(routeCardID: routeID, rehearsalID: rehearsalID),
+    "expected movement-focus rehearsal"
+  )
+  let editor = try requireLearningSurfaceValue(
+    model.rehearsalEditorModel(for: rehearsalID),
+    "expected movement-focus editor"
+  )
+  editor.addKeyframe()
+  editor.addKeyframe()
+  _ = editor.handle(.selectKeyframe(editor.projection.keyframes[0].id))
+  editor.setCurrentMovementIntent(
+    purpose: .stabilize,
+    family: .staticMove,
+    durationSeconds: 1.4,
+    cue: "Press through both feet before moving the hand.",
+    uncertainty: "The smear is user-estimated."
+  )
+  try expect(
+    editor.projection.currentMovementStep?.intent?.validity == .current,
+    "the public editor should expose current MovementIntent"
+  )
+  try expect(
+    editor.pinCurrentPracticeSegment(stepCount: 2),
+    "the public editor should pin a two-step StickFigureCue"
+  )
+  try expect(
+    editor.currentPracticeCue?.steps.count == 2,
+    "the pinned cue should contain the selected practice segment"
+  )
+  await editor.runLocalQualitativeAnalysis()
+  try expect(
+    editor.qualitativeAnalysis?.evidenceReferences.contains {
+      $0.kind == .stickFigureCue
+    } == true,
+    "focused qualitative analysis should cite the pinned StickFigureCue"
+  )
+  editor.playPracticeSegment(stepCount: 2, loop: true)
+  try expect(editor.projection.isPlaying && editor.projection.isLooping, "segment should loop")
+  _ = editor.handle(.pause)
+  try expect(model.saveRehearsalEdits(rehearsalID), "movement focus should save")
+
+  let reopenedModel = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(store: store)
+  )
+  let reopenedEditor = try requireLearningSurfaceValue(
+    reopenedModel.rehearsalEditorModel(for: rehearsalID),
+    "expected reopened movement-focus editor"
+  )
+  try expect(
+    reopenedEditor.projection.movementSteps.first?.intent?.cue
+      == "Press through both feet before moving the hand.",
+    "MovementIntent must survive explicit save and reopen"
+  )
 }
 
 @MainActor

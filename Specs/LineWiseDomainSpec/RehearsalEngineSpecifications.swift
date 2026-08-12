@@ -477,6 +477,182 @@ private func actualCanStartLaterAndARehearsalCanBeSavedAndReopened() throws {
   )
 }
 
+private func movementIntentSurvivesUnrelatedEditsAndNeedsReviewAfterContactChange() throws {
+  let secondContacts = replacingContact(
+    rehearsalContacts(),
+    limb: .rightHand,
+    target: .hold(HoldID("next"))
+  )
+  var engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("movement-intent"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [
+      rehearsalFrame(id: "k1"),
+      rehearsalFrame(id: "k2", contacts: secondContacts),
+      rehearsalFrame(id: "k3", contacts: secondContacts),
+    ]
+  )
+  let intent = MovementIntent(
+    purpose: .progress,
+    family: .staticMove,
+    expectedDurationSeconds: 1.6,
+    cue: "Keep the right foot loaded, then bring the hips up.",
+    uncertainty: "Wall angle is still estimated.",
+    provenance: .manual
+  )
+
+  try engine.setMovementIntent(
+    intent,
+    from: PoseKeyframeID("k1"),
+    to: PoseKeyframeID("k2")
+  )
+  var firstStep = try rehearsalRequired(
+    engine.rehearsal.plan.steps.first,
+    "annotated first movement step"
+  )
+  try rehearsalExpect(firstStep.intent == intent, "the named step should retain its intent")
+  try rehearsalExpect(
+    firstStep.effectiveDurationSeconds == 1.6,
+    "playback should use the user-authored rhythm"
+  )
+
+  try engine.setContact(
+    limb: .leftHand,
+    target: .hold(HoldID("next")),
+    in: PoseKeyframeID("k3")
+  )
+  firstStep = try rehearsalRequired(
+    engine.rehearsal.plan.steps.first,
+    "first movement step after unrelated edit"
+  )
+  try rehearsalExpect(
+    firstStep.intent?.validity == .current,
+    "an unrelated later edit must not invalidate this movement intent"
+  )
+
+  try engine.setContact(
+    limb: .leftFoot,
+    target: .free,
+    in: PoseKeyframeID("k2")
+  )
+  firstStep = try rehearsalRequired(
+    engine.rehearsal.plan.steps.first,
+    "first movement step after related edit"
+  )
+  try rehearsalExpect(
+    firstStep.intent?.validity == .needsReview,
+    "a changed contact in the step must make its old intent visibly stale"
+  )
+  try rehearsalExpect(
+    firstStep.intent?.cue == intent.cue,
+    "stale guidance should remain available for explicit review instead of disappearing"
+  )
+
+  try engine.setMovementIntent(
+    intent,
+    from: PoseKeyframeID("k1"),
+    to: PoseKeyframeID("k2")
+  )
+  let revisedScene = RouteScene(
+    id: rehearsalScene().id,
+    name: "Blue slab · corrected geometry",
+    size: rehearsalScene().size,
+    metersPerSceneUnit: rehearsalScene().metersPerSceneUnit,
+    holds: rehearsalScene().holds.map { hold in
+      guard hold.id == HoldID("next") else { return hold }
+      return Hold(
+        id: hold.id,
+        center: Point2D(x: hold.center.x + 0.2, y: hold.center.y),
+        radius: hold.radius,
+        kind: hold.kind,
+        routeRole: hold.routeRole
+      )
+    }
+  )
+  engine.replaceScene(revisedScene)
+  firstStep = try rehearsalRequired(
+    engine.rehearsal.plan.steps.first,
+    "first movement step after scene correction"
+  )
+  try rehearsalExpect(
+    firstStep.intent?.validity == .needsReview && firstStep.intent?.cue == intent.cue,
+    "a scene correction should preserve the movement idea but require explicit review"
+  )
+
+  let reopened = try JSONDecoder().decode(
+    RouteRehearsal.self,
+    from: JSONEncoder().encode(engine.rehearsal)
+  )
+  try rehearsalExpect(
+    reopened.plan.steps.first?.intent == firstStep.intent,
+    "movement intent and review state should survive save and reopen"
+  )
+}
+
+private func practiceSegmentPlaybackStopsAndLoopsInsideOneToThreeSteps() throws {
+  let secondContacts = replacingContact(
+    rehearsalContacts(),
+    limb: .rightHand,
+    target: .hold(HoldID("next"))
+  )
+  let thirdContacts = replacingContact(
+    secondContacts,
+    limb: .leftHand,
+    target: .hold(HoldID("rh"))
+  )
+  let fourthContacts = replacingContact(
+    thirdContacts,
+    limb: .leftFoot,
+    target: .free
+  )
+  var engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("practice-segment"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [
+      rehearsalFrame(id: "k1"),
+      rehearsalFrame(id: "k2", contacts: secondContacts),
+      rehearsalFrame(id: "k3", contacts: thirdContacts),
+      rehearsalFrame(id: "k4", contacts: fourthContacts),
+    ]
+  )
+
+  try engine.playSegment(1...2, loop: false)
+  try engine.advancePlayback(by: 2.5)
+  try rehearsalExpect(!engine.playback.isPlaying, "a finite practice segment should stop")
+  try rehearsalExpect(
+    engine.playback.cursor.transitionIndex == 2 && engine.playback.cursor.progress == 1,
+    "practice playback should stop on the exact selected segment end"
+  )
+
+  try engine.playSegment(1...2, loop: true)
+  try engine.advancePlayback(by: 2.25)
+  try rehearsalExpect(engine.playback.isPlaying, "a looped practice segment should keep playing")
+  try rehearsalExpect(
+    engine.playback.cursor.transitionIndex == 1 && engine.playback.cursor.progress == 0.25,
+    "looping should wrap to the selected segment start, not the full timeline start"
+  )
+
+  do {
+    try engine.playSegment(0...3, loop: false)
+    throw RehearsalSpecFailure.expected(
+      "a StickFigureCue practice segment must stay within 1-3 steps")
+  } catch let error as RouteRehearsalError {
+    try rehearsalExpect(
+      error == .practiceSegmentStepCountOutOfRange,
+      "the 1-3 step product bound should be explicit"
+    )
+  }
+}
+
+private func rehearsalRequired<Value>(_ value: Value?, _ label: String) throws -> Value {
+  guard let value else {
+    throw RehearsalSpecFailure.expected("missing \(label)")
+  }
+  return value
+}
+
 public func rehearsalEngineSpecifications() -> [(String, () throws -> Void)] {
   [
     (
@@ -510,6 +686,14 @@ public func rehearsalEngineSpecifications() -> [(String, () throws -> Void)] {
     (
       "actual can start later and a rehearsal can be saved and reopened",
       actualCanStartLaterAndARehearsalCanBeSavedAndReopened
+    ),
+    (
+      "movement intent survives unrelated edits and needs review after contact change",
+      movementIntentSurvivesUnrelatedEditsAndNeedsReviewAfterContactChange
+    ),
+    (
+      "practice segment playback stops and loops inside one to three steps",
+      practiceSegmentPlaybackStopsAndLoopsInsideOneToThreeSteps
     ),
   ]
 }

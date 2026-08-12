@@ -76,6 +76,10 @@ _Avoid_: Screenshot, animation frame
 The transition between two PoseKeyframes, including contacts gained, released, and retained plus a qualitative explanation.
 _Avoid_: Frame
 
+**MovementIntent**:
+The purpose, movement family, expected rhythm, felt cue, and explicit uncertainty that a climber wants to try for one MovementStep. It is an editable rehearsal instruction, not proof of feasibility, safety, or official routesetter intent.
+_Avoid_: Correct technique, prescribed movement
+
 **MovementHypothesis**:
 One candidate interpretation of how a person could climb a route. Several hypotheses may coexist for different body proportions, styles, or uncertainties.
 _Avoid_: Solution, answer

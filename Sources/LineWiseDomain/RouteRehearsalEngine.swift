@@ -151,11 +151,68 @@ public struct ContactChange: Hashable, Codable, Sendable {
   }
 }
 
-public enum MovementFamily: String, Hashable, Codable, Sendable {
+public enum MovementFamily: String, CaseIterable, Hashable, Codable, Sendable {
   case staticMove
   case coordinated
   case dynamic
   case observed
+}
+
+public enum MovementPurpose: String, CaseIterable, Hashable, Codable, Sendable {
+  case setup
+  case progress
+  case reposition
+  case stabilize
+  case commit
+  case finish
+  case investigate
+}
+
+public enum MovementIntentValidity: String, Hashable, Codable, Sendable {
+  case current
+  case needsReview
+}
+
+/// What the climber intends to try in one MovementStep. This remains a
+/// rehearsal instruction, not a feasibility, safety, or setter-intent claim.
+public struct MovementIntent: Equatable, Codable, Sendable {
+  public let purpose: MovementPurpose
+  public let family: MovementFamily
+  public let expectedDurationSeconds: Double
+  public let cue: String
+  public let uncertainty: String?
+  public let provenance: RehearsalProvenance
+  public let validity: MovementIntentValidity
+
+  public init(
+    purpose: MovementPurpose,
+    family: MovementFamily,
+    expectedDurationSeconds: Double,
+    cue: String,
+    uncertainty: String? = nil,
+    provenance: RehearsalProvenance,
+    validity: MovementIntentValidity = .current
+  ) {
+    self.purpose = purpose
+    self.family = family
+    self.expectedDurationSeconds = max(expectedDurationSeconds, 0.05)
+    self.cue = cue
+    self.uncertainty = uncertainty
+    self.provenance = provenance
+    self.validity = validity
+  }
+
+  func markingNeedsReview() -> MovementIntent {
+    MovementIntent(
+      purpose: purpose,
+      family: family,
+      expectedDurationSeconds: expectedDurationSeconds,
+      cue: cue,
+      uncertainty: uncertainty,
+      provenance: provenance,
+      validity: .needsReview
+    )
+  }
 }
 
 public struct MovementStep: Equatable, Codable, Sendable {
@@ -169,6 +226,7 @@ public struct MovementStep: Equatable, Codable, Sendable {
   public let family: MovementFamily
   public let explanation: String
   public let provenance: RehearsalProvenance
+  public let intent: MovementIntent?
 
   public init(
     fromKeyframeID: PoseKeyframeID,
@@ -180,7 +238,8 @@ public struct MovementStep: Equatable, Codable, Sendable {
     expectedDurationSeconds: Double,
     family: MovementFamily,
     explanation: String,
-    provenance: RehearsalProvenance
+    provenance: RehearsalProvenance,
+    intent: MovementIntent? = nil
   ) {
     self.fromKeyframeID = fromKeyframeID
     self.toKeyframeID = toKeyframeID
@@ -192,6 +251,31 @@ public struct MovementStep: Equatable, Codable, Sendable {
     self.family = family
     self.explanation = explanation
     self.provenance = provenance
+    self.intent = intent
+  }
+
+  public var effectiveDurationSeconds: Double {
+    intent?.expectedDurationSeconds ?? expectedDurationSeconds
+  }
+
+  public var effectiveFamily: MovementFamily {
+    intent?.family ?? family
+  }
+
+  func replacingIntent(_ intent: MovementIntent?) -> MovementStep {
+    MovementStep(
+      fromKeyframeID: fromKeyframeID,
+      toKeyframeID: toKeyframeID,
+      changes: changes,
+      retainedLimbs: retainedLimbs,
+      gainedLimbs: gainedLimbs,
+      releasedLimbs: releasedLimbs,
+      expectedDurationSeconds: expectedDurationSeconds,
+      family: family,
+      explanation: explanation,
+      provenance: provenance,
+      intent: intent
+    )
   }
 }
 
@@ -273,6 +357,8 @@ public enum RouteRehearsalError: Error, Equatable, Sendable {
   case invalidDestinationIndex(Int)
   case transitionNotAvailable(Int)
   case unsolvedKeyframe(PoseKeyframeID)
+  case movementStepNotFound(from: PoseKeyframeID, to: PoseKeyframeID)
+  case practiceSegmentStepCountOutOfRange
 }
 
 public struct RouteRehearsalEngine: Sendable {
@@ -348,8 +434,109 @@ public struct RouteRehearsalEngine: Sendable {
       bodyProfile: rehearsal.bodyProfile,
       solver: solver
     )
-    rehearsal = rehearsal.replacing(timeline: Self.timeline(solved), for: track)
+    rehearsal = rehearsal.replacing(
+      timeline: Self.timeline(
+        solved,
+        preserving: rehearsal.timeline(for: track)
+      ),
+      for: track
+    )
     normalizePlayback(afterEditing: track)
+  }
+
+  public mutating func replaceScene(_ scene: RouteScene) {
+    let previousPlan = rehearsal.plan
+    let previousActual = rehearsal.actual
+    let solvedPlan = Self.solveAll(
+      previousPlan.keyframes,
+      scene: scene,
+      bodyProfile: rehearsal.bodyProfile,
+      solver: solver
+    )
+    let solvedActual = Self.solveAll(
+      previousActual.keyframes,
+      scene: scene,
+      bodyProfile: rehearsal.bodyProfile,
+      solver: solver
+    )
+    rehearsal = RouteRehearsal(
+      id: rehearsal.id,
+      scene: scene,
+      bodyProfile: rehearsal.bodyProfile,
+      plan: Self.timeline(
+        solvedPlan,
+        preserving: previousPlan,
+        requiresIntentReview: true
+      ),
+      actual: Self.timeline(
+        solvedActual,
+        preserving: previousActual,
+        requiresIntentReview: true
+      ),
+      activeTrack: rehearsal.activeTrack
+    )
+    normalizePlayback(afterEditing: rehearsal.activeTrack)
+  }
+
+  public mutating func setMovementIntent(
+    _ intent: MovementIntent,
+    from fromKeyframeID: PoseKeyframeID,
+    to toKeyframeID: PoseKeyframeID,
+    track: RehearsalTrack? = nil
+  ) throws {
+    let track = track ?? rehearsal.activeTrack
+    let timeline = rehearsal.timeline(for: track)
+    guard
+      let stepIndex = timeline.steps.firstIndex(where: {
+        $0.fromKeyframeID == fromKeyframeID && $0.toKeyframeID == toKeyframeID
+      })
+    else {
+      throw RouteRehearsalError.movementStepNotFound(
+        from: fromKeyframeID,
+        to: toKeyframeID
+      )
+    }
+    var steps = timeline.steps
+    steps[stepIndex] = steps[stepIndex].replacingIntent(
+      MovementIntent(
+        purpose: intent.purpose,
+        family: intent.family,
+        expectedDurationSeconds: intent.expectedDurationSeconds,
+        cue: intent.cue,
+        uncertainty: intent.uncertainty,
+        provenance: intent.provenance,
+        validity: .current
+      )
+    )
+    rehearsal = rehearsal.replacing(
+      timeline: RehearsalTimeline(keyframes: timeline.keyframes, steps: steps),
+      for: track
+    )
+  }
+
+  public mutating func clearMovementIntent(
+    from fromKeyframeID: PoseKeyframeID,
+    to toKeyframeID: PoseKeyframeID,
+    track: RehearsalTrack? = nil
+  ) throws {
+    let track = track ?? rehearsal.activeTrack
+    let timeline = rehearsal.timeline(for: track)
+    guard
+      let stepIndex = timeline.steps.firstIndex(where: {
+        $0.fromKeyframeID == fromKeyframeID && $0.toKeyframeID == toKeyframeID
+      })
+    else {
+      throw RouteRehearsalError.movementStepNotFound(
+        from: fromKeyframeID,
+        to: toKeyframeID
+      )
+    }
+    var steps = timeline.steps
+    steps[stepIndex] = steps[stepIndex].replacingIntent(nil)
+    rehearsal = rehearsal.replacing(
+      timeline: RehearsalTimeline(keyframes: timeline.keyframes, steps: steps),
+      for: track
+    )
   }
 
   public var currentKeyframeID: PoseKeyframeID? {
@@ -442,6 +629,33 @@ public struct RouteRehearsalEngine: Sendable {
     playback = .playingAll(cursor, loop: loop)
   }
 
+  public mutating func playSegment(
+    _ stepRange: ClosedRange<Int>,
+    loop: Bool
+  ) throws {
+    let stepCount = stepRange.upperBound - stepRange.lowerBound + 1
+    guard (1...3).contains(stepCount) else {
+      throw RouteRehearsalError.practiceSegmentStepCountOutOfRange
+    }
+    let track = playback.cursor.track
+    let steps = rehearsal.timeline(for: track).steps
+    guard
+      stepRange.lowerBound >= 0,
+      stepRange.upperBound < steps.count
+    else {
+      throw RouteRehearsalError.transitionNotAvailable(stepRange.upperBound)
+    }
+    playback = .playingSegment(
+      PlaybackCursor(
+        track: track,
+        transitionIndex: stepRange.lowerBound,
+        progress: 0
+      ),
+      stepRange: stepRange,
+      loop: loop
+    )
+  }
+
   public mutating func pause() {
     playback = .paused(playback.cursor)
   }
@@ -455,7 +669,7 @@ public struct RouteRehearsalEngine: Sendable {
       guard let step = step(at: cursor) else {
         throw RouteRehearsalError.transitionNotAvailable(cursor.transitionIndex)
       }
-      let totalProgress = cursor.progress + (elapsedSeconds / step.expectedDurationSeconds)
+      let totalProgress = cursor.progress + (elapsedSeconds / step.effectiveDurationSeconds)
       if loop {
         let wrapped = totalProgress.truncatingRemainder(dividingBy: 1)
         playback = .playingStep(
@@ -486,6 +700,13 @@ public struct RouteRehearsalEngine: Sendable {
     case .playingAll(let startingCursor, let loop):
       try advanceContinuous(
         from: startingCursor,
+        elapsedSeconds: elapsedSeconds,
+        loop: loop
+      )
+    case .playingSegment(let startingCursor, let stepRange, let loop):
+      try advanceSegment(
+        from: startingCursor,
+        stepRange: stepRange,
         elapsedSeconds: elapsedSeconds,
         loop: loop
       )
@@ -752,12 +973,12 @@ public struct RouteRehearsalEngine: Sendable {
         throw RouteRehearsalError.transitionNotAvailable(cursor.transitionIndex)
       }
       let step = steps[cursor.transitionIndex]
-      let secondsToEnd = (1 - cursor.progress) * step.expectedDurationSeconds
+      let secondsToEnd = (1 - cursor.progress) * step.effectiveDurationSeconds
       if remaining < secondsToEnd {
         cursor = PlaybackCursor(
           track: cursor.track,
           transitionIndex: cursor.transitionIndex,
-          progress: cursor.progress + (remaining / step.expectedDurationSeconds)
+          progress: cursor.progress + (remaining / step.effectiveDurationSeconds)
         )
         remaining = 0
       } else {
@@ -782,6 +1003,61 @@ public struct RouteRehearsalEngine: Sendable {
       }
     }
     playback = .playingAll(cursor, loop: loop)
+  }
+
+  private mutating func advanceSegment(
+    from startingCursor: PlaybackCursor,
+    stepRange: ClosedRange<Int>,
+    elapsedSeconds: Double,
+    loop: Bool
+  ) throws {
+    let steps = rehearsal.timeline(for: startingCursor.track).steps
+    guard
+      stepRange.lowerBound >= 0,
+      stepRange.upperBound < steps.count,
+      stepRange.contains(startingCursor.transitionIndex)
+    else {
+      throw RouteRehearsalError.transitionNotAvailable(startingCursor.transitionIndex)
+    }
+    var cursor = startingCursor
+    var remaining = elapsedSeconds
+    while remaining > 0 {
+      let step = steps[cursor.transitionIndex]
+      let secondsToEnd = (1 - cursor.progress) * step.effectiveDurationSeconds
+      if remaining < secondsToEnd {
+        cursor = PlaybackCursor(
+          track: cursor.track,
+          transitionIndex: cursor.transitionIndex,
+          progress: cursor.progress + (remaining / step.effectiveDurationSeconds)
+        )
+        remaining = 0
+      } else {
+        remaining -= secondsToEnd
+        if cursor.transitionIndex < stepRange.upperBound {
+          cursor = PlaybackCursor(
+            track: cursor.track,
+            transitionIndex: cursor.transitionIndex + 1,
+            progress: 0
+          )
+        } else if loop {
+          cursor = PlaybackCursor(
+            track: cursor.track,
+            transitionIndex: stepRange.lowerBound,
+            progress: 0
+          )
+        } else {
+          playback = .paused(
+            PlaybackCursor(
+              track: cursor.track,
+              transitionIndex: stepRange.upperBound,
+              progress: 1
+            )
+          )
+          return
+        }
+      }
+    }
+    playback = .playingSegment(cursor, stepRange: stepRange, loop: loop)
   }
 
   private static func solveAll(
@@ -869,7 +1145,13 @@ public struct RouteRehearsalEngine: Sendable {
   }
 
   private mutating func replace(frames: [PoseKeyframe], for track: RehearsalTrack) {
-    rehearsal = rehearsal.replacing(timeline: Self.timeline(frames), for: track)
+    rehearsal = rehearsal.replacing(
+      timeline: Self.timeline(
+        frames,
+        preserving: rehearsal.timeline(for: track)
+      ),
+      for: track
+    )
     normalizePlayback(afterEditing: track)
   }
 
@@ -889,12 +1171,39 @@ public struct RouteRehearsalEngine: Sendable {
       ))
   }
 
-  private static func timeline(_ frames: [PoseKeyframe]) -> RehearsalTimeline {
-    RehearsalTimeline(keyframes: frames, steps: movementSteps(for: frames))
+  private static func timeline(
+    _ frames: [PoseKeyframe],
+    preserving previousTimeline: RehearsalTimeline? = nil,
+    requiresIntentReview: Bool = false
+  ) -> RehearsalTimeline {
+    RehearsalTimeline(
+      keyframes: frames,
+      steps: movementSteps(
+        for: frames,
+        preserving: previousTimeline,
+        requiresIntentReview: requiresIntentReview
+      )
+    )
   }
 
-  private static func movementSteps(for frames: [PoseKeyframe]) -> [MovementStep] {
+  private static func movementSteps(
+    for frames: [PoseKeyframe],
+    preserving previousTimeline: RehearsalTimeline?,
+    requiresIntentReview: Bool
+  ) -> [MovementStep] {
     guard frames.count > 1 else { return [] }
+    let previousFrames =
+      previousTimeline.map {
+        Dictionary(uniqueKeysWithValues: $0.keyframes.map { ($0.id, $0) })
+      } ?? [:]
+    let previousSteps =
+      previousTimeline.map {
+        Dictionary(
+          uniqueKeysWithValues: $0.steps.map {
+            (MovementStepKey(from: $0.fromKeyframeID, to: $0.toKeyframeID), $0)
+          }
+        )
+      } ?? [:]
     return zip(frames, frames.dropFirst()).map { from, to in
       let changes = Limb.allCases.compactMap { limb -> ContactChange? in
         let oldTarget = from.contact(for: limb)?.target ?? .unknown
@@ -915,7 +1224,7 @@ public struct RouteRehearsalEngine: Sendable {
         ? "No contact changes."
         : changes.map { "\($0.limb.label): \($0.from.shortLabel) → \($0.to.shortLabel)" }
           .joined(separator: "; ")
-      return MovementStep(
+      let generated = MovementStep(
         fromKeyframeID: from.id,
         toKeyframeID: to.id,
         changes: changes,
@@ -927,8 +1236,24 @@ public struct RouteRehearsalEngine: Sendable {
         explanation: explanation,
         provenance: to.provenance
       )
+      let key = MovementStepKey(from: from.id, to: to.id)
+      guard let previousIntent = previousSteps[key]?.intent else { return generated }
+      let contactOrTorsoChanged =
+        previousFrames[from.id]?.contacts != from.contacts
+        || previousFrames[to.id]?.contacts != to.contacts
+        || previousFrames[from.id]?.torsoPosition != from.torsoPosition
+        || previousFrames[to.id]?.torsoPosition != to.torsoPosition
+      return generated.replacingIntent(
+        contactOrTorsoChanged || requiresIntentReview
+          ? previousIntent.markingNeedsReview() : previousIntent
+      )
     }
   }
+}
+
+private struct MovementStepKey: Hashable {
+  let from: PoseKeyframeID
+  let to: PoseKeyframeID
 }
 
 extension ContactTarget {
@@ -961,10 +1286,17 @@ public enum RehearsalPlaybackState: Equatable, Codable, Sendable {
   case paused(PlaybackCursor)
   case playingStep(PlaybackCursor, loop: Bool)
   case playingAll(PlaybackCursor, loop: Bool)
+  case playingSegment(
+    PlaybackCursor,
+    stepRange: ClosedRange<Int>,
+    loop: Bool
+  )
 
   public var cursor: PlaybackCursor {
     switch self {
-    case .paused(let cursor), .playingStep(let cursor, _), .playingAll(let cursor, _): cursor
+    case .paused(let cursor), .playingStep(let cursor, _), .playingAll(let cursor, _),
+      .playingSegment(let cursor, _, _):
+      cursor
     }
   }
 

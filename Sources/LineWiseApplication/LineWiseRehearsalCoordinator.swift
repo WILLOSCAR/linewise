@@ -1,3 +1,4 @@
+import Foundation
 import LineWiseDomain
 
 public enum RehearsalImportProvider: Equatable, Sendable {
@@ -43,8 +44,11 @@ public enum LineWiseRehearsalIntent: Equatable, Sendable {
   case stepBackward
   case scrub(transitionIndex: Int, progress: Double)
   case play(scope: RehearsalPlaybackScope, loop: Bool)
+  case playPracticeSegment(stepCount: Int, loop: Bool)
   case pause
   case tick(elapsedSeconds: Double)
+  case setCurrentMovementIntent(MovementIntent)
+  case clearCurrentMovementIntent
   case importRoute(request: RouteReadRequest, provider: RehearsalImportProvider)
   case importTimeline(
     track: RehearsalTrack,
@@ -58,6 +62,7 @@ public enum LineWiseRehearsalIntent: Equatable, Sendable {
 public enum LineWiseRehearsalFailure: Equatable, Sendable {
   case noSelectedKeyframe
   case noSourceKeyframe
+  case noCurrentMovementStep
   case holdNotFound(HoldID)
   case keyframeNotFound(PoseKeyframeID)
   case engine(RouteRehearsalError)
@@ -113,6 +118,7 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
   public let selectedFrameWasManuallyEdited: Bool
   public let actualAttemptID: AttemptID?
   public let canCreateActualDraft: Bool
+  public let focusedComparisonStep: AlignedMovementStep?
 
   public init(
     routeCardID: RouteCardID,
@@ -135,7 +141,8 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
     timelineImportProvenance: RehearsalProvenance?,
     selectedFrameWasManuallyEdited: Bool,
     actualAttemptID: AttemptID?,
-    canCreateActualDraft: Bool
+    canCreateActualDraft: Bool,
+    focusedComparisonStep: AlignedMovementStep?
   ) {
     self.routeCardID = routeCardID
     self.rehearsalID = rehearsalID
@@ -158,6 +165,7 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
     self.selectedFrameWasManuallyEdited = selectedFrameWasManuallyEdited
     self.actualAttemptID = actualAttemptID
     self.canCreateActualDraft = canCreateActualDraft
+    self.focusedComparisonStep = focusedComparisonStep
   }
 
   public var selectedKeyframe: PoseKeyframe? {
@@ -169,7 +177,9 @@ public struct LineWiseRehearsalProjection: Equatable, Sendable {
   public var isLooping: Bool {
     switch playback {
     case .paused: false
-    case .playingStep(_, let loop), .playingAll(_, let loop): loop
+    case .playingStep(_, let loop), .playingAll(_, let loop),
+      .playingSegment(_, _, let loop):
+      loop
     }
   }
 
@@ -306,7 +316,69 @@ public struct LineWiseRehearsalCoordinator: Sendable {
         manuallyEditedFrameIDs.contains($0)
       } ?? false,
       actualAttemptID: actualAttemptID,
-      canCreateActualDraft: actualAttemptID != nil && rehearsal.actual.keyframes.isEmpty
+      canCreateActualDraft: actualAttemptID != nil && rehearsal.actual.keyframes.isEmpty,
+      focusedComparisonStep: focusedComparisonStep(
+        in: rehearsal,
+        track: track,
+        stepIndex: engine.playback.cursor.transitionIndex
+      )
+    )
+  }
+
+  public func timelineVersion(for track: RehearsalTrack) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    guard let data = try? encoder.encode(engine.rehearsal.timeline(for: track)) else {
+      return "timeline-v2:\(track.rawValue):unavailable"
+    }
+    var hash: UInt64 = 1_469_598_103_934_665_603
+    for byte in data {
+      hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
+    }
+    return "timeline-v2:\(track.rawValue):\(String(hash, radix: 16))"
+  }
+
+  public func makeCurrentStickFigureCue(
+    id: StickFigureCueID,
+    stepCount: Int
+  ) throws -> StickFigureCue {
+    guard (1...3).contains(stepCount) else {
+      throw RehearsalCompareError.cueStepCountOutOfRange
+    }
+    let rehearsal = engine.rehearsal
+    let track = rehearsal.activeTrack
+    let startIndex = engine.playback.cursor.transitionIndex
+    let endIndex = startIndex + stepCount - 1
+    guard rehearsal.timeline(for: track).steps.indices.contains(endIndex) else {
+      throw RehearsalCompareError.alignedRangeOutOfBounds
+    }
+    let comparison = RehearsalCompare.align(
+      rehearsal: rehearsal,
+      planTimelineVersion: timelineVersion(for: .plan),
+      actualTimelineVersion: timelineVersion(for: .actual)
+    )
+    let selected = comparison.alignedSteps.filter { aligned in
+      let index = track == .plan ? aligned.planStepIndex : aligned.actualStepIndex
+      return index.map { startIndex...endIndex ~= $0 } ?? false
+    }
+    guard selected.count == stepCount,
+      let first = selected.first,
+      let last = selected.last,
+      last.alignmentIndex - first.alignmentIndex + 1 == stepCount
+    else {
+      throw RehearsalCompareError.cueStepsNotContinuous
+    }
+    let version = timelineVersion(for: track)
+    return try RehearsalCompare.makeStickFigureCue(
+      id: id,
+      comparison: comparison,
+      alignedStepRange: first.alignmentIndex...last.alignmentIndex,
+      preferredTrack: track,
+      pin: StickFigureCuePin(
+        scene: rehearsal.scene,
+        bodyProfile: rehearsal.bodyProfile,
+        timelineVersion: version
+      )
     )
   }
 
@@ -437,6 +509,16 @@ public struct LineWiseRehearsalCoordinator: Sendable {
       case .fullTimeline: try engine.playAll(loop: loop)
       }
 
+    case .playPracticeSegment(let stepCount, let loop):
+      guard (1...3).contains(stepCount) else {
+        throw RouteRehearsalError.practiceSegmentStepCountOutOfRange
+      }
+      let startIndex = engine.playback.cursor.transitionIndex
+      try engine.playSegment(
+        startIndex...(startIndex + stepCount - 1),
+        loop: loop
+      )
+
     case .pause:
       engine.pause()
       selectedKeyframeID = engine.currentKeyframeID
@@ -444,6 +526,25 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     case .tick(let elapsedSeconds):
       try engine.advancePlayback(by: elapsedSeconds)
       selectedKeyframeID = engine.currentKeyframeID
+
+    case .setCurrentMovementIntent(let intent):
+      guard let step = engine.currentMovementStep else {
+        throw LineWiseRehearsalOperationError(.noCurrentMovementStep)
+      }
+      try engine.setMovementIntent(
+        intent,
+        from: step.fromKeyframeID,
+        to: step.toKeyframeID
+      )
+
+    case .clearCurrentMovementIntent:
+      guard let step = engine.currentMovementStep else {
+        throw LineWiseRehearsalOperationError(.noCurrentMovementStep)
+      }
+      try engine.clearMovementIntent(
+        from: step.fromKeyframeID,
+        to: step.toKeyframeID
+      )
 
     case .importRoute(let request, let provider):
       try importRoute(request: request, provider: provider)
@@ -463,6 +564,24 @@ public struct LineWiseRehearsalCoordinator: Sendable {
 
   private var activeTimeline: RehearsalTimeline {
     engine.rehearsal.timeline(for: engine.rehearsal.activeTrack)
+  }
+
+  private func focusedComparisonStep(
+    in rehearsal: RouteRehearsal,
+    track: RehearsalTrack,
+    stepIndex: Int
+  ) -> AlignedMovementStep? {
+    guard !rehearsal.plan.steps.isEmpty || !rehearsal.actual.steps.isEmpty else {
+      return nil
+    }
+    let comparison = RehearsalCompare.align(
+      rehearsal: rehearsal,
+      planTimelineVersion: timelineVersion(for: .plan),
+      actualTimelineVersion: timelineVersion(for: .actual)
+    )
+    return comparison.alignedSteps.first { aligned in
+      track == .plan ? aligned.planStepIndex == stepIndex : aligned.actualStepIndex == stepIndex
+    }
   }
 
   private mutating func selectKeyframe(_ keyframeID: PoseKeyframeID) throws {
@@ -555,16 +674,7 @@ public struct LineWiseRehearsalCoordinator: Sendable {
       ).readLocally(request)
     }
 
-    let rehearsal = engine.rehearsal
-    var replacement = try RouteRehearsalEngine(
-      rehearsalID: rehearsal.id,
-      scene: result.scene,
-      bodyProfile: rehearsal.bodyProfile,
-      planKeyframes: rehearsal.plan.keyframes,
-      actualKeyframes: rehearsal.actual.keyframes
-    )
-    replacement.selectTrack(rehearsal.activeTrack)
-    engine = replacement
+    engine.replaceScene(result.scene)
     routeReadProvenance = result.provenance
     normalizeSelection()
     try syncPlaybackToSelection()

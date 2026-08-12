@@ -11,6 +11,7 @@
     @Published public private(set) var lastOutcome: LineWiseRehearsalOutcome?
     @Published public private(set) var qualitativeAnalysis: QualitativeRouteAnalysisResult?
     @Published public private(set) var qualitativeAnalysisError: String?
+    @Published public private(set) var currentPracticeCue: StickFigureCue?
 
     private var coordinator: LineWiseRehearsalCoordinator
     private var lastPlaybackDate: Date?
@@ -28,6 +29,7 @@
       if feedback.isSuccess, invalidatesQualitativeAnalysis(intent) {
         qualitativeAnalysis = nil
         qualitativeAnalysisError = nil
+        currentPracticeCue = nil
       }
       if !feedback.projection.isPlaying {
         lastPlaybackDate = nil
@@ -143,6 +145,64 @@
       handle(.copyPlanIntoActualDraft)
     }
 
+    @discardableResult
+    public func setCurrentMovementIntent(
+      purpose: MovementPurpose,
+      family: MovementFamily,
+      durationSeconds: Double,
+      cue: String,
+      uncertainty: String? = nil
+    ) -> Bool {
+      let cue = cue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !cue.isEmpty else {
+        lastOutcome = .rejected(.unexpected("Movement cue cannot be empty"))
+        return false
+      }
+      let uncertainty = uncertainty?.trimmingCharacters(in: .whitespacesAndNewlines)
+      return handle(
+        .setCurrentMovementIntent(
+          MovementIntent(
+            purpose: purpose,
+            family: family,
+            expectedDurationSeconds: durationSeconds,
+            cue: cue,
+            uncertainty: uncertainty?.isEmpty == false ? uncertainty : nil,
+            provenance: .manual
+          )
+        )
+      ).isSuccess
+    }
+
+    public func clearCurrentMovementIntent() {
+      handle(.clearCurrentMovementIntent)
+    }
+
+    @discardableResult
+    public func pinCurrentPracticeSegment(stepCount: Int) -> Bool {
+      do {
+        currentPracticeCue = try coordinator.makeCurrentStickFigureCue(
+          id: StickFigureCueID(UUID().uuidString),
+          stepCount: stepCount
+        )
+        qualitativeAnalysis = nil
+        qualitativeAnalysisError = nil
+        lastOutcome = .accepted
+        return true
+      } catch {
+        currentPracticeCue = nil
+        lastOutcome = .rejected(.unexpected(String(describing: error)))
+        return false
+      }
+    }
+
+    public func playPracticeSegment(stepCount: Int, loop: Bool) {
+      handle(.playPracticeSegment(stepCount: stepCount, loop: loop))
+    }
+
+    public var rehearsalSnapshot: RouteRehearsal {
+      coordinator.engine.rehearsal
+    }
+
     @available(*, deprecated, renamed: "copyPlanIntoActualDraft")
     public func seedActualFromPlan() {
       copyPlanIntoActualDraft()
@@ -184,8 +244,8 @@
 
     func qualitativeAnalysisRequest() -> QualitativeRouteAnalysisRequest {
       let rehearsal = coordinator.engine.rehearsal
-      let planVersion = timelineVersion(for: .plan)
-      let actualVersion = timelineVersion(for: .actual)
+      let planVersion = coordinator.timelineVersion(for: .plan)
+      let actualVersion = coordinator.timelineVersion(for: .actual)
       let comparison = RehearsalCompare.align(
         rehearsal: rehearsal,
         planTimelineVersion: planVersion,
@@ -198,26 +258,21 @@
         bodyProfile: rehearsal.bodyProfile,
         bodyProfileVersion: "body:\(rehearsal.bodyProfile.id.rawValue)",
         rehearsalComparison: comparison,
-        stickFigureCue: nil,
+        stickFigureCue: currentPracticeCue,
         confirmedFailureEpisodes: [],
         confirmedMoveCues: []
       )
-    }
-
-    private func timelineVersion(for track: RehearsalTrack) -> String {
-      let timeline = coordinator.engine.rehearsal.timeline(for: track)
-      let frameIDs = timeline.keyframes.map(\.id.rawValue).joined(separator: ",")
-      return "\(track.rawValue):\(frameIDs):\(timeline.steps.count)"
     }
 
     private func invalidatesQualitativeAnalysis(_ intent: LineWiseRehearsalIntent) -> Bool {
       switch intent {
       case .assignHold, .clearContact, .setContactLock, .addKeyframe, .duplicateKeyframe,
         .deleteKeyframe, .moveKeyframe, .recomputeKeyframe, .recomputeDownstream, .importRoute,
-        .importTimeline, .copyPlanIntoActualDraft:
+        .importTimeline, .copyPlanIntoActualDraft, .setCurrentMovementIntent,
+        .clearCurrentMovementIntent:
         true
       case .selectTrack, .selectKeyframe, .selectLimb, .stepForward, .stepBackward, .scrub,
-        .play, .pause, .tick:
+        .play, .playPracticeSegment, .pause, .tick:
         false
       }
     }
@@ -229,6 +284,12 @@
     @StateObject private var model: LineWiseRehearsalViewModel
     @State private var shouldLoop = false
     @State private var maximumSuggestedFrames = 8
+    @State private var movementPurpose = MovementPurpose.progress
+    @State private var movementFamily = MovementFamily.staticMove
+    @State private var movementDurationSeconds = 1.0
+    @State private var movementCueDraft = ""
+    @State private var movementUncertaintyDraft = ""
+    @State private var practiceStepCount = 1
 
     private let playbackTimer = Timer.publish(
       every: 1.0 / 30.0,
@@ -248,6 +309,7 @@
           trackAndLimbControls
           timeline
           playbackControls
+          movementFocus
           importControls
           findingsAndProvenance
         }
@@ -256,6 +318,10 @@
       .navigationTitle(model.projection.scene.name)
       .onReceive(playbackTimer) { date in
         model.tick(at: date)
+      }
+      .onAppear { loadMovementIntentDraft() }
+      .onChange(of: movementSelectionKey) { _ in
+        loadMovementIntentDraft()
       }
     }
 
@@ -487,6 +553,222 @@
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+      }
+    }
+
+    @ViewBuilder
+    private var movementFocus: some View {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("Movement focus")
+            .font(.headline)
+          Spacer()
+          if model.projection.currentMovementStep?.intent?.validity == .needsReview {
+            Label("Review after contact edit", systemImage: "arrow.triangle.2.circlepath")
+              .font(.caption.bold())
+              .foregroundStyle(.orange)
+          }
+        }
+
+        if let step = model.projection.currentMovementStep {
+          GroupBox("What changes") {
+            VStack(alignment: .leading, spacing: 6) {
+              Text(step.explanation)
+              if !step.retainedLimbs.isEmpty {
+                Text("Keep: \(step.retainedLimbs.map(\.label).joined(separator: ", "))")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              Text(
+                "This is a rehearsal instruction, not a feasibility or safety judgment."
+              )
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
+
+          LazyVGrid(columns: [GridItem(.adaptive(minimum: 170))], alignment: .leading) {
+            Picker("Purpose", selection: $movementPurpose) {
+              ForEach(MovementPurpose.allCases, id: \.self) { purpose in
+                Text(movementPurposeName(purpose)).tag(purpose)
+              }
+            }
+            Picker("Movement", selection: $movementFamily) {
+              ForEach(MovementFamily.allCases, id: \.self) { family in
+                Text(movementFamilyName(family)).tag(family)
+              }
+            }
+          }
+
+          Stepper(
+            "Rhythm: \(movementDurationSeconds, specifier: "%.2f") seconds",
+            value: $movementDurationSeconds,
+            in: 0.25...6,
+            step: 0.25
+          )
+          TextField("What should I feel or remember?", text: $movementCueDraft)
+          TextField("What is still uncertain? (optional)", text: $movementUncertaintyDraft)
+
+          HStack {
+            Button("Save movement intent") {
+              model.setCurrentMovementIntent(
+                purpose: movementPurpose,
+                family: movementFamily,
+                durationSeconds: movementDurationSeconds,
+                cue: movementCueDraft,
+                uncertainty: movementUncertaintyDraft
+              )
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(
+              movementCueDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
+            if step.intent != nil {
+              Button("Clear intent", role: .destructive) {
+                model.clearCurrentMovementIntent()
+                loadMovementIntentDraft()
+              }
+              .buttonStyle(.bordered)
+            }
+          }
+
+          Divider()
+          HStack {
+            Stepper(
+              "Practice \(practiceStepCount) step\(practiceStepCount == 1 ? "" : "s")",
+              value: $practiceStepCount,
+              in: 1...availablePracticeStepCount
+            )
+            Spacer()
+            Button("Pin segment") {
+              model.pinCurrentPracticeSegment(stepCount: practiceStepCount)
+            }
+            Button("Loop segment") {
+              model.playPracticeSegment(stepCount: practiceStepCount, loop: true)
+            }
+          }
+          .buttonStyle(.bordered)
+
+          if let cue = model.currentPracticeCue {
+            Label(
+              "Pinned \(cue.steps.count)-step StickFigureCue for focused analysis",
+              systemImage: "pin.fill"
+            )
+            .font(.caption.bold())
+          }
+
+          focusedComparison
+        } else {
+          Label(
+            "Add or duplicate a keyframe to create a MovementStep.",
+            systemImage: "figure.climbing"
+          )
+          .foregroundStyle(.secondary)
+        }
+      }
+    }
+
+    @ViewBuilder
+    private var focusedComparison: some View {
+      if let comparison = model.projection.focusedComparisonStep {
+        GroupBox("Plan / Actual at this move") {
+          VStack(alignment: .leading, spacing: 6) {
+            if comparison.alignmentState != .aligned {
+              Label(
+                comparison.alignmentState == .missingActual
+                  ? "No matched Actual step yet" : "No matched Plan step",
+                systemImage: "questionmark.diamond"
+              )
+              .foregroundStyle(.secondary)
+            }
+            let changedLimbs = comparison.limbDivergences.filter {
+              $0.state == .different || $0.state == .uncertain
+            }
+            if changedLimbs.isEmpty && comparison.alignmentState == .aligned {
+              Label("Contact choices align", systemImage: "checkmark.circle")
+            } else if !changedLimbs.isEmpty {
+              Text(
+                "Contact difference: \(changedLimbs.map { $0.limb.label }.joined(separator: ", "))"
+              )
+            }
+            if let distance = comparison.torsoDivergence.distance {
+              Text("Torso path delta: \(distance, specifier: "%.2f") scene units")
+            }
+            if let delta = comparison.timingDivergence.deltaSeconds {
+              Text("Rhythm delta: \(delta, specifier: "%+.2f") seconds")
+            }
+            Text("Observed, inferred, and manual evidence remain separately labeled.")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+    }
+
+    private var movementSelectionKey: String {
+      guard let step = model.projection.currentMovementStep else {
+        return "\(model.projection.activeTrack.rawValue)/none"
+      }
+      return
+        "\(model.projection.activeTrack.rawValue)/\(step.fromKeyframeID.rawValue)/\(step.toKeyframeID.rawValue)"
+    }
+
+    private var availablePracticeStepCount: Int {
+      let start = model.projection.playback.cursor.transitionIndex
+      return max(1, min(3, model.projection.movementSteps.count - start))
+    }
+
+    private func loadMovementIntentDraft() {
+      guard let step = model.projection.currentMovementStep else {
+        movementPurpose = .progress
+        movementFamily = .staticMove
+        movementDurationSeconds = 1
+        movementCueDraft = ""
+        movementUncertaintyDraft = ""
+        practiceStepCount = 1
+        return
+      }
+      movementPurpose = step.intent?.purpose ?? inferredPurpose(for: step)
+      movementFamily = step.intent?.family ?? step.family
+      movementDurationSeconds = step.effectiveDurationSeconds
+      movementCueDraft = step.intent?.cue ?? ""
+      movementUncertaintyDraft = step.intent?.uncertainty ?? ""
+      practiceStepCount = min(practiceStepCount, availablePracticeStepCount)
+    }
+
+    private func inferredPurpose(for step: MovementStep) -> MovementPurpose {
+      guard
+        let destination = model.projection.keyframes.first(where: {
+          $0.id == step.toKeyframeID
+        })
+      else { return .investigate }
+      let reachesTop = destination.contacts.contains { contact in
+        guard let holdID = contact.target.holdID else { return false }
+        return model.projection.scene.hold(id: holdID)?.routeRole == .top
+      }
+      return reachesTop ? .finish : .progress
+    }
+
+    private func movementPurposeName(_ purpose: MovementPurpose) -> String {
+      switch purpose {
+      case .setup: "Set up contacts"
+      case .progress: "Gain height or reach"
+      case .reposition: "Reposition body"
+      case .stabilize: "Create stability"
+      case .commit: "Commit through crux"
+      case .finish: "Finish or top"
+      case .investigate: "Test an idea"
+      }
+    }
+
+    private func movementFamilyName(_ family: MovementFamily) -> String {
+      switch family {
+      case .staticMove: "Static / controlled"
+      case .coordinated: "Coordinated"
+      case .dynamic: "Dynamic · uncertain model"
+      case .observed: "Observed from Attempt"
       }
     }
 

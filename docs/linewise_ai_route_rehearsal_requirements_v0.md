@@ -238,6 +238,8 @@ A MovementStep includes:
 - qualitative explanation;
 - uncertainty and alternatives.
 
+A user or provider may attach a MovementIntent to one step. The intent records the purpose, movement family, expected rhythm, felt cue, and remaining uncertainty that should be tried. If either adjacent contact state or torso placement changes, that intent must remain visible but become `needs review` until explicitly revised or confirmed.
+
 ### 5.9 MovementHypothesis
 
 One complete candidate interpretation of how a person could climb the route.
@@ -464,6 +466,8 @@ The user can:
 - undo and redo;
 - regenerate only the current step;
 - regenerate downstream steps from the current edit.
+- describe the current step's purpose, movement family, rhythm, felt cue, and uncertainty;
+- pin and independently loop one to three continuous MovementSteps as the current StickFigureCue.
 
 An upstream edit marks affected downstream steps stale until they are accepted or recomputed.
 
