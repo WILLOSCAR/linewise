@@ -1856,6 +1856,7 @@ specifications += rehearsalEngineSpecifications()
 specifications += correctionSpecifications()
 specifications += datasetCompareSpecifications()
 specifications += qualitativeRouteAnalysisSpecifications()
+specifications += physiologyCoverageSpecifications()
 
 var failures: [String] = []
 

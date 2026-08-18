@@ -201,6 +201,9 @@ public actor DeviceEnvelopeBridge {
     private var workoutStartedAt: Date?
     private let summaryLock = NSLock()
     private var storedLatestSummary: HealthKitWorkoutSummary?
+    // Live heart-rate coverage is accumulated as the builder collects data.
+    // Guarded by summaryLock because delegate callbacks and stop() may race.
+    private var coverageAccumulator = HeartRateCoverageAccumulator()
 
     public init(healthStore: HKHealthStore = HKHealthStore()) {
       self.healthStore = healthStore
@@ -259,6 +262,7 @@ public actor DeviceEnvelopeBridge {
       workoutSession = session
       workoutBuilder = builder
       workoutStartedAt = date
+      summaryLock.withLock { coverageAccumulator = HeartRateCoverageAccumulator() }
       session.startActivity(with: date)
       try await builder.beginCollection(at: date)
     }
@@ -276,13 +280,16 @@ public actor DeviceEnvelopeBridge {
       let heartRateStatistics = heartRateType.flatMap { builder.statistics(for: $0) }
       let activeEnergyStatistics = activeEnergyType.flatMap { builder.statistics(for: $0) }
       let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
+      let coverage = summaryLock.withLock {
+        duration > 0 ? coverageAccumulator.coverage(overWorkoutDurationSeconds: duration) : nil
+      }
       let summary = HealthKitWorkoutSummary(
         durationSeconds: duration,
         averageHeartRateBPM: heartRateStatistics?.averageQuantity()?.doubleValue(
           for: heartRateUnit),
         maximumHeartRateBPM: heartRateStatistics?.maximumQuantity()?.doubleValue(
           for: heartRateUnit),
-        heartRateCoverage: nil,
+        heartRateCoverage: coverage,
         activeEnergyKilocalories: activeEnergyStatistics?.sumQuantity()?.doubleValue(
           for: .kilocalorie()
         ),
@@ -313,10 +320,36 @@ public actor DeviceEnvelopeBridge {
 
     public func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
 
+    // Live data collection. Real-device gate: this path only runs against a
+    // real HKLiveWorkoutBuilder on a signed Apple Watch, so its coverage
+    // contribution cannot be exercised by the Swift-package specs. The pure
+    // accumulation logic it delegates to (HeartRateCoverageAccumulator) is
+    // covered by physiologyCoverageSpecifications.
     public func workoutBuilder(
       _ workoutBuilder: HKLiveWorkoutBuilder,
       didCollectDataOf collectedTypes: Set<HKSampleType>
-    ) {}
+    ) {
+      guard
+        let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate),
+        collectedTypes.contains(heartRateType),
+        let statistics = workoutBuilder.statistics(for: heartRateType),
+        let start = workoutStartedAt
+      else { return }
+
+      let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
+      guard let averageBPM = statistics.averageQuantity()?.doubleValue(for: heartRateUnit) else {
+        return
+      }
+      let windowStart = statistics.startDate.timeIntervalSince(start)
+      let windowEnd = statistics.endDate.timeIntervalSince(start)
+      summaryLock.withLock {
+        coverageAccumulator.observeWindow(
+          startSeconds: max(0, windowStart),
+          endSeconds: max(0, windowEnd),
+          bpm: averageBPM
+        )
+      }
+    }
   }
 #endif
 
