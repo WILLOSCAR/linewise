@@ -405,7 +405,7 @@ extension DeviceEventEnvelope {
     }
   }
 
-  static func replayOrder(
+  public static func replayOrder(
     _ lhs: DeviceEventEnvelope,
     _ rhs: DeviceEventEnvelope
   ) -> Bool {

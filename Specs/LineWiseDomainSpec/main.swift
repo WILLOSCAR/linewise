@@ -1850,6 +1850,7 @@ var specifications: [(String, () throws -> Void)] = [
 
 specifications += restSpecifications()
 specifications += persistenceSyncSpecifications()
+specifications += incrementalReplaySpecifications()
 specifications += recallTrainingSpecifications()
 specifications += rehearsalEngineSpecifications()
 specifications += correctionSpecifications()

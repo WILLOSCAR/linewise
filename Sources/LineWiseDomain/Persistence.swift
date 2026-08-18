@@ -140,7 +140,7 @@ public final class VisitRepository {
   private var journal: VisitEventJournal
   private var inbox: DeviceEventInbox
   private var outbox: DeviceEventOutbox
-  private var state: VisitState
+  private var replayEngine: IncrementalVisitReplay
 
   public init(store: any VisitEventStore, localDeviceID: DeviceID) throws {
     guard !localDeviceID.rawValue.isEmpty else {
@@ -161,11 +161,11 @@ public final class VisitRepository {
     self.journal = journal
     self.inbox = inbox
     self.outbox = outbox
-    state = replay(inbox.events).state
+    replayEngine = IncrementalVisitReplay(events: inbox.events)
   }
 
   public var snapshot: VisitSnapshot {
-    state.snapshot
+    replayEngine.state.snapshot
   }
 
   public var deviceID: DeviceID {
@@ -191,7 +191,8 @@ public final class VisitRepository {
 
     var proposedInbox = inbox
     _ = try proposedInbox.receive(envelope)
-    let projected = replay(proposedInbox.events)
+    var proposedEngine = replayEngine
+    let outcome = proposedEngine.insert(envelope)
     let proposedJournal = VisitEventJournal(
       events: proposedInbox.events,
       acknowledgedOutboundEventIDs: journal.acknowledgedOutboundEventIDs
@@ -201,8 +202,8 @@ public final class VisitRepository {
     inbox = proposedInbox
     outbox = proposedOutbox
     journal = proposedJournal
-    state = projected.state
-    return projected.outcomesByEventID[envelope.eventID] ?? .accepted
+    replayEngine = proposedEngine
+    return outcome
   }
 
   @discardableResult
@@ -213,7 +214,8 @@ public final class VisitRepository {
       return .duplicate
     }
 
-    let projected = replay(proposedInbox.events)
+    var proposedEngine = replayEngine
+    let outcome = proposedEngine.insert(envelope)
     let proposedJournal = VisitEventJournal(
       events: proposedInbox.events,
       acknowledgedOutboundEventIDs: journal.acknowledgedOutboundEventIDs
@@ -222,8 +224,8 @@ public final class VisitRepository {
 
     inbox = proposedInbox
     journal = proposedJournal
-    state = projected.state
-    return .inserted(projected.outcomesByEventID[envelope.eventID] ?? .accepted)
+    replayEngine = proposedEngine
+    return .inserted(outcome)
   }
 
   @discardableResult
@@ -234,7 +236,11 @@ public final class VisitRepository {
       return receipt
     }
 
-    let projected = replay(proposedInbox.events)
+    var proposedEngine = replayEngine
+    let insertedIDs = Set(receipt.insertedEventIDs)
+    for envelope in proposedInbox.events where insertedIDs.contains(envelope.eventID) {
+      proposedEngine.insert(envelope)
+    }
     let proposedJournal = VisitEventJournal(
       events: proposedInbox.events,
       acknowledgedOutboundEventIDs: journal.acknowledgedOutboundEventIDs
@@ -243,7 +249,7 @@ public final class VisitRepository {
 
     inbox = proposedInbox
     journal = proposedJournal
-    state = projected.state
+    replayEngine = proposedEngine
     return receipt
   }
 
@@ -275,12 +281,11 @@ public final class VisitRepository {
       events: loaded.events,
       acknowledgedEventIDs: loaded.acknowledgedOutboundEventIDs
     )
-    let projected = replay(proposedInbox.events)
 
     journal = loaded
     inbox = proposedInbox
     outbox = proposedOutbox
-    state = projected.state
+    replayEngine = IncrementalVisitReplay(events: proposedInbox.events)
   }
 
   func exportJournal() -> VisitEventJournal {
@@ -292,26 +297,8 @@ public final class VisitRepository {
     journal = VisitEventJournal()
     inbox = DeviceEventInbox()
     outbox = DeviceEventOutbox(originDeviceID: localDeviceID)
-    state = VisitState()
+    replayEngine = IncrementalVisitReplay()
   }
-}
-
-private struct ReplayProjection {
-  let state: VisitState
-  let outcomesByEventID: [ActionID: CommandOutcome]
-}
-
-private func replay(_ events: [DeviceEventEnvelope]) -> ReplayProjection {
-  var state = VisitState()
-  var outcomesByEventID: [ActionID: CommandOutcome] = [:]
-
-  for envelope in events.sorted(by: DeviceEventEnvelope.replayOrder) {
-    let transition = VisitMemory.apply(envelope.command, to: state)
-    state = transition.state
-    outcomesByEventID[envelope.eventID] = transition.outcome
-  }
-
-  return ReplayProjection(state: state, outcomesByEventID: outcomesByEventID)
 }
 
 private func validate(_ journal: VisitEventJournal) throws {
