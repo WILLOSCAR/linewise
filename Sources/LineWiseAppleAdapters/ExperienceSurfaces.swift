@@ -671,6 +671,14 @@
             actualAttemptID: association.actualAttemptID
           )
         )
+        model.updateConfirmedHistory(
+          failureEpisodes: projection.recall.failureEpisodes.filter {
+            $0.status == .userConfirmed
+          },
+          moveCues: projection.recall.moveCues.filter {
+            $0.status == .userConfirmed
+          }
+        )
         rehearsalEditorModels[rehearsalID] = model
         return model
       } catch {

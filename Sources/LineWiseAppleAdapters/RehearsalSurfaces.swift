@@ -15,10 +15,23 @@
 
     private var coordinator: LineWiseRehearsalCoordinator
     private var lastPlaybackDate: Date?
+    private var confirmedFailureEpisodes: [FailureEpisodeSnapshot] = []
+    private var confirmedMoveCues: [MoveCueSnapshot] = []
 
     public init(coordinator: LineWiseRehearsalCoordinator) {
       self.coordinator = coordinator
       projection = coordinator.projection
+    }
+
+    /// Supplies the user-confirmed recall history that qualitative analysis may
+    /// pin as evidence. The coordinator further restricts it to this route, so
+    /// callers can pass the whole confirmed history without leaking other routes.
+    public func updateConfirmedHistory(
+      failureEpisodes: [FailureEpisodeSnapshot],
+      moveCues: [MoveCueSnapshot]
+    ) {
+      confirmedFailureEpisodes = failureEpisodes
+      confirmedMoveCues = moveCues
     }
 
     @discardableResult
@@ -243,24 +256,10 @@
     }
 
     func qualitativeAnalysisRequest() -> QualitativeRouteAnalysisRequest {
-      let rehearsal = coordinator.engine.rehearsal
-      let planVersion = coordinator.timelineVersion(for: .plan)
-      let actualVersion = coordinator.timelineVersion(for: .actual)
-      let comparison = RehearsalCompare.align(
-        rehearsal: rehearsal,
-        planTimelineVersion: planVersion,
-        actualTimelineVersion: actualVersion
-      )
-      return QualitativeRouteAnalysisRequest(
-        routeCardID: coordinator.routeCardID,
-        routeScene: rehearsal.scene,
-        routeSceneVersion: "scene:\(rehearsal.scene.id.rawValue):\(rehearsal.scene.holds.count)",
-        bodyProfile: rehearsal.bodyProfile,
-        bodyProfileVersion: "body:\(rehearsal.bodyProfile.id.rawValue)",
-        rehearsalComparison: comparison,
-        stickFigureCue: currentPracticeCue,
-        confirmedFailureEpisodes: [],
-        confirmedMoveCues: []
+      coordinator.qualitativeAnalysisRequest(
+        confirmedFailureEpisodes: confirmedFailureEpisodes,
+        confirmedMoveCues: confirmedMoveCues,
+        stickFigureCue: currentPracticeCue
       )
     }
 

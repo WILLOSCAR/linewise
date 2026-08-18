@@ -23,7 +23,79 @@ func rehearsalCoordinatorSpecifications() -> [(String, () throws -> Void)] {
       "movement focus annotates loops pins and compares one practice segment",
       movementFocusAnnotatesLoopsPinsAndComparesPracticeSegment
     ),
+    (
+      "qualitative analysis request pins only this route's confirmed history",
+      qualitativeAnalysisRequestPinsOnlyThisRoutesConfirmedHistory
+    ),
   ]
+}
+
+private func qualitativeAnalysisRequestPinsOnlyThisRoutesConfirmedHistory() throws {
+  let coordinator = try makeRehearsalCoordinator()
+  let thisRoute = coordinator.routeCardID
+  let otherRoute = RouteCardID("route-card-other")
+
+  let ownFailure = FailureEpisodeSnapshot(
+    id: FailureEpisodeID("failure-own"),
+    attemptID: AttemptID("attempt-own"),
+    routeCardID: thisRoute,
+    primaryBlocker: .reachOrLockoff,
+    locationNote: "Crux lockoff before the top.",
+    status: .userConfirmed,
+    suggestionProvenance: nil,
+    createdAt: Instant(millisecondsSince1970: 1_000),
+    updatedAt: Instant(millisecondsSince1970: 1_000)
+  )
+  let otherFailure = FailureEpisodeSnapshot(
+    id: FailureEpisodeID("failure-other"),
+    attemptID: AttemptID("attempt-other"),
+    routeCardID: otherRoute,
+    primaryBlocker: .footwork,
+    locationNote: "Different route entirely.",
+    status: .userConfirmed,
+    suggestionProvenance: nil,
+    createdAt: Instant(millisecondsSince1970: 1_100),
+    updatedAt: Instant(millisecondsSince1970: 1_100)
+  )
+  let ownCue = MoveCueSnapshot(
+    id: MoveCueID("cue-own"),
+    failureEpisodeID: ownFailure.id,
+    routeCardID: thisRoute,
+    text: "Keep the left toe pressed while the hips rise.",
+    status: .userConfirmed,
+    suggestionProvenance: nil,
+    createdAt: Instant(millisecondsSince1970: 1_200),
+    updatedAt: Instant(millisecondsSince1970: 1_200)
+  )
+  let otherCue = MoveCueSnapshot(
+    id: MoveCueID("cue-other"),
+    failureEpisodeID: otherFailure.id,
+    routeCardID: otherRoute,
+    text: "Match hands on the jug.",
+    status: .userConfirmed,
+    suggestionProvenance: nil,
+    createdAt: Instant(millisecondsSince1970: 1_300),
+    updatedAt: Instant(millisecondsSince1970: 1_300)
+  )
+
+  let request = coordinator.qualitativeAnalysisRequest(
+    confirmedFailureEpisodes: [otherFailure, ownFailure],
+    confirmedMoveCues: [otherCue, ownCue],
+    stickFigureCue: nil
+  )
+
+  try expect(
+    request.routeCardID == thisRoute,
+    "the request should target the coordinator's own RouteCard"
+  )
+  try expect(
+    request.confirmedFailureEpisodes.map(\.id) == [ownFailure.id],
+    "only this route's confirmed FailureEpisode should be pinned"
+  )
+  try expect(
+    request.confirmedMoveCues.map(\.id) == [ownCue.id],
+    "only this route's confirmed MoveCue should be pinned"
+  )
 }
 
 private func movementFocusAnnotatesLoopsPinsAndComparesPracticeSegment() throws {

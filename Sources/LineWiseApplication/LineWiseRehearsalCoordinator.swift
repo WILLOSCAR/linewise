@@ -325,6 +325,36 @@ public struct LineWiseRehearsalCoordinator: Sendable {
     )
   }
 
+  /// Builds a qualitative-analysis request for this rehearsal, pinning only the
+  /// confirmed recall history that belongs to this coordinator's own RouteCard.
+  ///
+  /// Filtering by `routeCardID` preserves the domain invariant that the
+  /// FailureEpisode -> MoveCue chain stays on a single route: evidence from a
+  /// different route can never be pinned into another route's analysis.
+  public func qualitativeAnalysisRequest(
+    confirmedFailureEpisodes: [FailureEpisodeSnapshot] = [],
+    confirmedMoveCues: [MoveCueSnapshot] = [],
+    stickFigureCue: StickFigureCue? = nil
+  ) -> QualitativeRouteAnalysisRequest {
+    let rehearsal = engine.rehearsal
+    let comparison = RehearsalCompare.align(
+      rehearsal: rehearsal,
+      planTimelineVersion: timelineVersion(for: .plan),
+      actualTimelineVersion: timelineVersion(for: .actual)
+    )
+    return QualitativeRouteAnalysisRequest(
+      routeCardID: routeCardID,
+      routeScene: rehearsal.scene,
+      routeSceneVersion: "scene:\(rehearsal.scene.id.rawValue):\(rehearsal.scene.holds.count)",
+      bodyProfile: rehearsal.bodyProfile,
+      bodyProfileVersion: "body:\(rehearsal.bodyProfile.id.rawValue)",
+      rehearsalComparison: comparison,
+      stickFigureCue: stickFigureCue,
+      confirmedFailureEpisodes: confirmedFailureEpisodes.filter { $0.routeCardID == routeCardID },
+      confirmedMoveCues: confirmedMoveCues.filter { $0.routeCardID == routeCardID }
+    )
+  }
+
   public func timelineVersion(for track: RehearsalTrack) -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
