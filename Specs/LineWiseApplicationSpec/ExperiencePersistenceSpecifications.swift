@@ -17,6 +17,10 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       experienceFileStoreRejectsCorruptAndFutureArchives
     ),
     (
+      "experience archive decodes an older writer that omits newer collections",
+      experienceArchiveDecodesForwardCompatibleArchive
+    ),
+    (
       "experience lifecycle exports and deletes all non visit data",
       experienceLifecycleExportsAndDeletesAllNonVisitData
     ),
@@ -497,6 +501,51 @@ private func experienceSaveFailureLeavesMemoryUnapplied() throws {
   }
 
   try expect(experience.projection == before, "expected failed save to preserve in-memory state")
+}
+
+private func experienceArchiveDecodesForwardCompatibleArchive() throws {
+  // An older app build wrote a schema-1 archive before newer optional
+  // collections (physiology contexts, rehearsal associations, reversible
+  // action IDs) existed. Decoding must fill those with empty defaults rather
+  // than hard-failing, so a user's recall/learning history survives an app
+  // update. The provenance and core state that DID exist must be preserved.
+  //
+  // Source of truth: encode a real archive, then delete the newer top-level
+  // keys from the JSON to reproduce what an older writer would have emitted.
+  let fullArchive = LineWiseExperienceArchive(
+    provenance: ExperienceArchiveProvenance(writerIdentifier: "linewise.local", writerVersion: "0")
+  )
+  let encoded = try LineWiseExperienceArchiveCodec.encode(fullArchive)
+  guard
+    var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+  else {
+    throw ApplicationSpecFailure.expected("expected a JSON object for the archive")
+  }
+  for newerKey in ["physiologyContexts", "rehearsalAssociations", "reversibleActionIDs"] {
+    object.removeValue(forKey: newerKey)
+  }
+  let olderWriterData = try JSONSerialization.data(withJSONObject: object)
+
+  let archive = try LineWiseExperienceArchiveCodec.decode(olderWriterData)
+
+  try expect(archive.schemaVersion == 1, "expected the archive to stay schema 1")
+  try expect(
+    archive.provenance.writerIdentifier == "linewise.local"
+      && archive.provenance.writerVersion == "0",
+    "the older writer's provenance must survive decoding"
+  )
+  try expect(
+    archive.physiologyContexts.isEmpty,
+    "a missing physiology collection should default to empty, not fail"
+  )
+  try expect(
+    archive.rehearsalAssociations.isEmpty,
+    "a missing rehearsal collection should default to empty, not fail"
+  )
+  try expect(
+    archive.reversibleActionIDs.isEmpty,
+    "missing reversible action IDs should default to empty, not fail"
+  )
 }
 
 private func experienceFileStoreRejectsCorruptAndFutureArchives() throws {

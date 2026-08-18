@@ -69,6 +69,61 @@ public struct LineWiseExperienceArchive: Equatable, Codable, Sendable {
     self.physiologyContexts = physiologyContexts
     self.rehearsalAssociations = rehearsalAssociations
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case provenance
+    case recallTrainingState
+    case learningLoopState
+    case microDrillCatalog
+    case restState
+    case selectedRouteCardID
+    case reversibleActionIDs
+    case physiologyContexts
+    case rehearsalAssociations
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    // schemaVersion is validated by the codec; the model always reports current.
+    schemaVersion = Self.currentSchemaVersion
+    provenance = try container.decode(ExperienceArchiveProvenance.self, forKey: .provenance)
+    recallTrainingState =
+      try container.decodeIfPresent(RecallTrainingState.self, forKey: .recallTrainingState)
+      ?? RecallTrainingState()
+    learningLoopState =
+      try container.decodeIfPresent(LearningLoopState.self, forKey: .learningLoopState)
+      ?? LearningLoopState()
+    microDrillCatalog =
+      try container.decodeIfPresent(ApprovedMicroDrillCatalog.self, forKey: .microDrillCatalog)
+      ?? ApprovedMicroDrillCatalog(drills: [])
+    restState =
+      try container.decodeIfPresent(RestState.self, forKey: .restState) ?? RestState()
+    selectedRouteCardID =
+      try container.decodeIfPresent(RouteCardID.self, forKey: .selectedRouteCardID)
+    reversibleActionIDs =
+      try container.decodeIfPresent([ActionID].self, forKey: .reversibleActionIDs) ?? []
+    physiologyContexts =
+      try container.decodeIfPresent(
+        [PhysiologyContextSnapshot].self, forKey: .physiologyContexts) ?? []
+    rehearsalAssociations =
+      try container.decodeIfPresent(
+        [RouteRehearsalAssociationSnapshot].self, forKey: .rehearsalAssociations) ?? []
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(provenance, forKey: .provenance)
+    try container.encode(recallTrainingState, forKey: .recallTrainingState)
+    try container.encode(learningLoopState, forKey: .learningLoopState)
+    try container.encode(microDrillCatalog, forKey: .microDrillCatalog)
+    try container.encode(restState, forKey: .restState)
+    try container.encodeIfPresent(selectedRouteCardID, forKey: .selectedRouteCardID)
+    try container.encode(reversibleActionIDs, forKey: .reversibleActionIDs)
+    try container.encode(physiologyContexts, forKey: .physiologyContexts)
+    try container.encode(rehearsalAssociations, forKey: .rehearsalAssociations)
+  }
 }
 
 public enum LineWiseExperienceArchiveCodec {
