@@ -1,8 +1,8 @@
 # LineWise Implementation And Validation Plan
 
-Date: 2026-08-11
+Date: 2026-09-03
 
-Status: End-to-end implementation foundation present; command-line behavior verification is active; real-device and real-gym evidence remains open.
+Status: End-to-end implementation foundation present; command-line behavior verification is active at 181 specifications; the platform-gated Apple code is unbuilt on the current toolchain, and real-device and real-gym evidence remains open.
 
 Product: LineWise / 线感
 
@@ -85,6 +85,8 @@ flowchart TB
 
 - In-memory and Foundation file stores behind shared contracts.
 - Schema v1 plus v0 migration fixtures, deterministic replay, and atomic replacement.
+- Checkpointed incremental replay that compacts fold work without truncating the event log, so an event arriving out of order still reprojects from an earlier checkpoint.
+- Forward-compatible experience-archive decoding for archives written by an older same-schema writer.
 - Stable device envelopes, inbox/outbox, completion-confirmed acknowledgement, retry, duplicate suppression, and origin-sequence conflict handling.
 - Role-scoped durable WatchConnectivity payload inboxes that are consumed only after repository persistence succeeds.
 - Export, scoped delete, and redacted diagnostics.
@@ -98,6 +100,7 @@ flowchart TB
 - Cue complete/defer/dismiss/reopen lifecycle.
 - Approved MicroDrill catalog, TrainingPath, and ProofCheck.
 - Subjective fatigue/pump plus optional HealthKit workout summary with provenance and non-diagnostic copy.
+- Heart-rate coverage accumulated from collected samples into a `0...1` fraction, unioning overlapping windows and clamping to the workout duration.
 
 ### D. Route rehearsal
 
@@ -115,6 +118,7 @@ flowchart TB
 - Source/derived media lineage, purpose, consent, hash, quality, retention, annotations, corrections, tombstones, and manifest export.
 - Path-contained local byte loading and explicit model-processing consent.
 - Deterministic-local and HTTP route-analysis providers.
+- Qualitative analysis requests pin only the confirmed FailureEpisode and MoveCue history belonging to the analyzed RouteCard, keeping the failure-to-cue chain on one route.
 - Explicit media-consent then model-run flow, with suggested RouteRead attachment and durable route-read provenance.
 - Attempt-linked Actual drafts copied from Plan as `userAuthored + manual`, never mislabeled as observed evidence.
 - Typed cancellation, timeout, HTTP, response, consent, and integrity failures.
@@ -161,11 +165,15 @@ git diff --check
 
 The executable specification targets are used because the currently selected Command Line Tools installation does not expose the full Xcode test runtime. They exercise only public module interfaces and exit nonzero on a violated expectation.
 
-Current baseline: 78 Domain + 37 Application + 42 Apple adapter + 15 AI adapter behaviors = 172 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+Current baseline: 85 Domain + 39 Application + 42 Apple adapter + 15 AI adapter behaviors = 181 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+
+These commands do not cover the platform-gated Apple code. On macOS, `swift build` skips everything behind `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)` — roughly 1,400 lines spanning the SwiftUI surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points. A green package build is not evidence that those files compile.
 
 ## 6. Apple Validation Procedure
 
 The repository includes an iPhone target and a single-target watchOS companion in `LineWise.xcodeproj`. A platform validation pass must use a full Xcode installation and signed devices.
+
+The current toolchain cannot start this pass. `xcodebuild` reports that the active developer directory is a Command Line Tools instance, and neither the `watchos` nor the `iphoneos` SDK can be located. Installing full Xcode is therefore the first step, and it unblocks compilation before it unblocks device testing.
 
 Required scenarios:
 
@@ -200,7 +208,7 @@ For route intelligence, compare manual, deterministic-local, and remote-suggesti
 
 The main open work is external validation:
 
-- run the Apple targets with full Xcode, signing, and a paired Watch/iPhone;
+- install full Xcode so the platform-gated Apple sources compile at all, then run the Apple targets with signing and a paired Watch/iPhone;
 - exercise a configured remote model endpoint with consented representative media;
 - complete the real-gym P0 gate and record its denominators;
 - test route analysis and stick-figure rehearsal with representative climbers;

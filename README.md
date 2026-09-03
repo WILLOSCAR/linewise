@@ -17,7 +17,9 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 ### Persistence and cross-device behavior
 
 - Local-first Watch and iPhone capture with stable action IDs and deterministic replay.
+- Replay work is compacted by a checkpointed incremental fold rather than by truncating the log, so a late event that sorts before a checkpoint still reopens review.
 - Versioned JSON stores, migration, atomic file replacement, inbox/outbox, retry, and duplicate suppression.
+- The experience archive decodes archives written by an older same-schema writer that omits newer collections, instead of rejecting them.
 - A Watch event is acknowledged only after the reliable WatchConnectivity transfer completion callback; received payloads stay in a durable inbox until repository persistence succeeds.
 - Ending a visit on Watch creates stable unresolved/unassigned Review Inbox work on iPhone and safely retries that reconciliation after restart or write failure.
 - Full export and deletion APIs; redacted diagnostics omit route labels, health values, timestamps, and device IDs.
@@ -27,8 +29,8 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 
 - Subjective fatigue and pump are the primary user inputs.
 - Health recording is an explicit user choice: starting a manual visit does not request HealthKit authorization, and denial or workout failure never blocks capture.
-- HealthKit workout summaries are optional supporting context.
-- Physiology output is explicitly non-diagnostic; raw sensor streams are not treated as proof of muscle state.
+- HealthKit workout summaries are optional supporting context, including a heart-rate coverage fraction accumulated from the samples actually collected during the workout.
+- Physiology output is explicitly non-diagnostic; raw sensor streams are not treated as proof of muscle state. Low coverage means an incomplete sensor stream, never a health judgment.
 
 ### Route rehearsal and learning
 
@@ -39,7 +41,7 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 - One-to-three-step practice segments that can be pinned as a StickFigureCue, looped independently, and supplied to qualitative analysis.
 - Deterministic Plan/Actual comparison across limb contacts, torso movement, and timing.
 - Failure episode → move cue → next-session cue, plus approved micro-drills, training paths, and proof checks.
-- Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance.
+- Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance, and pin only the confirmed recall history belonging to the analyzed RouteCard.
 
 ### Media and replaceable AI adapters
 
@@ -86,7 +88,7 @@ swift run linewise-demo
 
 Run the same checks with `-c release` before shipping a branch.
 
-The current executable-spec baseline is 172 passing behaviors in both Debug and Release: Domain 78, Application 37, Apple adapters 42, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+The current executable-spec baseline is 181 passing behaviors in both Debug and Release: Domain 85, Application 39, Apple adapters 42, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
 
 For the Apple apps, open `LineWise.xcodeproj` in a full Xcode installation, choose the shared `LineWise` or `LineWise-Watch` scheme, configure signing, and run on a paired iPhone/Apple Watch. HealthKit and WatchConnectivity behavior must be verified on real signed devices; Swift Package tests alone do not establish that evidence.
 
@@ -100,6 +102,8 @@ Implemented code is not the same as validated product value. The repository prov
 - remote model quality on representative route photos and videos;
 - fatigue or hand-muscle usefulness beyond subjective, non-diagnostic context;
 - completion time, tap burden, review completion, cue reuse, and retention in real gym visits.
+
+A passing `swift build` on macOS does not cover the Apple integration code. Roughly 1,400 lines sit behind `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)` gates — the SwiftUI capture and rehearsal surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points. Compiling them requires a full Xcode installation with the iOS and watchOS SDKs; a Command Line Tools installation cannot even syntax-check them. Where a spec covers such a path, it covers the platform-independent logic the gated code delegates to, not the gated code itself.
 
 Field evidence recording is disabled by default and requires explicit session consent. It stores controlled event categories and aggregate numerators/denominators, not route labels, health payloads, media, free text, or stable user identity.
 
