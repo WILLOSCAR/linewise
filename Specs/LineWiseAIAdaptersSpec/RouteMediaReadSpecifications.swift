@@ -571,22 +571,39 @@ private func mediaExpectBody(_ request: URLRequest?) throws -> Data {
   return body
 }
 
-func runRouteMediaReadSpecifications() async throws -> Int {
-  try await routeMediaSuccessCarriesVerifiedBytesAndLineage()
-  print("PASS: route media read carries verified bytes and source/derived lineage")
-  try await routeMediaRequiresCurrentExplicitModelConsent()
-  print("PASS: route media read requires current explicit model consent")
-  try await routeMediaRequiresRouteReferenceImages()
-  print("PASS: route media read accepts only route-reference images")
-  try await routeMediaRejectsSizeAndDigestMismatches()
-  print("PASS: route media read verifies byte count and SHA-256")
-  try await routeMediaEnforcesTotalByteLimitBeforeLoading()
-  print("PASS: route media read enforces total byte limit before loading")
-  try await routeMediaCancellationPropagatesWithoutTransport()
-  print("PASS: route media read cancellation propagates before transport")
-  try await routeMediaRequestCannotSilentlyDropMedia()
-  print("PASS: route media read requires at least one media asset")
-  try await routeMediaReusesHTTPTimeoutAndStatusErrors()
-  print("PASS: route media read reuses timeout and HTTP status errors")
-  return 8
+func routeMediaReadSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "route media read carries verified bytes and source/derived lineage",
+      routeMediaSuccessCarriesVerifiedBytesAndLineage
+    ),
+    (
+      "route media read requires current explicit model consent",
+      routeMediaRequiresCurrentExplicitModelConsent
+    ),
+    (
+      "route media read accepts only route-reference images",
+      routeMediaRequiresRouteReferenceImages
+    ),
+    (
+      "route media read verifies byte count and SHA-256",
+      routeMediaRejectsSizeAndDigestMismatches
+    ),
+    (
+      "route media read enforces total byte limit before loading",
+      routeMediaEnforcesTotalByteLimitBeforeLoading
+    ),
+    (
+      "route media read cancellation propagates before transport",
+      routeMediaCancellationPropagatesWithoutTransport
+    ),
+    (
+      "route media read requires at least one media asset",
+      routeMediaRequestCannotSilentlyDropMedia
+    ),
+    (
+      "route media read reuses timeout and HTTP status errors",
+      routeMediaReusesHTTPTimeoutAndStatusErrors
+    ),
+  ]
 }

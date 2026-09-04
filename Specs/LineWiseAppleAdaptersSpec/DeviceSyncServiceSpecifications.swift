@@ -2,14 +2,33 @@ import Foundation
 import LineWiseAppleAdapters
 import LineWiseDomain
 
-func runDeviceSyncServiceSpecifications() async throws -> Int {
-  try await completionRegistryHandlesCallbackOrderingAndConcurrency()
-  try await callbackConfirmedTransfersCompleteIndependently()
-  try await acceptedTransfersBecomeAcknowledgementCandidates()
-  try await latestContextCannotAcknowledgeDurableEvents()
-  try await rejectedAndFailedTransfersRemainPending()
-  try durableInboxSurvivesReopenUntilExplicitAcknowledgement()
-  return 6
+func deviceSyncServiceSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "completion registry settles callbacks in order and concurrently",
+      completionRegistryHandlesCallbackOrderingAndConcurrency
+    ),
+    (
+      "callback-confirmed transfers complete independently",
+      callbackConfirmedTransfersCompleteIndependently
+    ),
+    (
+      "callback-confirmed transfers become acknowledgement candidates",
+      acceptedTransfersBecomeAcknowledgementCandidates
+    ),
+    (
+      "latest context cannot acknowledge durable events",
+      latestContextCannotAcknowledgeDurableEvents
+    ),
+    (
+      "rejected and failed transfers remain pending",
+      rejectedAndFailedTransfersRemainPending
+    ),
+    (
+      "durable inbox survives reopen until explicit acknowledgement",
+      { try durableInboxSurvivesReopenUntilExplicitAcknowledgement() }
+    ),
+  ]
 }
 
 private func completionRegistryHandlesCallbackOrderingAndConcurrency() async throws {

@@ -3,16 +3,38 @@ import LineWiseAppleAdapters
 import LineWiseApplication
 import LineWiseDomain
 
-func runAppleRuntimeSpecifications() async throws -> Int {
-  try await manualVisitStartDoesNotRequestHealthAuthorization()
-  try await explicitHealthOptInRequestsAuthorizationAndStartsFutureVisit()
-  try await workoutDenialDoesNotRollbackTheLocalVisit()
-  try await workoutFailureDoesNotRollbackTheLocalVisit()
-  try await acceptedTransfersAreAcknowledgedButRejectedTransfersRemainPending()
-  try await pullingTheSamePayloadIsIdempotent()
-  try await completedWorkoutExposesAnOptionalSummary()
-  try await experienceBackedRuntimeReopensActiveRest()
-  return 8
+func appleRuntimeSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "manual Visit start does not request Health authorization",
+      manualVisitStartDoesNotRequestHealthAuthorization
+    ),
+    (
+      "explicit Health opt-in requests access and enables later recording",
+      explicitHealthOptInRequestsAuthorizationAndStartsFutureVisit
+    ),
+    (
+      "workout denial does not roll back the local Visit",
+      workoutDenialDoesNotRollbackTheLocalVisit
+    ),
+    (
+      "workout failure does not roll back the local Visit",
+      workoutFailureDoesNotRollbackTheLocalVisit
+    ),
+    (
+      "runtime acknowledges only transport-accepted events",
+      acceptedTransfersAreAcknowledgedButRejectedTransfersRemainPending
+    ),
+    ("runtime pull remains idempotent", pullingTheSamePayloadIsIdempotent),
+    (
+      "completed workout exposes optional summary context",
+      completedWorkoutExposesAnOptionalSummary
+    ),
+    (
+      "experience-backed Watch runtime reopens active Rest",
+      experienceBackedRuntimeReopensActiveRest
+    ),
+  ]
 }
 
 @MainActor

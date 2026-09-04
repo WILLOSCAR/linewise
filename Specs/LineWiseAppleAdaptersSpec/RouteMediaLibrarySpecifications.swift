@@ -733,18 +733,55 @@ private func routeMediaSurfaceAsset() -> RouteMediaAsset {
   )
 }
 
-func runRouteMediaLibrarySpecifications() async throws -> Int {
-  try await importedMediaReopensAndLoadsOnlyRegisteredBytes()
-  try await sourceAndDerivedMediaRemainSeparateWithLineage()
-  try await deletionRemovesBytesAndPersistsATombstone()
-  try await modelConsentIsSeparateAndRevocationDeletesLocalBytes()
-  try await expiredRetentionDeletesBytesAndRecordsWhy()
-  try await exportedManifestContainsMetadataWithoutRawBytesOrAbsolutePaths()
-  try await corruptAndFutureManifestsFailExplicitly()
-  try await loaderRejectsTraversalAndSymlinkEscapes()
-  try await failedManifestWriteLeavesNoRegisteredAssetOrStagedBytes()
-  try await importCannotBundleModelConsentOrUseRevokedStorageConsent()
-  try await routeReadActionRequiresConsentThenDeliversSuggestedCallback()
-  try await routeReadActionSurfacesProviderFailureWithoutCallback()
-  return 12
+func routeMediaLibrarySpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "imported media reopens and loads only registered bytes",
+      importedMediaReopensAndLoadsOnlyRegisteredBytes
+    ),
+    (
+      "source and derived media remain separate with lineage",
+      sourceAndDerivedMediaRemainSeparateWithLineage
+    ),
+    (
+      "deletion removes bytes and persists a tombstone",
+      deletionRemovesBytesAndPersistsATombstone
+    ),
+    (
+      "model consent is separate and revocation deletes local bytes",
+      modelConsentIsSeparateAndRevocationDeletesLocalBytes
+    ),
+    (
+      "expired retention deletes bytes and records why",
+      expiredRetentionDeletesBytesAndRecordsWhy
+    ),
+    (
+      "exported manifest carries metadata without raw bytes or absolute paths",
+      exportedManifestContainsMetadataWithoutRawBytesOrAbsolutePaths
+    ),
+    (
+      "corrupt and future manifests fail explicitly",
+      corruptAndFutureManifestsFailExplicitly
+    ),
+    (
+      "loader rejects traversal and symlink escapes",
+      loaderRejectsTraversalAndSymlinkEscapes
+    ),
+    (
+      "failed manifest write leaves no registered asset or staged bytes",
+      failedManifestWriteLeavesNoRegisteredAssetOrStagedBytes
+    ),
+    (
+      "import cannot bundle model consent or use revoked storage consent",
+      importCannotBundleModelConsentOrUseRevokedStorageConsent
+    ),
+    (
+      "route read action requires consent then delivers a suggested callback",
+      routeReadActionRequiresConsentThenDeliversSuggestedCallback
+    ),
+    (
+      "route read action surfaces provider failure without a callback",
+      routeReadActionSurfacesProviderFailureWithoutCallback
+    ),
+  ]
 }

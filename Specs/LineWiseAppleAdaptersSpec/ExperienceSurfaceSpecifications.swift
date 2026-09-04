@@ -4,12 +4,25 @@ import LineWiseApplication
 import LineWiseDomain
 
 @MainActor
-func runExperienceSurfaceSpecifications() async throws -> Int {
-  try manualReviewRemainsExplicitAndReopensTheNextSessionCue()
-  try await lifecyclePhysiologyAndManualRehearsalRemainAvailableWithoutAI()
-  try reviewBranchesAndPersistenceFailuresStayHonest()
-  try syncedEndedVisitRestoresReviewInboxAndCanBeginReview()
-  return 4
+func experienceSurfaceSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "iPhone review remains explicit and reopens the next-session cue",
+      { try manualReviewRemainsExplicitAndReopensTheNextSessionCue() }
+    ),
+    (
+      "physiology and manual rehearsal remain available without AI",
+      lifecyclePhysiologyAndManualRehearsalRemainAvailableWithoutAI
+    ),
+    (
+      "review branches and persistence failures remain visible",
+      { try reviewBranchesAndPersistenceFailuresStayHonest() }
+    ),
+    (
+      "synced ended Visit restores the Review Inbox and can begin review",
+      { try syncedEndedVisitRestoresReviewInboxAndCanBeginReview() }
+    ),
+  ]
 }
 
 @MainActor

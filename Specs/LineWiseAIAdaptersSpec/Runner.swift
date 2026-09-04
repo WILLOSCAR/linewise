@@ -321,16 +321,28 @@ private func timeoutAndCancellationRemainDistinguishable() async throws {
 @main
 struct LineWiseAIAdaptersSpecRunner {
   static func main() async throws {
-    try await routeReadSuccessUsesJSONAndForcesModelProvenance()
-    print("PASS: route read uses JSON and forces honest model provenance")
-    try await suggestionForcesEveryFrameAndTopLevelProvenance()
-    print("PASS: rehearsal suggestion cannot claim user authorship")
-    try await statusAndMalformedResponsesAreExplicit()
-    print("PASS: HTTP status and malformed JSON failures are explicit")
-    try await timeoutAndCancellationRemainDistinguishable()
-    print("PASS: timeout is explicit and cancellation propagates")
-    let mediaCount = try await runRouteMediaReadSpecifications()
-    let qualitativeCount = try await runQualitativeRouteAnalysisAdapterSpecifications()
-    print("LineWiseAIAdaptersSpec: \(4 + mediaCount + qualitativeCount) passed")
+    var specifications: [(String, () async throws -> Void)] = [
+      (
+        "route read uses JSON and forces honest model provenance",
+        routeReadSuccessUsesJSONAndForcesModelProvenance
+      ),
+      (
+        "rehearsal suggestion cannot claim user authorship",
+        suggestionForcesEveryFrameAndTopLevelProvenance
+      ),
+      (
+        "HTTP status and malformed JSON failures are explicit",
+        statusAndMalformedResponsesAreExplicit
+      ),
+      (
+        "timeout is explicit and cancellation propagates",
+        timeoutAndCancellationRemainDistinguishable
+      ),
+    ]
+    specifications += routeMediaReadSpecifications()
+    specifications += qualitativeRouteAnalysisAdapterSpecifications()
+
+    let passed = try await runSpecifications(specifications)
+    print("LineWiseAIAdaptersSpec: \(passed) passed")
   }
 }

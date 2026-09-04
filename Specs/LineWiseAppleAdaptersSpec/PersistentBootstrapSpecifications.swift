@@ -3,11 +3,18 @@ import LineWiseAppleAdapters
 import LineWiseApplication
 import LineWiseDomain
 
-func runPersistentBootstrapSpecifications() throws -> Int {
-  try bootstrapReopensDurableState()
-  try bootstrapRejectsInvalidDeviceIdentity()
-  try bootstrapCreatesAStableRoleScopedDeviceIdentity()
-  return 3
+func persistentBootstrapSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    ("app bootstrap reopens durable state", { try bootstrapReopensDurableState() }),
+    (
+      "app bootstrap rejects an invalid device identity",
+      { try bootstrapRejectsInvalidDeviceIdentity() }
+    ),
+    (
+      "app bootstrap keeps a stable role-scoped device identity",
+      { try bootstrapCreatesAStableRoleScopedDeviceIdentity() }
+    ),
+  ]
 }
 
 private func bootstrapCreatesAStableRoleScopedDeviceIdentity() throws {

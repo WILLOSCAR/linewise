@@ -280,9 +280,21 @@ private func qualitativeAdapterExpectBody(_ request: URLRequest?) throws -> Data
   return body
 }
 
-public func runQualitativeRouteAnalysisAdapterSpecifications() async throws -> Int {
-  try await responseCannotForgeAuthorshipAndRequestKeepsPins()
-  try await outputContractRejectsConfidenceAndEvidenceForgery()
-  try await inputContractRunsBeforeTransportAndCancellationPropagates()
-  return 3
+public func qualitativeRouteAnalysisAdapterSpecifications()
+  -> [(String, () async throws -> Void)]
+{
+  [
+    (
+      "qualitative response cannot forge authorship and the request keeps its pins",
+      responseCannotForgeAuthorshipAndRequestKeepsPins
+    ),
+    (
+      "output contract rejects confidence and evidence forgery",
+      outputContractRejectsConfidenceAndEvidenceForgery
+    ),
+    (
+      "input contract runs before transport and cancellation propagates",
+      inputContractRunsBeforeTransportAndCancellationPropagates
+    ),
+  ]
 }

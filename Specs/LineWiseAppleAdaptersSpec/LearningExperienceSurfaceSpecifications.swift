@@ -4,12 +4,25 @@ import LineWiseApplication
 import LineWiseDomain
 
 @MainActor
-func runLearningExperienceSurfaceSpecifications() async throws -> Int {
-  try await qualitativeReadingAndTrainingPathCompleteThroughPublicSurface()
-  try await persistenceFailureKeepsThePendingReadingVisible()
-  try suggestedRouteReadAndAttemptLinkedActualUsePublicSurface()
-  try await movementFocusPinsAndReopensThroughPublicSurface()
-  return 4
+func learningExperienceSurfaceSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "qualitative reading and TrainingPath complete through the public surface",
+      qualitativeReadingAndTrainingPathCompleteThroughPublicSurface
+    ),
+    (
+      "persistence failure keeps the pending reading visible",
+      persistenceFailureKeepsThePendingReadingVisible
+    ),
+    (
+      "suggested RouteRead and Attempt-linked Actual use the public surface",
+      { try suggestedRouteReadAndAttemptLinkedActualUsePublicSurface() }
+    ),
+    (
+      "movement focus pins and reopens through the public surface",
+      movementFocusPinsAndReopensThroughPublicSurface
+    ),
+  ]
 }
 
 @MainActor

@@ -3,10 +3,17 @@ import LineWiseAppleAdapters
 import LineWiseApplication
 import LineWiseDomain
 
-func runDurableDeviceTransportSpecifications() async throws -> Int {
-  try await durableOutboxWaitsForCompletionCallbackAndRetriesTheSameAction()
-  try await inboundTransportPayloadWaitsForRepositoryPersistence()
-  return 2
+func durableDeviceTransportSpecifications() -> [(String, () async throws -> Void)] {
+  [
+    (
+      "Outbox acknowledgement waits for the reliable completion callback",
+      durableOutboxWaitsForCompletionCallbackAndRetriesTheSameAction
+    ),
+    (
+      "inbound transport bytes wait for repository persistence",
+      inboundTransportPayloadWaitsForRepositoryPersistence
+    ),
+  ]
 }
 
 @MainActor
