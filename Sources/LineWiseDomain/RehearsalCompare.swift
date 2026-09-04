@@ -480,11 +480,35 @@ public enum RehearsalCompare {
     from cue: StickFigureCue,
     routeCardID: RouteCardID
   ) -> SuggestedLearningArtifacts {
+    // Focus on what actually differs between the two tracks, read from the
+    // compared values themselves rather than from `DivergenceState`.
+    //
+    // `state` collapses several non-divergences into "not `.same`": it reports
+    // `.uncertain` whenever either side's evidence is a suggestion, and
+    // `.missingPlan` / `.missingActual` when there was nothing to compare at
+    // all. Selecting on those would name a limb, torso path, or rhythm that
+    // never changed — and because limbs are scanned in a fixed order it would
+    // always name the same one. Comparing values keeps a real divergence
+    // visible even when its evidence is only suggested.
     let contact = cue.alignedSteps
       .flatMap(\.limbDivergences)
-      .first { $0.state != .same }
-    let torso = cue.alignedSteps.first { $0.torsoDivergence.state != .same }
-    let timing = cue.alignedSteps.first { $0.timingDivergence.state != .same }
+      .first { divergence in
+        guard let plan = divergence.planTarget, let actual = divergence.actualTarget
+        else { return false }
+        return plan != actual
+      }
+    let torso = cue.alignedSteps.first { step in
+      guard let plan = step.torsoDivergence.planPosition,
+        let actual = step.torsoDivergence.actualPosition
+      else { return false }
+      return plan != actual
+    }
+    let timing = cue.alignedSteps.first { step in
+      guard let plan = step.timingDivergence.planDurationSeconds,
+        let actual = step.timingDivergence.actualDurationSeconds
+      else { return false }
+      return plan != actual
+    }
 
     let focus: String
     if let contact {

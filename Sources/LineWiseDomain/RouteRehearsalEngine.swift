@@ -359,6 +359,8 @@ public enum RouteRehearsalError: Error, Equatable, Sendable {
   case unsolvedKeyframe(PoseKeyframeID)
   case movementStepNotFound(from: PoseKeyframeID, to: PoseKeyframeID)
   case practiceSegmentStepCountOutOfRange
+  case invalidPlaybackProgress
+  case inconsistentTimeline(RehearsalTrack)
 }
 
 public struct RouteRehearsalEngine: Sendable {
@@ -407,6 +409,9 @@ public struct RouteRehearsalEngine: Sendable {
   ) throws {
     guard !rehearsal.plan.keyframes.isEmpty else { throw RouteRehearsalError.emptyPlan }
     try Self.validateUniqueIDs(rehearsal.plan.keyframes + rehearsal.actual.keyframes)
+    for track in RehearsalTrack.allCases {
+      try Self.validateStepCoverage(rehearsal.timeline(for: track), track: track)
+    }
     self.rehearsal = rehearsal
     self.solver = solver
     playback = .paused(
@@ -593,6 +598,9 @@ public struct RouteRehearsalEngine: Sendable {
     transitionIndex: Int,
     progress: Double
   ) throws {
+    guard !progress.isNaN else {
+      throw RouteRehearsalError.invalidPlaybackProgress
+    }
     let track = playback.cursor.track
     let steps = rehearsal.timeline(for: track).steps
     guard steps.indices.contains(transitionIndex) else {
@@ -661,6 +669,9 @@ public struct RouteRehearsalEngine: Sendable {
   }
 
   public mutating func advancePlayback(by elapsedSeconds: Double) throws {
+    guard !elapsedSeconds.isNaN else {
+      throw RouteRehearsalError.invalidPlaybackProgress
+    }
     let elapsedSeconds = max(elapsedSeconds, 0)
     switch playback {
     case .paused:
@@ -930,6 +941,34 @@ public struct RouteRehearsalEngine: Sendable {
     var seen = Set<PoseKeyframeID>()
     for frame in frames where !seen.insert(frame.id).inserted {
       throw RouteRehearsalError.duplicateKeyframeID(frame.id)
+    }
+  }
+
+  /// Rejects a persisted timeline whose keyframe and step arrays disagree.
+  ///
+  /// `RehearsalTimeline` stores the two arrays independently, so a truncated or
+  /// partially-written archive can decode with more steps than adjacent keyframe
+  /// pairs. Playback indexes the keyframe array from a step index, so accepting
+  /// such a timeline turns corruption into an uncatchable out-of-range trap the
+  /// moment the user scrubs. Failing here keeps it a recoverable error.
+  private static func validateStepCoverage(
+    _ timeline: RehearsalTimeline,
+    track: RehearsalTrack
+  ) throws {
+    let expectedStepCount = max(timeline.keyframes.count - 1, 0)
+    guard timeline.steps.count == expectedStepCount else {
+      throw RouteRehearsalError.inconsistentTimeline(track)
+    }
+    let frameIDs = Set(timeline.keyframes.map(\.id))
+    for (index, step) in timeline.steps.enumerated() {
+      guard
+        frameIDs.contains(step.fromKeyframeID),
+        frameIDs.contains(step.toKeyframeID),
+        timeline.keyframes[index].id == step.fromKeyframeID,
+        timeline.keyframes[index + 1].id == step.toKeyframeID
+      else {
+        throw RouteRehearsalError.inconsistentTimeline(track)
+      }
     }
   }
 
@@ -1204,50 +1243,107 @@ public struct RouteRehearsalEngine: Sendable {
           }
         )
       } ?? [:]
-    return zip(frames, frames.dropFirst()).map { from, to in
-      let changes = Limb.allCases.compactMap { limb -> ContactChange? in
-        let oldTarget = from.contact(for: limb)?.target ?? .unknown
-        let newTarget = to.contact(for: limb)?.target ?? .unknown
-        guard oldTarget != newTarget else { return nil }
-        return ContactChange(limb: limb, from: oldTarget, to: newTarget)
-      }
-      let retained = Limb.allCases.filter { limb in
-        let oldTarget = from.contact(for: limb)?.target ?? .unknown
-        return oldTarget == (to.contact(for: limb)?.target ?? .unknown)
-          && oldTarget.isSupportContact
-      }
-      let gained = changes.filter(\.to.isSupportContact).map(\.limb)
-      let released = changes.filter(\.from.isSupportContact).map(\.limb)
-      let family: MovementFamily = changes.count > 1 ? .coordinated : .staticMove
-      let explanation =
-        changes.isEmpty
-        ? "No contact changes."
-        : changes.map { "\($0.limb.label): \($0.from.shortLabel) → \($0.to.shortLabel)" }
-          .joined(separator: "; ")
-      let generated = MovementStep(
-        fromKeyframeID: from.id,
-        toKeyframeID: to.id,
-        changes: changes,
-        retainedLimbs: retained,
-        gainedLimbs: gained,
-        releasedLimbs: released,
-        expectedDurationSeconds: 1,
-        family: family,
-        explanation: explanation,
-        provenance: to.provenance
-      )
-      let key = MovementStepKey(from: from.id, to: to.id)
-      guard let previousIntent = previousSteps[key]?.intent else { return generated }
-      let contactOrTorsoChanged =
-        previousFrames[from.id]?.contacts != from.contacts
-        || previousFrames[to.id]?.contacts != to.contacts
-        || previousFrames[from.id]?.torsoPosition != from.torsoPosition
-        || previousFrames[to.id]?.torsoPosition != to.torsoPosition
-      return generated.replacingIntent(
-        contactOrTorsoChanged || requiresIntentReview
-          ? previousIntent.markingNeedsReview() : previousIntent
-      )
+    return reanchoringOrphanedIntents(
+      in: zip(frames, frames.dropFirst()).map { from, to in
+        let changes = Limb.allCases.compactMap { limb -> ContactChange? in
+          let oldTarget = from.contact(for: limb)?.target ?? .unknown
+          let newTarget = to.contact(for: limb)?.target ?? .unknown
+          guard oldTarget != newTarget else { return nil }
+          return ContactChange(limb: limb, from: oldTarget, to: newTarget)
+        }
+        let retained = Limb.allCases.filter { limb in
+          let oldTarget = from.contact(for: limb)?.target ?? .unknown
+          return oldTarget == (to.contact(for: limb)?.target ?? .unknown)
+            && oldTarget.isSupportContact
+        }
+        let gained = changes.filter(\.to.isSupportContact).map(\.limb)
+        let released = changes.filter(\.from.isSupportContact).map(\.limb)
+        let family: MovementFamily = changes.count > 1 ? .coordinated : .staticMove
+        let explanation =
+          changes.isEmpty
+          ? "No contact changes."
+          : changes.map { "\($0.limb.label): \($0.from.shortLabel) → \($0.to.shortLabel)" }
+            .joined(separator: "; ")
+        let generated = MovementStep(
+          fromKeyframeID: from.id,
+          toKeyframeID: to.id,
+          changes: changes,
+          retainedLimbs: retained,
+          gainedLimbs: gained,
+          releasedLimbs: released,
+          expectedDurationSeconds: 1,
+          family: family,
+          explanation: explanation,
+          provenance: to.provenance
+        )
+        let key = MovementStepKey(from: from.id, to: to.id)
+        guard let previousIntent = previousSteps[key]?.intent else { return generated }
+        let contactOrTorsoChanged =
+          previousFrames[from.id]?.contacts != from.contacts
+          || previousFrames[to.id]?.contacts != to.contacts
+          || previousFrames[from.id]?.torsoPosition != from.torsoPosition
+          || previousFrames[to.id]?.torsoPosition != to.torsoPosition
+        return generated.replacingIntent(
+          contactOrTorsoChanged || requiresIntentReview
+            ? previousIntent.markingNeedsReview() : previousIntent
+        )
+      },
+      previousTimeline: previousTimeline
+    )
+  }
+
+  /// Keeps a user-authored MovementIntent visible when an insert, delete, or
+  /// reorder dissolves the exact keyframe pair it was written against.
+  ///
+  /// The intent moves to the surviving step that still shares an endpoint with
+  /// the step it described, and always becomes `needsReview`: restructuring the
+  /// timeline is a prompt for explicit revision, never a licence to discard
+  /// authoring the user confirmed.
+  private static func reanchoringOrphanedIntents(
+    in steps: [MovementStep],
+    previousTimeline: RehearsalTimeline?
+  ) -> [MovementStep] {
+    guard let previousTimeline else { return steps }
+    let surviving = Set(
+      steps.map { MovementStepKey(from: $0.fromKeyframeID, to: $0.toKeyframeID) }
+    )
+    let orphans = previousTimeline.steps.filter { step in
+      step.intent != nil
+        && !surviving.contains(
+          MovementStepKey(from: step.fromKeyframeID, to: step.toKeyframeID)
+        )
     }
+    guard !orphans.isEmpty else { return steps }
+    var steps = steps
+    for orphan in orphans {
+      guard let intent = orphan.intent else { continue }
+      let best = steps.indices.compactMap { index -> (rank: Int, index: Int)? in
+        guard steps[index].intent == nil,
+          let rank = endpointRank(of: steps[index], against: orphan)
+        else { return nil }
+        return (rank, index)
+      }
+      .min { lhs, rhs in
+        lhs.rank == rhs.rank ? lhs.index < rhs.index : lhs.rank < rhs.rank
+      }
+      guard let best else { continue }
+      steps[best.index] = steps[best.index].replacingIntent(intent.markingNeedsReview())
+    }
+    return steps
+  }
+
+  /// How closely a surviving step still describes the same movement as an
+  /// orphaned one, lowest rank first: same origin, same destination, then the
+  /// two crossed endpoints a reorder can produce. `nil` means unrelated.
+  private static func endpointRank(
+    of step: MovementStep,
+    against orphan: MovementStep
+  ) -> Int? {
+    if step.fromKeyframeID == orphan.fromKeyframeID { return 0 }
+    if step.toKeyframeID == orphan.toKeyframeID { return 1 }
+    if step.fromKeyframeID == orphan.toKeyframeID { return 2 }
+    if step.toKeyframeID == orphan.fromKeyframeID { return 3 }
+    return nil
   }
 }
 
@@ -1278,7 +1374,13 @@ public struct PlaybackCursor: Equatable, Codable, Sendable {
   public init(track: RehearsalTrack, transitionIndex: Int, progress: Double) {
     self.track = track
     self.transitionIndex = max(transitionIndex, 0)
-    self.progress = min(max(progress, 0), 1)
+    // `min`/`max` return the other operand when one side is NaN, so the usual
+    // clamp lets NaN straight through. A NaN cursor poisons interpolation,
+    // never satisfies the `progress >= 1` stop test, and cannot be encoded for
+    // the durable archive, so it collapses to the start of the step. Callers
+    // that can surface a rejection should validate first; see
+    // `RouteRehearsalEngine.scrub`.
+    self.progress = progress.isFinite ? min(max(progress, 0), 1) : (progress > 0 ? 1 : 0)
   }
 }
 

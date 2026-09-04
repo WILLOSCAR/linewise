@@ -161,20 +161,15 @@ public struct ManualRehearsalSuggestionProvider: RehearsalSuggestionProvider {
     guard !request.seedKeyframes.isEmpty else {
       throw RehearsalProviderError.manualSeedRequired
     }
-    let manualFrames = request.seedKeyframes.map { frame in
-      PoseKeyframe(
-        id: frame.id,
-        label: frame.label,
-        torsoPosition: frame.torsoPosition,
-        contacts: frame.contacts,
-        provenance: .manual
-      )
-    }
+    // The seed frames are passed through untouched. This provider only solves
+    // and orders what the caller already has, so relabelling them `.manual`
+    // would let an observed or model-generated pose claim the user authored it —
+    // and downstream compare treats user-authored evidence as certain.
     let engine = try RouteRehearsalEngine(
       rehearsalID: request.rehearsalID,
       scene: request.scene,
       bodyProfile: request.bodyProfile,
-      planKeyframes: Array(manualFrames.prefix(request.maximumKeyframeCount))
+      planKeyframes: Array(request.seedKeyframes.prefix(request.maximumKeyframeCount))
     )
     return RehearsalSuggestion(
       rehearsalID: request.rehearsalID,
@@ -213,10 +208,14 @@ public struct DeterministicLocalRehearsalSuggestionProvider: RehearsalSuggestion
     let orderedHolds = request.scene.holds.sorted(
       by: DeterministicLocalRouteReadProvider.holdOrder
     )
+    // Seed frames keep the provenance they arrived with: this provider suggests
+    // the *extension*, and relabelling a frame the user already confirmed as its
+    // own suggestion would silently downgrade confirmed authoring to uncertain
+    // evidence.
     var frames =
       request.seedKeyframes.isEmpty
       ? [defaultSeed(for: request, orderedHolds: orderedHolds, provenance: provenance)]
-      : request.seedKeyframes.map { suggestedCopy($0, provenance: provenance) }
+      : request.seedKeyframes
     frames = Array(frames.prefix(request.maximumKeyframeCount))
 
     let limbOrder: [Limb] = [.rightHand, .leftHand, .rightFoot, .leftFoot]
@@ -267,19 +266,6 @@ public struct DeterministicLocalRehearsalSuggestionProvider: RehearsalSuggestion
     return RehearsalSuggestion(
       rehearsalID: request.rehearsalID,
       keyframes: engine.rehearsal.plan.keyframes,
-      provenance: provenance
-    )
-  }
-
-  private func suggestedCopy(
-    _ frame: PoseKeyframe,
-    provenance: RehearsalProvenance
-  ) -> PoseKeyframe {
-    PoseKeyframe(
-      id: frame.id,
-      label: frame.label,
-      torsoPosition: frame.torsoPosition,
-      contacts: frame.contacts,
       provenance: provenance
     )
   }

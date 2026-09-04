@@ -18,7 +18,7 @@ public struct Qualitative2DSolver: Sendable {
       )
     let body = BodyGeometry(profile: bodyProfile, metersPerSceneUnit: scale)
     let roots = limbRoots(torso: torsoPosition, body: body)
-    var findings = contactShapeFindings(contacts)
+    var findings = contactShapeFindings(raw: contacts, normalized: normalized)
     var joints: [AvatarJoint: Point2D] = [
       .torso: torsoPosition,
       .pelvis: Point2D(x: torsoPosition.x, y: torsoPosition.y - body.torsoToPelvis),
@@ -100,17 +100,35 @@ public struct Qualitative2DSolver: Sendable {
     return Limb.allCases.map { byLimb[$0] ?? .unknown($0) }
   }
 
-  private func contactShapeFindings(_ contacts: [LimbContact]) -> [ConstraintFinding] {
+  /// Reports each limb whose contact the user has not actually resolved.
+  ///
+  /// The check reads the *normalized* contacts, because a limb the caller never
+  /// mentioned and a limb the user explicitly marked `.unknown` are the same
+  /// honest state and must both stay visible: back-filling a missing limb is a
+  /// representation detail, never evidence that the pose is settled. Duplicate
+  /// records are still detected from the raw array, since normalizing collapses
+  /// them.
+  private func contactShapeFindings(
+    raw: [LimbContact],
+    normalized: [LimbContact]
+  ) -> [ConstraintFinding] {
     Limb.allCases.compactMap { limb in
-      let count = contacts.filter { $0.limb == limb }.count
-      guard count != 1 else { return nil }
+      if raw.filter({ $0.limb == limb }).count > 1 {
+        return ConstraintFinding(
+          kind: .contactConflict,
+          severity: .unresolved,
+          limb: limb,
+          message: "\(limb.label) has more than one contact record."
+        )
+      }
+      guard normalized.first(where: { $0.limb == limb })?.target == .unknown else {
+        return nil
+      }
       return ConstraintFinding(
         kind: .contactConflict,
         severity: .unresolved,
         limb: limb,
-        message: count == 0
-          ? "\(limb.label) contact is unknown."
-          : "\(limb.label) has more than one contact record."
+        message: "\(limb.label) contact is unknown."
       )
     }
   }

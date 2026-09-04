@@ -635,6 +635,149 @@ private func derivedMediaCannotClaimSourcesFromAnotherRouteCard() throws {
   )
 }
 
+/// A suggested MoveCue is fed to the learning loop, so it must only name a limb
+/// the comparison actually saw diverge. Naming one because its state merely is
+/// not `.same` — uncertain evidence, or no Actual track at all — would send the
+/// user to review a limb that never changed.
+private func aSuggestedCueOnlyNamesALimbThatActuallyDiverged() throws {
+  func cue(
+    id: String,
+    actual: RehearsalTimeline,
+    preferredTrack: RehearsalTrack = .plan
+  ) throws -> StickFigureCue {
+    let rehearsal = RouteRehearsal(
+      id: RouteRehearsalID("focus-limb"),
+      scene: datasetScene(),
+      bodyProfile: .generic(id: BodyProfileID("dataset-body")),
+      plan: RehearsalTimeline(
+        keyframes: [
+          datasetFrame("p0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareInferred),
+          datasetFrame("p1", torso: Point2D(x: 1.3, y: 1.8), provenance: datasetCompareInferred),
+        ],
+        steps: [
+          datasetStep(
+            from: datasetFrame(
+              "p0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareInferred),
+            to: datasetFrame(
+              "p1", torso: Point2D(x: 1.3, y: 1.8), provenance: datasetCompareInferred),
+            duration: 1,
+            provenance: datasetCompareInferred
+          )
+        ]
+      ),
+      actual: actual
+    )
+    let comparison = RehearsalCompare.align(
+      rehearsal: rehearsal,
+      planTimelineVersion: "plan-focus",
+      actualTimelineVersion: "actual-focus"
+    )
+    return try RehearsalCompare.makeStickFigureCue(
+      id: StickFigureCueID(id),
+      comparison: comparison,
+      alignedStepRange: 0...0,
+      preferredTrack: preferredTrack,
+      pin: StickFigureCuePin(
+        scene: rehearsal.scene,
+        bodyProfile: rehearsal.bodyProfile,
+        timelineVersion: preferredTrack == .plan ? "plan-focus" : "actual-focus"
+      )
+    )
+  }
+
+  // The Actual track repeats the Plan's contacts exactly; only the evidence is
+  // less certain, which is not a divergence the user can act on.
+  let identical = try cue(
+    id: "cue-identical",
+    actual: RehearsalTimeline(
+      keyframes: [
+        datasetFrame("a0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareObserved),
+        datasetFrame("a1", torso: Point2D(x: 1.3, y: 1.8), provenance: datasetCompareObserved),
+      ],
+      steps: [
+        datasetStep(
+          from: datasetFrame(
+            "a0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareObserved),
+          to: datasetFrame(
+            "a1", torso: Point2D(x: 1.3, y: 1.8), provenance: datasetCompareObserved),
+          duration: 1,
+          provenance: datasetCompareObserved
+        )
+      ]
+    )
+  )
+  try datasetCompareExpect(
+    identical.alignedSteps.flatMap(\.limbDivergences).allSatisfy { $0.state != .different },
+    "the fixture should contain no limb the comparison calls different"
+  )
+  let identicalCue = RehearsalCompare.suggestLearningArtifacts(
+    from: identical,
+    routeCardID: RouteCardID("route-blue")
+  )
+  try datasetCompareExpect(
+    !Limb.allCases.contains { identicalCue.moveCue.text.contains($0.label) },
+    "a cue must not name any limb when no limb diverged: \(identicalCue.moveCue.text)"
+  )
+
+  // With no Actual track there is nothing to compare a limb against.
+  let planOnly = try cue(id: "cue-plan-only", actual: RehearsalTimeline(keyframes: []))
+  try datasetCompareExpect(
+    planOnly.alignedSteps.flatMap(\.limbDivergences).allSatisfy {
+      $0.state == .missingActual
+    },
+    "the fixture should have no Actual value for any limb"
+  )
+  let planOnlyCue = RehearsalCompare.suggestLearningArtifacts(
+    from: planOnly,
+    routeCardID: RouteCardID("route-blue")
+  )
+  try datasetCompareExpect(
+    !Limb.allCases.contains { planOnlyCue.moveCue.text.contains($0.label) },
+    "a cue must not name a limb when there is no Actual track: \(planOnlyCue.moveCue.text)"
+  )
+
+  // A limb that really did change must still be named, and named correctly.
+  let diverged = try cue(
+    id: "cue-diverged",
+    actual: RehearsalTimeline(
+      keyframes: [
+        datasetFrame("a0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareObserved),
+        datasetFrame(
+          "a1",
+          torso: Point2D(x: 1.3, y: 1.8),
+          rightHand: HoldID("a-next"),
+          provenance: datasetCompareObserved
+        ),
+      ],
+      steps: [
+        datasetStep(
+          from: datasetFrame(
+            "a0", torso: Point2D(x: 1.1, y: 1.5), provenance: datasetCompareObserved),
+          to: datasetFrame(
+            "a1",
+            torso: Point2D(x: 1.3, y: 1.8),
+            rightHand: HoldID("a-next"),
+            provenance: datasetCompareObserved
+          ),
+          duration: 1,
+          provenance: datasetCompareObserved
+        )
+      ]
+    ),
+    preferredTrack: .actual
+  )
+  let divergedCue = RehearsalCompare.suggestLearningArtifacts(
+    from: diverged,
+    routeCardID: RouteCardID("route-blue")
+  )
+  try datasetCompareExpect(
+    divergedCue.moveCue.text.contains(Limb.rightHand.label)
+      && !divergedCue.moveCue.text.contains(Limb.leftHand.label),
+    "the cue must name the limb that changed, not the first limb in enum order: "
+      + divergedCue.moveCue.text
+  )
+}
+
 public func datasetCompareSpecifications() -> [(String, () throws -> Void)] {
   [
     (
@@ -668,6 +811,10 @@ public func datasetCompareSpecifications() -> [(String, () throws -> Void)] {
     (
       "learning candidates stay suggested and non-safety",
       learningCandidatesStaySuggestedAndNonSafety
+    ),
+    (
+      "a suggested cue only names a limb that actually diverged",
+      aSuggestedCueOnlyNamesALimbThatActuallyDiverged
     ),
   ]
 }
