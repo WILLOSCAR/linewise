@@ -13,6 +13,17 @@ private func qualitativeExpect(
   }
 }
 
+private func qualitativeEmptyVisitSnapshot() -> VisitSnapshot {
+  VisitSnapshot(
+    visits: [],
+    attempts: [],
+    routeCards: [],
+    projects: [],
+    pendingActionIDs: [],
+    reconciliationIssues: []
+  )
+}
+
 private func qualitativeScene(id: String = "scene-lens") -> RouteScene {
   RouteScene(
     id: RouteSceneID(id),
@@ -472,6 +483,7 @@ private func setterLensBridgeCannotConfirmForTheUser() throws {
   )
   var transition = LearningLoop.apply(
     command,
+    visitSnapshot: qualitativeEmptyVisitSnapshot(),
     recallSnapshot: RecallTrainingState().snapshot,
     catalog: ApprovedMicroDrillCatalog(drills: []),
     to: LearningLoopState()
@@ -497,6 +509,7 @@ private func setterLensBridgeCannotConfirmForTheUser() throws {
       interpretationOverride: "User edit: shift weight before the reach.",
       occurredAt: Instant(millisecondsSince1970: 5_000)
     ),
+    visitSnapshot: qualitativeEmptyVisitSnapshot(),
     recallSnapshot: RecallTrainingState().snapshot,
     catalog: ApprovedMicroDrillCatalog(drills: []),
     to: transition.state

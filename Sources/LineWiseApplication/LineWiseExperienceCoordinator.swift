@@ -545,26 +545,9 @@ public struct LineWiseExperienceCoordinator {
 
   @discardableResult
   public mutating func submitLearning(_ command: LearningLoopCommand) -> LearningLoopOutcome {
-    if case .recordProofCheck(_, _, let pathID, let attemptID, _, _, _, _) = command,
-      let path = learningLoopState.snapshot.trainingPaths.first(where: { $0.id == pathID }),
-      path.status == .active
-    {
-      guard
-        let attempt = appCoordinator.projection.attempts.first(where: {
-          $0.id == attemptID && $0.recordState == .active
-        })
-      else {
-        return .rejected(.proofCheckAttemptDoesNotExist)
-      }
-      guard attempt.routeCardID == path.routeCardID else {
-        return .rejected(.proofCheckAttemptRouteMismatch)
-      }
-      guard attempt.occurredAt > path.createdAt else {
-        return .rejected(.proofCheckAttemptIsNotLaterThanPath)
-      }
-    }
     let transition = LearningLoop.apply(
       command,
+      visitSnapshot: visitSnapshotForRecall,
       recallSnapshot: recallTrainingState.snapshot,
       catalog: microDrillCatalog,
       to: learningLoopState
@@ -731,7 +714,9 @@ public struct LineWiseExperienceCoordinator {
       case .ready:
         return true
       case .deferred:
-        return cue.deferredUntil.map { $0 <= occurredAt } ?? false
+        // An open-ended deferral means "not this visit", so it becomes due at the next
+        // one. Treating a missing deadline as never-due would strand the cue forever.
+        return cue.deferredUntil.map { $0 <= occurredAt } ?? true
       case .completed, .dismissed:
         return false
       }
