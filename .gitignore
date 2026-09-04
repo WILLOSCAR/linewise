@@ -12,6 +12,7 @@ xcuserdata/
 
 # Local scratch
 .scratch/
+.claude/worktrees/
 
 # Secrets and local env
 .env
