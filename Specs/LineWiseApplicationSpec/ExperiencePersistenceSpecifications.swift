@@ -13,12 +13,20 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       experienceSaveFailureLeavesMemoryUnapplied
     ),
     (
+      "a failed archive save does not leave a capture committed to the journal",
+      failedArchiveSaveDoesNotStrandACapturedAttempt
+    ),
+    (
       "experience file store rejects corrupt and future archives",
       experienceFileStoreRejectsCorruptAndFutureArchives
     ),
     (
       "experience archive decodes an older writer that omits newer collections",
       experienceArchiveDecodesForwardCompatibleArchive
+    ),
+    (
+      "a truncated archive is refused instead of reopening as empty",
+      truncatedArchiveIsRefusedRatherThanDecodedAsEmpty
     ),
     (
       "a populated experience archive survives an encode and decode round trip",
@@ -500,6 +508,99 @@ private func experienceArchiveReopensAllNonVisitState() throws {
   )
 }
 
+/// `applying` copies the coordinator to propose a change and commits only if the
+/// archive save succeeds. That protects value state, but `VisitRepository` is a
+/// final class held by reference through the struct graph, so a capture intent is
+/// already durably in the event journal before `persist` runs. A failed save then
+/// leaves the journal holding an Attempt the UI does not show and cannot Undo,
+/// and retrying records a second copy of the same action.
+private func failedArchiveSaveDoesNotStrandACapturedAttempt() throws {
+  let visitStore = MemoryVisitEventStore()
+  let repository = try VisitRepository(
+    store: visitStore,
+    localDeviceID: DeviceID("torn-commit-phone")
+  )
+  let archiveStore = FailingExperienceArchiveStore()
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: repository
+  )
+  let routeID = RouteCardID("torn-commit-route")
+  let visitID = GymVisitID("torn-commit-visit")
+  let created = try experience.handle(
+    .createRoute(
+      actionID: ActionID("torn-commit-create"),
+      routeCardID: routeID,
+      label: "Torn commit route",
+      availability: .present,
+      occurredAt: persistenceInstant(1),
+      source: .iPhone
+    )
+  )
+  try expect(created.isSuccess, "expected route creation to set up the capture")
+  let started = try experience.handle(
+    .startVisit(
+      actionID: ActionID("torn-commit-start"),
+      visitID: visitID,
+      occurredAt: persistenceInstant(2),
+      source: .iPhone
+    )
+  )
+  try expect(started.isSuccess, "expected the visit to start")
+  _ = try experience.handle(.selectRoute(routeID))
+
+  let attemptsBefore = experience.projection.capture.attempts.count
+  let journalledBefore = repository.persistedEvents.count
+  archiveStore.failNextSave = true
+
+  let attemptID = AttemptID("torn-commit-attempt")
+  let outcome = try? experience.handle(
+    .recordAttempt(
+      actionID: ActionID("torn-commit-record"),
+      attemptID: attemptID,
+      occurredAt: persistenceInstant(3),
+      source: .iPhone
+    )
+  )
+  try expect(
+    outcome == nil || outcome?.isSuccess == false,
+    "a capture whose archive save failed must not be reported as succeeded"
+  )
+
+  // The user-visible state and the durable journal must agree. Either both
+  // recorded the Attempt or neither did; one without the other is the torn
+  // commit that makes the Attempt unreachable and duplicated on retry.
+  let attemptsAfter = experience.projection.capture.attempts.count
+  let journalledAfter = repository.persistedEvents.count
+  try expect(
+    (attemptsAfter > attemptsBefore) == (journalledAfter > journalledBefore),
+    """
+    projection and journal disagree after a failed save: projection went \
+    \(attemptsBefore) -> \(attemptsAfter) while the journal went \
+    \(journalledBefore) -> \(journalledAfter). A capture the journal kept but the \
+    UI dropped can be neither seen nor undone, and a retry records it twice
+    """
+  )
+
+  // The sharper consequence: if the journal kept the Attempt, the user must
+  // still be able to reach it. `reversibleActionIDs` is value state that the
+  // failed commit rolls back, so an Attempt that survived in the journal can
+  // be left with no Undo target — recorded, visible, and unretractable.
+  if journalledAfter > journalledBefore {
+    try expect(
+      experience.projection.capture.attempts.contains { $0.id == attemptID },
+      "an Attempt kept by the journal must remain visible in the projection"
+    )
+    try expect(
+      experience.projection.capture.lastAcceptedActionID != nil,
+      """
+      the journal kept the capture but no reversible action remains, so the user \
+      can see the Attempt and cannot Undo it
+      """
+    )
+  }
+}
+
 private func experienceSaveFailureLeavesMemoryUnapplied() throws {
   let visitStore = MemoryVisitEventStore()
   let repository = try VisitRepository(
@@ -612,6 +713,57 @@ private func experienceArchiveRoundTripsEveryPopulatedCollection() throws {
     "rest, selection, provenance and schema must survive the archive round trip"
   )
   try expect(restored == archive, "the archive round trip must be lossless")
+}
+
+private func truncatedArchiveIsRefusedRatherThanDecodedAsEmpty() throws {
+  // Forward compatibility must not become blanket tolerance. `encode(to:)`
+  // writes recallTrainingState, learningLoopState, microDrillCatalog and
+  // restState UNCONDITIONALLY, so their absence is not an older writer — it is a
+  // damaged file. Defaulting them to empty turns corruption into a valid-looking
+  // empty archive, and the user's next ordinary action persists that emptiness
+  // over their confirmed FailureEpisode / MoveCue / NextSessionCue history.
+  // Losing history silently is worse than refusing to open the file.
+  let populated = try persistencePopulatedArchive(
+    namespace: "truncated-archive",
+    provenance: ExperienceArchiveProvenance(
+      writerIdentifier: "linewise.local",
+      writerVersion: "1"
+    )
+  )
+  let encoded = try LineWiseExperienceArchiveCodec.encode(populated)
+
+  for requiredKey in [
+    "recallTrainingState", "learningLoopState", "microDrillCatalog", "restState",
+  ] {
+    guard
+      var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    else {
+      throw ApplicationSpecFailure.expected("expected a JSON object for the archive")
+    }
+    try expect(
+      object[requiredKey] != nil,
+      "the encoder must always write \(requiredKey) for this test to mean anything"
+    )
+    object.removeValue(forKey: requiredKey)
+    let damaged = try JSONSerialization.data(withJSONObject: object)
+
+    do {
+      let decoded = try LineWiseExperienceArchiveCodec.decode(damaged)
+      throw ApplicationSpecFailure.expected(
+        """
+        an archive missing \(requiredKey) must be refused, but it decoded with \
+        \(decoded.recallTrainingState.snapshot.failureEpisodes.count) failure episodes — \
+        the next save would overwrite the user's real history with this
+        """
+      )
+    } catch let error as ExperiencePersistenceError {
+      guard case .corruptedStore = error else {
+        throw ApplicationSpecFailure.expected(
+          "expected corruptedStore for a missing \(requiredKey), got \(error)"
+        )
+      }
+    }
+  }
 }
 
 private func experienceArchiveDecodesForwardCompatibleArchive() throws {

@@ -88,17 +88,17 @@ public struct LineWiseExperienceArchive: Equatable, Codable, Sendable {
     // schemaVersion is validated by the codec; the model always reports current.
     schemaVersion = Self.currentSchemaVersion
     provenance = try container.decode(ExperienceArchiveProvenance.self, forKey: .provenance)
-    recallTrainingState =
-      try container.decodeIfPresent(RecallTrainingState.self, forKey: .recallTrainingState)
-      ?? RecallTrainingState()
-    learningLoopState =
-      try container.decodeIfPresent(LearningLoopState.self, forKey: .learningLoopState)
-      ?? LearningLoopState()
-    microDrillCatalog =
-      try container.decodeIfPresent(ApprovedMicroDrillCatalog.self, forKey: .microDrillCatalog)
-      ?? ApprovedMicroDrillCatalog(drills: [])
-    restState =
-      try container.decodeIfPresent(RestState.self, forKey: .restState) ?? RestState()
+    // These four are written unconditionally by `encode(to:)`, so a missing key
+    // is a damaged file rather than an older writer. Defaulting them would turn
+    // corruption into a valid-looking empty archive, and the next ordinary save
+    // would persist that emptiness over the user's confirmed recall history.
+    // Only genuinely newer collections below may default.
+    recallTrainingState = try container.decode(
+      RecallTrainingState.self, forKey: .recallTrainingState)
+    learningLoopState = try container.decode(LearningLoopState.self, forKey: .learningLoopState)
+    microDrillCatalog = try container.decode(
+      ApprovedMicroDrillCatalog.self, forKey: .microDrillCatalog)
+    restState = try container.decode(RestState.self, forKey: .restState)
     selectedRouteCardID =
       try container.decodeIfPresent(RouteCardID.self, forKey: .selectedRouteCardID)
     reversibleActionIDs =
@@ -392,6 +392,12 @@ public struct PersistentLineWiseExperienceCoordinator {
       coordinator = proposed
       return result
     } catch {
+      // Deliberately discard `proposed` here, unlike `applying`'s capture path.
+      // The envelopes themselves are already durable in VisitRepository and are
+      // re-derived on the next pull, but the Review Inbox items this method
+      // enqueues exist ONLY in the archive that just failed to save. Publishing
+      // them would show the user review work that no relaunch would restore, so
+      // the reconciliation is retried instead.
       return .persistenceFailed(String(describing: error))
     }
   }
@@ -417,7 +423,13 @@ public struct PersistentLineWiseExperienceCoordinator {
 
   @discardableResult
   public mutating func handle(_ intent: LineWiseAppIntent) throws -> LineWiseAppFeedback {
-    try applying({ $0.handle(intent) }, commitsWhen: { $0.isSuccess })
+    // Capture intents reach VisitRepository, so their event is already durable
+    // when the archive save runs.
+    try applying(
+      { $0.handle(intent) },
+      commitsWhen: { $0.isSuccess },
+      writesToVisitJournal: true
+    )
   }
 
   @discardableResult
@@ -568,14 +580,37 @@ public struct PersistentLineWiseExperienceCoordinator {
 
   private mutating func applying<Result>(
     _ operation: (inout LineWiseExperienceCoordinator) throws -> Result,
-    commitsWhen shouldCommit: (Result) -> Bool
+    commitsWhen shouldCommit: (Result) -> Bool,
+    writesToVisitJournal: Bool = false
   ) throws -> Result {
     var proposed = coordinator
     let result = try operation(&proposed)
     guard shouldCommit(result) else {
       return result
     }
-    try persist(proposed)
+    do {
+      try persist(proposed)
+    } catch {
+      // Discarding `proposed` rolls back value state, which is exactly right for
+      // an intent that only touched value state: nothing durable happened, so
+      // nothing should be visible.
+      //
+      // A capture intent backed by a real VisitRepository is different. The
+      // repository is a final class shared through the struct graph, so its
+      // event is already durably in the journal by the time this runs and cannot
+      // be un-written here. Dropping the copy would strand it: the Attempt stays
+      // on disk while the reversible-action list that makes Undo possible
+      // reverts, leaving a record the user can see and cannot retract, and
+      // duplicating it on retry. Commit the coordinator that matches the journal
+      // instead, and still surface the archive failure.
+      //
+      // With no repository the capture lived only in value state, so there is
+      // nothing durable to agree with and the rollback is the honest outcome.
+      if writesToVisitJournal && coordinator.hasPersistentVisitRepository {
+        coordinator = proposed
+      }
+      throw error
+    }
     coordinator = proposed
     return result
   }

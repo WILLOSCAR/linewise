@@ -328,6 +328,13 @@ public struct LineWiseExperienceCoordinator {
     appCoordinator
   }
 
+  /// Whether capture commands reach a durable `VisitRepository` rather than
+  /// living only in this value's in-memory state. The persistence wrapper needs
+  /// this to know whether a failed archive save can safely roll a capture back.
+  var hasPersistentVisitRepository: Bool {
+    appCoordinator.hasPersistentVisitRepository
+  }
+
   mutating func resetPersistedExperienceData() {
     recallTrainingState = RecallTrainingState()
     learningLoopState = LearningLoopState()
