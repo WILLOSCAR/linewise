@@ -13,7 +13,223 @@ func durableDeviceTransportSpecifications() -> [(String, () async throws -> Void
       "inbound transport bytes wait for repository persistence",
       inboundTransportPayloadWaitsForRepositoryPersistence
     ),
+    (
+      "a flush already in flight is not duplicated by later taps",
+      overlappingFlushesDoNotResendTheSameEnvelopeOrReportFalseDegradation
+    ),
+    (
+      "one undeliverable inbound payload does not block later events",
+      oneUndeliverableInboundPayloadDoesNotBlockLaterEvents
+    ),
   ]
+}
+
+@MainActor
+private func oneUndeliverableInboundPayloadDoesNotBlockLaterEvents() async throws {
+  let transport = SeedableRuntimeInboxTransport()
+  let fixture = try durableRuntimeFixture(transport: transport, role: .iPhone)
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+  // A newer counterpart sends a command kind this build cannot decode. It
+  // arrives ahead of a perfectly valid event.
+  await transport.seed(
+    DevicePayloadID("payload-undecodable"),
+    payload: Data("{\"kind\":\"from-a-newer-build\"}".utf8)
+  )
+  let firstValid = inboundRouteEnvelope(action: "inbound-after-poison-1", sequence: 1)
+  await transport.seed(DevicePayloadID("payload-valid-1"), envelope: firstValid)
+
+  let firstPull = await fixture.runtime.pullReceivedEvents()
+  try expect(
+    firstPull.insertedCount == 1,
+    "a valid inbound event must be delivered even when it queues behind an undecodable payload"
+  )
+  try expect(
+    fixture.runtime.projection.routeCards.map(\.id) == [
+      RouteCardID("route-inbound-after-poison-1")
+    ],
+    "the valid event must reach domain state, not sit behind the undecodable payload"
+  )
+  try expect(
+    firstPull.error != nil,
+    "an inbound payload this build cannot interpret must stay visible, never silent"
+  )
+
+  let remaining = try await transport.pendingReceivedPayloads()
+  try expect(
+    remaining.map(\.id) == [DevicePayloadID("payload-undecodable")],
+    "only the delivered payload may be acknowledged; the rest must stay durable"
+  )
+
+  // A later, perfectly valid event must not queue behind the retained payload.
+  let secondValid = inboundRouteEnvelope(action: "inbound-after-poison-2", sequence: 2)
+  await transport.seed(DevicePayloadID("payload-valid-2"), envelope: secondValid)
+  let secondPull = await fixture.runtime.pullReceivedEvents()
+  try expect(
+    secondPull.insertedCount == 1,
+    "every later inbound event must keep flowing past a retained undecodable payload"
+  )
+  try expect(
+    fixture.runtime.projection.routeCards.count == 2,
+    "both synced RouteCards must be present after the second pull"
+  )
+
+  // The same isolation must hold when the bytes decode but the envelope
+  // conflicts with one already accepted under the same ActionID.
+  let forged = DeviceEventEnvelope(
+    originDeviceID: DeviceID("watch-inbound-conflict"),
+    sequence: 3,
+    command: .createRouteCard(
+      actionID: ActionID("inbound-after-poison-2"),
+      routeCardID: RouteCardID("route-forged-conflict"),
+      label: "Forged route",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 9_000),
+      source: .watch
+    )
+  )
+  await transport.seed(DevicePayloadID("payload-conflicting"), envelope: forged)
+  let thirdValid = inboundRouteEnvelope(action: "inbound-after-poison-3", sequence: 4)
+  await transport.seed(DevicePayloadID("payload-valid-3"), envelope: thirdValid)
+
+  let thirdPull = await fixture.runtime.pullReceivedEvents()
+  try expect(
+    thirdPull.insertedCount == 1 && thirdPull.error != nil,
+    "a conflicting envelope must be reported without discarding the valid batch members"
+  )
+  try expect(
+    fixture.runtime.projection.routeCards.count == 3,
+    "a conflicting envelope must not withhold the valid events that arrived with it"
+  )
+  try expect(
+    !fixture.runtime.projection.routeCards.contains {
+      $0.id == RouteCardID("route-forged-conflict")
+    },
+    "a conflicting envelope must never overwrite already-accepted history"
+  )
+  let stillPending = try await transport.pendingReceivedPayloads()
+  try expect(
+    Set(stillPending.map(\.id)) == [
+      DevicePayloadID("payload-undecodable"), DevicePayloadID("payload-conflicting"),
+    ],
+    "an unresolved inbound payload must remain durable for review, not be silently dropped"
+  )
+}
+
+private func requireSinglePendingPayloadID(
+  _ transport: any DevicePayloadTransport
+) async throws -> DevicePayloadID {
+  let pending = try await transport.pendingReceivedPayloads()
+  guard pending.count == 1, let only = pending.first else {
+    throw AppleAdapterSpecFailure.expected("expected exactly one pending inbound payload")
+  }
+  return only.id
+}
+
+private func inboundRouteEnvelope(action: String, sequence: UInt64) -> DeviceEventEnvelope {
+  DeviceEventEnvelope(
+    originDeviceID: DeviceID("watch-inbound-isolation"),
+    sequence: sequence,
+    command: .createRouteCard(
+      actionID: ActionID(action),
+      routeCardID: RouteCardID("route-\(action)"),
+      label: "Route \(sequence)",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: Int64(sequence) * 1_000),
+      source: .watch
+    )
+  )
+}
+
+private actor SeedableRuntimeInboxTransport: DevicePayloadTransport {
+  private var payloads: [ReceivedDevicePayload] = []
+
+  func activate() async {}
+
+  func send(_ payload: Data, mode: DeviceTransferMode) async throws -> DeviceTransferReceipt {
+    DeviceTransferReceipt(disposition: .durablyCompleted, mode: mode)
+  }
+
+  func seed(_ id: DevicePayloadID, payload: Data) {
+    payloads.append(ReceivedDevicePayload(id: id, payload: payload))
+  }
+
+  func seed(_ id: DevicePayloadID, envelope: DeviceEventEnvelope) {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    guard let data = try? encoder.encode(envelope) else { return }
+    payloads.append(ReceivedDevicePayload(id: id, payload: data))
+  }
+
+  func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload] { payloads }
+
+  func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws {
+    let acknowledged = Set(payloadIDs)
+    payloads.removeAll { acknowledged.contains($0.id) }
+  }
+}
+
+@MainActor
+private func overlappingFlushesDoNotResendTheSameEnvelopeOrReportFalseDegradation() async throws {
+  let transport = DeferredRuntimeTransport()
+  let fixture = try durableRuntimeFixture(transport: transport)
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+  _ = fixture.runtime.handle(
+    .startVisit(
+      actionID: ActionID("start-overlapping-flush"),
+      visitID: GymVisitID("visit-overlapping-flush"),
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .watch
+    )
+  )
+  try expect(fixture.runtime.pendingOutboundCount == 1, "expected one durable pending event")
+
+  // The first flush parks waiting for the transport completion callback, which
+  // is exactly what an unreachable peer does for minutes.
+  let firstFlush = Task { @MainActor [runtime = fixture.runtime] in
+    await runtime.flushPendingEvents()
+  }
+  let started = try await waitForRuntimeTransfers(transport, count: 1)
+
+  // Every user intent and every poll tick starts another flush while that one
+  // is still suspended.
+  var laterFlushes: [Task<DeviceSyncBatchResult, Never>] = []
+  for _ in 0..<4 {
+    laterFlushes.append(
+      Task { @MainActor [runtime = fixture.runtime] in
+        await runtime.flushPendingEvents()
+      }
+    )
+  }
+  for _ in 0..<2_000 {
+    if await transport.startedTransfers.count > 1 { break }
+    await Task.yield()
+  }
+  let transfersWhileStuck = await transport.startedTransfers
+  try expect(
+    transfersWhileStuck.count == 1,
+    "a flush already in flight must not re-send the same unacknowledged envelope"
+  )
+
+  await transport.complete(.succeeded, transferID: started[0].id)
+  let firstBatch = await firstFlush.value
+  var laterBatches: [DeviceSyncBatchResult] = []
+  for flush in laterFlushes {
+    laterBatches.append(await flush.value)
+  }
+  try expect(
+    laterBatches.allSatisfy { $0 == firstBatch },
+    "an overlapping flush must report the in-flight delivery, never a separate attempt"
+  )
+  try expect(
+    fixture.runtime.pendingOutboundCount == 0,
+    "the confirmed transfer must acknowledge the Outbox exactly once"
+  )
+  try expect(
+    fixture.runtime.syncStatus.phase == .synchronized
+      && fixture.runtime.syncStatus.lastError == nil,
+    "a fully drained Outbox must report synchronized, never a stale failure"
+  )
 }
 
 @MainActor
@@ -118,9 +334,15 @@ private func inboundTransportPayloadWaitsForRepositoryPersistence() async throws
   )
 
   let failedPull = await runtime.pullReceivedEvents()
+  let seededPayloadID = try await requireSinglePendingPayloadID(transport)
   try expect(
-    failedPull.insertedCount == 0 && failedPull.error == "inbound repository save failed",
+    failedPull.insertedCount == 0
+      && failedPull.error?.contains("inbound repository save failed") == true,
     "repository persistence failure must not be reported as a successful receive"
+  )
+  try expect(
+    failedPull.error?.contains(seededPayloadID.rawValue) == true,
+    "an undeliverable inbound payload must be identified so it can be reviewed"
   )
   try expect(
     runtime.projection.visits.isEmpty,
@@ -147,7 +369,8 @@ private func inboundTransportPayloadWaitsForRepositoryPersistence() async throws
 
 @MainActor
 private func durableRuntimeFixture(
-  transport: any DevicePayloadTransport
+  transport: any DevicePayloadTransport,
+  role: LineWiseDeviceRole = .watch
 ) throws -> (runtime: LineWiseAppleRuntime, root: URL) {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(
     "linewise-durable-device-runtime-\(UUID().uuidString)",
@@ -155,7 +378,7 @@ private func durableRuntimeFixture(
   )
   let persistent = try LineWiseAppBootstrap.makePersistentRuntime(
     storageDirectoryURL: root,
-    role: .watch
+    role: role
   )
   return (
     LineWiseAppleRuntime(

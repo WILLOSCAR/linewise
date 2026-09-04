@@ -364,36 +364,49 @@ public final class RouteMediaReadSurfaceController {
         }
       }
       .sheet(isPresented: $viewModel.presentsPhotoLibrary) {
-        RoutePhotoLibraryPicker { data, mimeType in
-          Task {
-            await viewModel.importPickedMedia(
-              data: data,
-              mimeType: mimeType,
-              method: .photoLibraryImport
-            )
+        RoutePhotoLibraryPicker(
+          onDismiss: { viewModel.presentsPhotoLibrary = false },
+          onSelection: { data, mimeType in
+            Task {
+              await viewModel.importPickedMedia(
+                data: data,
+                mimeType: mimeType,
+                method: .photoLibraryImport
+              )
+            }
           }
-        }
+        )
       }
       .sheet(isPresented: $viewModel.presentsCamera) {
-        RouteCameraPicker { data, mimeType in
-          Task {
-            await viewModel.importPickedMedia(
-              data: data,
-              mimeType: mimeType,
-              method: .cameraCapture
-            )
+        RouteCameraPicker(
+          onDismiss: { viewModel.presentsCamera = false },
+          onCapture: { data, mimeType in
+            Task {
+              await viewModel.importPickedMedia(
+                data: data,
+                mimeType: mimeType,
+                method: .cameraCapture
+              )
+            }
           }
-        }
+        )
       }
     }
   }
 
+  /// With an `isPresented`-driven sheet SwiftUI owns the presentation and the
+  /// binding is the source of truth, so dismissing the UIKit controller
+  /// imperatively leaves the flag `true` and the picker springs straight back
+  /// up. The coordinators therefore clear the binding instead, and they hand the
+  /// selection to the view model before dismissing so an in-flight asynchronous
+  /// load cannot complete against a torn-down view tree and drop the bytes.
   @available(iOS 15.0, *)
   private struct RoutePhotoLibraryPicker: UIViewControllerRepresentable {
+    let onDismiss: @MainActor () -> Void
     let onSelection: @MainActor (Data, String) -> Void
 
     func makeCoordinator() -> Coordinator {
-      Coordinator(onSelection: onSelection)
+      Coordinator(onDismiss: onDismiss, onSelection: onSelection)
     }
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
@@ -408,23 +421,31 @@ public final class RouteMediaReadSurfaceController {
     func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+      let onDismiss: @MainActor () -> Void
       let onSelection: @MainActor (Data, String) -> Void
 
-      init(onSelection: @escaping @MainActor (Data, String) -> Void) {
+      init(
+        onDismiss: @escaping @MainActor () -> Void,
+        onSelection: @escaping @MainActor (Data, String) -> Void
+      ) {
+        self.onDismiss = onDismiss
         self.onSelection = onSelection
       }
 
       func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
         guard let provider = results.first?.itemProvider,
           let identifier = provider.registeredTypeIdentifiers.first(where: {
             UTType($0)?.conforms(to: .image) == true
           })
         else { return }
-        provider.loadDataRepresentation(forTypeIdentifier: identifier) { [onSelection] data, _ in
-          guard let data else { return }
-          let mimeType = UTType(identifier)?.preferredMIMEType ?? "image/jpeg"
-          Task { @MainActor in onSelection(data, mimeType) }
+        provider.loadDataRepresentation(forTypeIdentifier: identifier) {
+          [onDismiss, onSelection] data, _ in
+          Task { @MainActor in
+            if let data {
+              onSelection(data, UTType(identifier)?.preferredMIMEType ?? "image/jpeg")
+            }
+            onDismiss()
+          }
         }
       }
     }
@@ -432,10 +453,11 @@ public final class RouteMediaReadSurfaceController {
 
   @available(iOS 15.0, *)
   private struct RouteCameraPicker: UIViewControllerRepresentable {
+    let onDismiss: @MainActor () -> Void
     let onCapture: @MainActor (Data, String) -> Void
 
     func makeCoordinator() -> Coordinator {
-      Coordinator(onCapture: onCapture)
+      Coordinator(onDismiss: onDismiss, onCapture: onCapture)
     }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -451,25 +473,31 @@ public final class RouteMediaReadSurfaceController {
     final class Coordinator: NSObject, UINavigationControllerDelegate,
       UIImagePickerControllerDelegate
     {
+      let onDismiss: @MainActor () -> Void
       let onCapture: @MainActor (Data, String) -> Void
 
-      init(onCapture: @escaping @MainActor (Data, String) -> Void) {
+      init(
+        onDismiss: @escaping @MainActor () -> Void,
+        onCapture: @escaping @MainActor (Data, String) -> Void
+      ) {
+        self.onDismiss = onDismiss
         self.onCapture = onCapture
       }
 
       func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        picker.dismiss(animated: true)
+        onDismiss()
       }
 
       func imagePickerController(
         _ picker: UIImagePickerController,
         didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
       ) {
-        picker.dismiss(animated: true)
-        guard let image = info[.originalImage] as? UIImage,
+        if let image = info[.originalImage] as? UIImage,
           let data = image.jpegData(compressionQuality: 0.92)
-        else { return }
-        onCapture(data, "image/jpeg")
+        {
+          onCapture(data, "image/jpeg")
+        }
+        onDismiss()
       }
     }
   }

@@ -96,7 +96,7 @@ public struct LineWiseDeviceSyncService: Sendable {
     return DeviceSyncBatchResult(deliveries: deliveries)
   }
 
-  public func pull() async throws -> [ReceivedDeviceEnvelope] {
+  public func pull() async throws -> DeviceInboundBatch {
     try await bridge.pendingReceivedEnvelopes()
   }
 

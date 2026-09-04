@@ -22,6 +22,10 @@ func learningExperienceSurfaceSpecifications() -> [(String, () async throws -> V
       "movement focus pins and reopens through the public surface",
       movementFocusPinsAndReopensThroughPublicSurface
     ),
+    (
+      "confirmed failure-to-cue chain reaches qualitative analysis",
+      confirmedFailureToCueChainReachesQualitativeAnalysis
+    ),
   ]
 }
 
@@ -350,6 +354,139 @@ private func qualitativeReadingAndTrainingPathCompleteThroughPublicSurface() asy
     reopened.projection.learning.trainingPaths.first?.status == .completed
       && reopened.projection.learning.proofChecks.first?.attemptID == laterAttemptID,
     "the public learning loop should reopen durably"
+  )
+}
+
+@MainActor
+private func confirmedFailureToCueChainReachesQualitativeAnalysis() async throws {
+  let model = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(
+      store: MemoryExperienceArchiveStore()
+    )
+  )
+  let routeID = RouteCardID("pinned-chain-route")
+  let otherRouteID = RouteCardID("pinned-chain-other-route")
+  let projectID = ProjectID("pinned-chain-project")
+  let otherProjectID = ProjectID("pinned-chain-other-project")
+  let visitID = GymVisitID("pinned-chain-visit")
+  let attemptID = AttemptID("pinned-chain-attempt")
+  let otherAttemptID = AttemptID("pinned-chain-other-attempt")
+  try expect(
+    model.createRoute(label: "Pinned chain", routeCardID: routeID, at: learningSurfaceInstant(60)),
+    "expected the analyzed RouteCard"
+  )
+  try expect(
+    model.startProject(routeCardID: routeID, projectID: projectID, at: learningSurfaceInstant(60)),
+    "expected a Project on the analyzed route"
+  )
+  try expect(
+    model.createRoute(
+      label: "Other route",
+      routeCardID: otherRouteID,
+      at: learningSurfaceInstant(61)
+    ),
+    "expected a second RouteCard whose evidence must stay out"
+  )
+  try expect(
+    model.startProject(
+      routeCardID: otherRouteID,
+      projectID: otherProjectID,
+      at: learningSurfaceInstant(61)
+    ),
+    "expected a Project on the other route"
+  )
+  try expect(model.startVisit(visitID: visitID, at: learningSurfaceInstant(62)), "expected Visit")
+  try expect(model.selectRoute(routeID), "expected the analyzed route to be selected")
+  try expect(
+    model.recordAttempt(attemptID: attemptID, at: learningSurfaceInstant(63)),
+    "expected an Attempt on the analyzed route"
+  )
+  try expect(
+    model.markAttemptNotSent(attemptID, at: learningSurfaceInstant(64)),
+    "expected explicit Not Sent"
+  )
+  let failureID = FailureEpisodeID("pinned-chain-failure")
+  let moveCueID = MoveCueID("pinned-chain-move-cue")
+  try expect(
+    model.completeFailureReview(
+      itemID: nil,
+      attemptID: attemptID,
+      routeCardID: routeID,
+      projectID: projectID,
+      blocker: .footwork,
+      locationNote: "at the volume",
+      moveCueText: "Place the right toe before standing up",
+      nextAction: "Rehearse the toe placement once",
+      failureEpisodeID: failureID,
+      moveCueID: moveCueID,
+      nextSessionCueID: NextSessionCueID("pinned-chain-next-cue"),
+      at: learningSurfaceInstant(65)
+    ),
+    "expected the normal manual review path to confirm a failure-to-cue chain"
+  )
+
+  // A confirmed chain on a different RouteCard must never cross the boundary.
+  model.selectRoute(otherRouteID)
+  try expect(
+    model.recordAttempt(attemptID: otherAttemptID, at: learningSurfaceInstant(66)),
+    "expected an Attempt on the other route"
+  )
+  try expect(
+    model.markAttemptNotSent(otherAttemptID, at: learningSurfaceInstant(67)),
+    "expected explicit Not Sent on the other route"
+  )
+  let otherMoveCueID = MoveCueID("pinned-chain-other-move-cue")
+  try expect(
+    model.completeFailureReview(
+      itemID: nil,
+      attemptID: otherAttemptID,
+      routeCardID: otherRouteID,
+      projectID: otherProjectID,
+      blocker: .reachOrLockoff,
+      locationNote: nil,
+      moveCueText: "Drop the shoulder before reaching",
+      nextAction: "Try the shoulder drop once",
+      failureEpisodeID: FailureEpisodeID("pinned-chain-other-failure"),
+      moveCueID: otherMoveCueID,
+      nextSessionCueID: NextSessionCueID("pinned-chain-other-next-cue"),
+      at: learningSurfaceInstant(68)
+    ),
+    "expected a second confirmed chain on the other route"
+  )
+
+  let rehearsalID = RouteRehearsalID("pinned-chain-rehearsal")
+  try expect(
+    model.createManualRehearsalStarter(routeCardID: routeID, rehearsalID: rehearsalID),
+    "expected a rehearsal on the analyzed route"
+  )
+  let editor = try requireLearningSurfaceValue(
+    model.rehearsalEditorModel(for: rehearsalID),
+    "expected the rehearsal editor"
+  )
+  await editor.runLocalQualitativeAnalysis()
+  let analysis = try requireLearningSurfaceValue(
+    editor.qualitativeAnalysis,
+    "expected a local qualitative suggestion"
+  )
+
+  try expect(
+    analysis.evidenceReferences.contains {
+      $0.kind == .failureEpisode && $0.id == failureID.rawValue
+    },
+    "the analyzed route's confirmed FailureEpisode must be pinned as evidence"
+  )
+  try expect(
+    analysis.evidenceReferences.contains {
+      $0.kind == .moveCue && $0.id == moveCueID.rawValue
+    },
+    "the MoveCue the user authored during review must reach the analysis as evidence"
+  )
+  try expect(
+    !analysis.evidenceReferences.contains {
+      $0.id == otherMoveCueID.rawValue
+        || $0.id == FailureEpisodeID("pinned-chain-other-failure").rawValue
+    },
+    "recall evidence must never cross RouteCard boundaries"
   )
 }
 

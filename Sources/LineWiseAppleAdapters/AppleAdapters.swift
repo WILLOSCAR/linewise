@@ -152,6 +152,41 @@ public struct ReceivedDeviceEnvelope: Equatable, Sendable {
   }
 }
 
+/// An inbound payload this build cannot interpret as a `DeviceEventEnvelope`.
+///
+/// A counterpart that updates first can send a command kind an older build does
+/// not know. Such a payload is retained rather than discarded — silently
+/// dropping a peer's durable event would lose confirmed history — but it must
+/// never withhold the payloads that did decode.
+public struct UndecodableDevicePayload: Equatable, Sendable {
+  public let payloadID: DevicePayloadID
+  public let reason: String
+
+  public init(payloadID: DevicePayloadID, reason: String) {
+    self.payloadID = payloadID
+    self.reason = reason
+  }
+}
+
+/// The decodable and undecodable halves of one durable inbox read, kept apart so
+/// a single bad payload cannot stall every later inbound event behind it.
+public struct DeviceInboundBatch: Equatable, Sendable {
+  public let envelopes: [ReceivedDeviceEnvelope]
+  public let undecodablePayloads: [UndecodableDevicePayload]
+
+  public init(
+    envelopes: [ReceivedDeviceEnvelope],
+    undecodablePayloads: [UndecodableDevicePayload] = []
+  ) {
+    self.envelopes = envelopes
+    self.undecodablePayloads = undecodablePayloads
+  }
+
+  public var isEmpty: Bool {
+    envelopes.isEmpty && undecodablePayloads.isEmpty
+  }
+}
+
 public actor DeviceEnvelopeBridge {
   private let transport: any DevicePayloadTransport
 
@@ -172,18 +207,34 @@ public actor DeviceEnvelopeBridge {
     return try await transport.send(encoder.encode(envelope), mode: mode)
   }
 
-  public func pendingReceivedEnvelopes() async throws -> [ReceivedDeviceEnvelope] {
+  /// Decodes each durable inbox payload independently. A payload that cannot be
+  /// decoded is reported alongside the ones that could, never in place of them.
+  public func pendingReceivedEnvelopes() async throws -> DeviceInboundBatch {
     let decoder = JSONDecoder()
-    return try await transport.pendingReceivedPayloads().map { received in
-      ReceivedDeviceEnvelope(
-        payloadID: received.id,
-        envelope: try decoder.decode(DeviceEventEnvelope.self, from: received.payload)
-      )
+    var envelopes: [ReceivedDeviceEnvelope] = []
+    var undecodable: [UndecodableDevicePayload] = []
+    for received in try await transport.pendingReceivedPayloads() {
+      do {
+        envelopes.append(
+          ReceivedDeviceEnvelope(
+            payloadID: received.id,
+            envelope: try decoder.decode(DeviceEventEnvelope.self, from: received.payload)
+          )
+        )
+      } catch {
+        undecodable.append(
+          UndecodableDevicePayload(
+            payloadID: received.id,
+            reason: String(describing: error)
+          )
+        )
+      }
     }
+    return DeviceInboundBatch(envelopes: envelopes, undecodablePayloads: undecodable)
   }
 
   public func receivedEnvelopes() async throws -> [DeviceEventEnvelope] {
-    try await pendingReceivedEnvelopes().map(\.envelope)
+    try await pendingReceivedEnvelopes().envelopes.map(\.envelope)
   }
 
   public func acknowledgeReceivedPayloads(_ payloadIDs: [DevicePayloadID]) async throws {
@@ -198,11 +249,15 @@ public actor DeviceEnvelopeBridge {
     private let healthStore: HKHealthStore
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
-    private var workoutStartedAt: Date?
     private let summaryLock = NSLock()
     private var storedLatestSummary: HealthKitWorkoutSummary?
-    // Live heart-rate coverage is accumulated as the builder collects data.
-    // Guarded by summaryLock because delegate callbacks and stop() may race.
+    // The whole live-collection window is guarded by summaryLock, because
+    // HealthKit invokes didCollectDataOf on an arbitrary background queue while
+    // start()/stop() run from the MainActor-driven runtime. This class is
+    // @unchecked Sendable, so the lock is the only thing standing between an
+    // in-flight sample and a torn read of the workout start — which would either
+    // drop the sample and under-report coverage, or crash.
+    private var workoutStartedAt: Date?
     private var coverageAccumulator = HeartRateCoverageAccumulator()
 
     public init(healthStore: HKHealthStore = HKHealthStore()) {
@@ -261,8 +316,10 @@ public actor DeviceEnvelopeBridge {
       builder.delegate = self
       workoutSession = session
       workoutBuilder = builder
-      workoutStartedAt = date
-      summaryLock.withLock { coverageAccumulator = HeartRateCoverageAccumulator() }
+      summaryLock.withLock {
+        workoutStartedAt = date
+        coverageAccumulator = HeartRateCoverageAccumulator()
+      }
       session.startActivity(with: date)
       try await builder.beginCollection(at: date)
     }
@@ -274,14 +331,21 @@ public actor DeviceEnvelopeBridge {
       session.end()
       try await builder.endCollection(at: date)
       _ = try await builder.finishWorkout()
-      let duration = max(0, date.timeIntervalSince(workoutStartedAt ?? date))
       let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate)
       let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)
       let heartRateStatistics = heartRateType.flatMap { builder.statistics(for: $0) }
       let activeEnergyStatistics = activeEnergyType.flatMap { builder.statistics(for: $0) }
       let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
-      let coverage = summaryLock.withLock {
-        duration > 0 ? coverageAccumulator.coverage(overWorkoutDurationSeconds: duration) : nil
+      // One critical section closes the live window, reads the start instant and
+      // folds the accumulator, so a final delegate callback either lands fully
+      // inside this workout's coverage or is cleanly excluded from it.
+      let (duration, coverage) = summaryLock.withLock {
+        () -> (TimeInterval, Double?) in
+        let elapsed = max(0, date.timeIntervalSince(workoutStartedAt ?? date))
+        let coverage =
+          elapsed > 0 ? coverageAccumulator.coverage(overWorkoutDurationSeconds: elapsed) : nil
+        workoutStartedAt = nil
+        return (elapsed, coverage)
       }
       let summary = HealthKitWorkoutSummary(
         durationSeconds: duration,
@@ -300,7 +364,6 @@ public actor DeviceEnvelopeBridge {
       summaryLock.withLock { storedLatestSummary = summary }
       workoutSession = nil
       workoutBuilder = nil
-      workoutStartedAt = nil
     }
 
     public func latestSummary() async -> HealthKitWorkoutSummary? {
@@ -326,13 +389,18 @@ public actor DeviceEnvelopeBridge {
     // accumulation logic it delegates to (HeartRateCoverageAccumulator) is
     // covered by physiologyCoverageSpecifications.
     //
-    // `statistics(for:)` on a live builder is cumulative: the SDK documents it as
-    // "statistics for all the samples of the given type that have been added to
-    // the receiver", so its startDate...endDate spans the whole workout so far
-    // regardless of sensor dropouts. Feeding that span to the accumulator would
-    // report full coverage for an almost entirely missing stream, so this reports
-    // only the newest reading's own timing and lets the accumulator decide how
-    // much time a single reading is worth.
+    // HealthKit calls this on an arbitrary background queue, so the workout
+    // start instant and the accumulator are read and updated inside one
+    // summaryLock critical section. A sample arriving after stop() closed the
+    // window finds no start and is excluded, rather than racing a torn read.
+    //
+    // `statistics(for:)` on a live builder is cumulative: the SDK documents it
+    // as "statistics for all the samples of the given type that have been added
+    // to the receiver", so its startDate...endDate spans the whole workout so
+    // far regardless of sensor dropouts. Feeding that span to the accumulator
+    // would report full coverage for an almost entirely missing stream, so this
+    // reports only the newest reading's own timing and lets the accumulator
+    // decide how much time a single reading is worth.
     public func workoutBuilder(
       _ workoutBuilder: HKLiveWorkoutBuilder,
       didCollectDataOf collectedTypes: Set<HKSampleType>
@@ -340,8 +408,7 @@ public actor DeviceEnvelopeBridge {
       guard
         let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate),
         collectedTypes.contains(heartRateType),
-        let statistics = workoutBuilder.statistics(for: heartRateType),
-        let start = workoutStartedAt
+        let statistics = workoutBuilder.statistics(for: heartRateType)
       else { return }
 
       let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
@@ -356,6 +423,7 @@ public actor DeviceEnvelopeBridge {
       else { return }
 
       summaryLock.withLock {
+        guard let start = workoutStartedAt else { return }
         if let interval = statistics.mostRecentQuantityDateInterval() {
           coverageAccumulator.observeWindow(
             startSeconds: max(0, interval.start.timeIntervalSince(start)),
@@ -363,8 +431,8 @@ public actor DeviceEnvelopeBridge {
             bpm: bpm
           )
         } else {
-          // No per-reading interval: credit the instant the newest sample landed,
-          // never the cumulative window back to the first sample.
+          // No per-reading interval: credit the instant the newest sample
+          // landed, never the cumulative window back to the first sample.
           coverageAccumulator.observeSample(
             at: max(0, statistics.endDate.timeIntervalSince(start)),
             bpm: bpm
@@ -397,27 +465,48 @@ public actor DeviceEnvelopeBridge {
     private static let envelopeKey = "linewiseEnvelope"
     private static let payloadIDKey = "linewisePayloadID"
 
+    /// WatchConnectivity may never deliver `didFinish` for a queued transfer, so
+    /// every durable send is bounded. The event stays unacknowledged and the next
+    /// flush retries it under the same stable ActionID, which is strictly better
+    /// than freezing the outbox and the sync poll loop behind one transfer.
+    public static let defaultTransferConfirmationTimeoutSeconds: Double = 120
+
     private let session: WCSession
     private let inbox: DurableDevicePayloadInbox
     private let completions = DeviceTransferCompletionRegistry<UUID>()
-    private let delegateErrorLock = NSLock()
-    private var delegatePersistenceError: DevicePayloadInboxError?
+    private let transferConfirmationTimeoutNanoseconds: UInt64
 
-    public init(session: WCSession = .default) {
+    public init(
+      session: WCSession = .default,
+      transferConfirmationTimeoutSeconds: Double =
+        WatchConnectivityPayloadTransport.defaultTransferConfirmationTimeoutSeconds
+    ) {
       self.session = session
       inbox = DurableDevicePayloadInbox()
+      transferConfirmationTimeoutNanoseconds = Self.nanoseconds(
+        from: transferConfirmationTimeoutSeconds
+      )
       super.init()
       session.delegate = self
     }
 
     public init(
       session: WCSession = .default,
-      inboxStore: any DevicePayloadInboxStore
+      inboxStore: any DevicePayloadInboxStore,
+      transferConfirmationTimeoutSeconds: Double =
+        WatchConnectivityPayloadTransport.defaultTransferConfirmationTimeoutSeconds
     ) throws {
       self.session = session
       inbox = try DurableDevicePayloadInbox(store: inboxStore)
+      transferConfirmationTimeoutNanoseconds = Self.nanoseconds(
+        from: transferConfirmationTimeoutSeconds
+      )
       super.init()
       session.delegate = self
+    }
+
+    private static func nanoseconds(from seconds: Double) -> UInt64 {
+      UInt64(max(1, seconds) * 1_000_000_000)
     }
 
     public func activate() async {
@@ -462,7 +551,11 @@ public actor DeviceEnvelopeBridge {
         session.transferUserInfo(value)
       }
 
-      let completion = await completions.wait(for: transferID)
+      try Task.checkCancellation()
+      let completion = await completions.wait(
+        for: transferID,
+        timeoutNanoseconds: transferConfirmationTimeoutNanoseconds
+      )
       try Task.checkCancellation()
       switch completion {
       case .succeeded:
@@ -473,10 +566,11 @@ public actor DeviceEnvelopeBridge {
     }
 
     public func pendingReceivedPayloads() async throws -> [ReceivedDevicePayload] {
-      if let error = delegateErrorLock.withLock({ delegatePersistenceError }) {
-        throw error
-      }
-      return inbox.pendingPayloads
+      // A lost inbound delivery must stay visible, but it must never withhold
+      // payloads that were already committed — those are confirmed peer events
+      // and holding them back stalls late or conflicting events that should
+      // reopen review.
+      try inbox.readPendingPayloadsReportingFault()
     }
 
     public func acknowledgeReceivedPayloads(
@@ -492,13 +586,10 @@ public actor DeviceEnvelopeBridge {
       )
       do {
         _ = try inbox.receive(ReceivedDevicePayload(id: payloadID, payload: data))
-        delegateErrorLock.withLock { delegatePersistenceError = nil }
       } catch let error as DevicePayloadInboxError {
-        delegateErrorLock.withLock { delegatePersistenceError = error }
+        inbox.recordDeliveryFault(error)
       } catch {
-        delegateErrorLock.withLock {
-          delegatePersistenceError = .delegatePersistenceFailed(String(describing: error))
-        }
+        inbox.recordDeliveryFault(.delegatePersistenceFailed(String(describing: error)))
       }
     }
   }

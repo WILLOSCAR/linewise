@@ -44,6 +44,37 @@ public actor DeviceTransferCompletionRegistry<TransferID: Hashable & Sendable> {
     }
   }
 
+  /// Waits for a transport callback that a platform may never deliver.
+  ///
+  /// WatchConnectivity does not guarantee `didFinish` — the counterpart app may
+  /// not be installed, the pairing can break mid-flight, the session can
+  /// deactivate, or the process can be relaunched with the in-memory registry
+  /// gone. An unbounded wait therefore freezes the whole outbox flush and the
+  /// sync poll loop behind one transfer. Timing out reports an explicit failure
+  /// instead: the durable event stays unacknowledged and the next flush retries
+  /// it under the same stable ActionID, so a late real callback is harmless.
+  public func wait(
+    for transferID: TransferID,
+    timeoutNanoseconds: UInt64
+  ) async -> DeviceTransferCompletion {
+    let deadline = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+      guard !Task.isCancelled else { return }
+      await self?.timeOut(transferID, afterNanoseconds: timeoutNanoseconds)
+    }
+    let completion = await wait(for: transferID)
+    deadline.cancel()
+    return completion
+  }
+
+  private func timeOut(_ transferID: TransferID, afterNanoseconds nanoseconds: UInt64) {
+    let seconds = Double(nanoseconds) / 1_000_000_000
+    complete(
+      .failed("the device transport did not confirm within \(seconds) seconds"),
+      for: transferID
+    )
+  }
+
   public func complete(
     _ completion: DeviceTransferCompletion,
     for transferID: TransferID
@@ -211,6 +242,7 @@ public final class DurableDevicePayloadInbox: @unchecked Sendable {
   private let store: any DevicePayloadInboxStore
   private let lock = NSLock()
   private var payloads: [ReceivedDevicePayload]
+  private var unreportedDeliveryFault: DevicePayloadInboxError?
 
   public init() {
     store = MemoryDevicePayloadInboxStore()
@@ -226,6 +258,34 @@ public final class DurableDevicePayloadInbox: @unchecked Sendable {
 
   public var pendingPayloads: [ReceivedDevicePayload] {
     lock.withLock { payloads }
+  }
+
+  /// Records that a platform delegate callback could not persist inbound bytes.
+  ///
+  /// The bytes are lost, but the peer has not acknowledged them either, so the
+  /// event is still recoverable by redelivery. The fault exists only to stay
+  /// visible; it must never become a reason to withhold data.
+  public func recordDeliveryFault(_ error: DevicePayloadInboxError) {
+    lock.withLock { unreportedDeliveryFault = error }
+  }
+
+  /// Reads the durable inbox, reporting at most one delivery fault.
+  ///
+  /// A fault is reported only when there is nothing durable to hand over.
+  /// Payloads that were already committed are confirmed peer events, and a
+  /// later unrelated write failure must not hide them — doing so leaves
+  /// late or conflicting events that should reopen review sitting unprocessed
+  /// indefinitely, even after the fault has cleared. Each fault is reported
+  /// once so an idle inbox does not throw forever.
+  public func readPendingPayloadsReportingFault() throws -> [ReceivedDevicePayload] {
+    try lock.withLock {
+      let fault = unreportedDeliveryFault
+      unreportedDeliveryFault = nil
+      if payloads.isEmpty, let fault {
+        throw fault
+      }
+      return payloads
+    }
   }
 
   @discardableResult
