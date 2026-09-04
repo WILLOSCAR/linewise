@@ -103,7 +103,18 @@ Implemented code is not the same as validated product value. The repository prov
 - fatigue or hand-muscle usefulness beyond subjective, non-diagnostic context;
 - completion time, tap burden, review completion, cue reuse, and retention in real gym visits.
 
-A passing `swift build` on macOS does not cover the Apple integration code. Roughly 1,400 lines sit behind `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)` gates — the SwiftUI capture and rehearsal surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points. Compiling them requires a full Xcode installation with the iOS and watchOS SDKs; a Command Line Tools installation cannot even syntax-check them. Where a spec covers such a path, it covers the platform-independent logic the gated code delegates to, not the gated code itself.
+A passing `swift build` on macOS does not cover the Apple integration code. The SwiftUI capture and rehearsal surfaces in `ExperienceSurfaces.swift` and `RehearsalSurfaces.swift` are gated only on `canImport(SwiftUI)`, which is true on macOS, so they do build here. What macOS skips is the code behind `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)`: the Watch and iPhone capture surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points.
+
+Most of that is reachable without a full Xcode installation, because the Command Line Tools macOS SDK bundles Catalyst iOSSupport (including HealthKit, WatchConnectivity, and PhotosUI). This makes `os(iOS)` true and compiles those paths:
+
+```sh
+SDK=$(xcrun --sdk macosx --show-sdk-path)
+swift build --triple x86_64-apple-ios18.0-macabi \
+  -Xswiftc -F -Xswiftc "$SDK/System/iOSSupport/System/Library/Frameworks" \
+  -Xswiftc -I -Xswiftc "$SDK/System/iOSSupport/usr/lib/swift"
+```
+
+Run this before claiming an Apple-surface change is verified; plain `swift build` will not catch an error in it. No triple available here makes `os(watchOS)` true, so `#if os(watchOS)` branches remain uncompiled, and running on signed devices is still the only way to close the platform gate. Where a spec covers a gated path, it covers the platform-independent logic that path delegates to, not the gated code itself.
 
 Field evidence recording is disabled by default and requires explicit session consent. It stores controlled event categories and aggregate numerators/denominators, not route labels, health payloads, media, free text, or stable user identity.
 

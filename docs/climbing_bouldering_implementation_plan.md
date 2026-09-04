@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: End-to-end implementation foundation present; command-line behavior verification is active at 181 specifications; the platform-gated Apple code is unbuilt on the current toolchain, and real-device and real-gym evidence remains open.
+Status: End-to-end implementation foundation present; command-line behavior verification is active at 181 specifications; the `os(iOS)` surfaces now compile via the Catalyst triple in Section 5, `os(watchOS)` branches remain uncompiled, and real-device and real-gym evidence remains open.
 
 Product: LineWise / 线感
 
@@ -167,13 +167,24 @@ The executable specification targets are used because the currently selected Com
 
 Current baseline: 85 Domain + 39 Application + 42 Apple adapter + 15 AI adapter behaviors = 181 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
 
-These commands do not cover the platform-gated Apple code. On macOS, `swift build` skips everything behind `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)` — roughly 1,400 lines spanning the SwiftUI surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points. A green package build is not evidence that those files compile.
+These commands do not cover all of the platform-gated Apple code. The SwiftUI surfaces in `ExperienceSurfaces.swift` and `RehearsalSurfaces.swift` are gated only on `canImport(SwiftUI)`, which is true on macOS, so `swift build` does compile them. What it skips is `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)`: the Watch and iPhone capture surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points.
+
+Add this build, which reaches most of that set without a full Xcode installation. The Command Line Tools macOS SDK bundles Catalyst iOSSupport, including HealthKit, WatchConnectivity, and PhotosUI, so the triple makes `os(iOS)` true:
+
+```sh
+SDK=$(xcrun --sdk macosx --show-sdk-path)
+swift build --triple x86_64-apple-ios18.0-macabi \
+  -Xswiftc -F -Xswiftc "$SDK/System/iOSSupport/System/Library/Frameworks" \
+  -Xswiftc -I -Xswiftc "$SDK/System/iOSSupport/usr/lib/swift"
+```
+
+This build is what first caught the eight `static member 'now'` errors in `AppleSurfaces.swift`. Treat it as required for any change to an Apple surface. No triple available here makes `os(watchOS)` true, so `#if os(watchOS)` branches are still compiled by nobody; verify those expressions in isolation or on a device.
 
 ## 6. Apple Validation Procedure
 
 The repository includes an iPhone target and a single-target watchOS companion in `LineWise.xcodeproj`. A platform validation pass must use a full Xcode installation and signed devices.
 
-The current toolchain cannot start this pass. `xcodebuild` reports that the active developer directory is a Command Line Tools instance, and neither the `watchos` nor the `iphoneos` SDK can be located. Installing full Xcode is therefore the first step, and it unblocks compilation before it unblocks device testing.
+The current toolchain cannot start a device pass: `xcodebuild` reports that the active developer directory is a Command Line Tools instance, and neither the `watchos` nor the `iphoneos` SDK can be located. It can, however, compile the `os(iOS)` code through the Catalyst triple in Section 5, which is how the first two Apple-surface defects were found. Compilation and device validation are separate gates; clearing the first does not touch the second.
 
 Required scenarios:
 
@@ -208,7 +219,7 @@ For route intelligence, compare manual, deterministic-local, and remote-suggesti
 
 The main open work is external validation:
 
-- install full Xcode so the platform-gated Apple sources compile at all, then run the Apple targets with signing and a paired Watch/iPhone;
+- install full Xcode so the `os(watchOS)` branches compile and the Apple targets can be run with signing on a paired Watch/iPhone;
 - exercise a configured remote model endpoint with consented representative media;
 - complete the real-gym P0 gate and record its denominators;
 - test route analysis and stick-figure rehearsal with representative climbers;
