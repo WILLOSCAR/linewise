@@ -475,6 +475,64 @@ private func corruptedAndFutureStoresFailExplicitly() throws {
       "expected unsupported schema version to remain explicit"
     )
   }
+
+  // A journal that records the same locally-originated envelope twice must
+  // reopen, not trap the process. The inbox deliberately treats an exact
+  // duplicate as idempotent redelivery, so the outbox must agree rather than
+  // assume uniqueness: `Dictionary(uniqueKeysWithValues:)` traps here, which is
+  // a crash on every launch with no way for the user to reach their history.
+  // A CONFLICTING reuse of one event ID is different and must still be refused.
+  let duplicated = DeviceEventEnvelope(
+    originDeviceID: DeviceID("iphone"),
+    sequence: 1,
+    command: .startVisit(
+      actionID: ActionID("duplicated-local-action"),
+      visitID: GymVisitID("duplicated-local-visit"),
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    )
+  )
+  let tolerated = try VisitRepository(
+    store: MemoryVisitEventStore(
+      journal: VisitEventJournal(events: [duplicated, duplicated])
+    ),
+    localDeviceID: DeviceID("iphone")
+  )
+  try expect(
+    tolerated.snapshot.visits.count == 1,
+    "an exact duplicate must reopen as one Visit rather than trapping on reopen"
+  )
+  try expect(
+    tolerated.pendingOutboundEvents.count == 1,
+    "an exact duplicate must not be queued for delivery twice"
+  )
+
+  let conflicting = DeviceEventEnvelope(
+    originDeviceID: DeviceID("iphone"),
+    sequence: 2,
+    command: .startVisit(
+      actionID: ActionID("duplicated-local-action"),
+      visitID: GymVisitID("a-different-visit"),
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    )
+  )
+  do {
+    _ = try VisitRepository(
+      store: MemoryVisitEventStore(
+        journal: VisitEventJournal(events: [duplicated, conflicting])
+      ),
+      localDeviceID: DeviceID("iphone")
+    )
+    throw SpecFailure.expected("expected a reused event ID with new meaning to be refused")
+  } catch is DeviceSyncError {
+    // Expected: one action ID cannot mean two different things.
+  } catch let error as VisitPersistenceError {
+    // Also acceptable: journal validation refuses it before the outbox is built.
+    guard case .corruptedStore = error else {
+      throw SpecFailure.expected("expected an explicit refusal, got \(error)")
+    }
+  }
 }
 
 private func failedPersistenceDoesNotMutateRepositoryState() throws {

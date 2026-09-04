@@ -23,6 +23,9 @@ public struct IncrementalVisitReplay: Sendable {
 
   private var sortedEvents: [DeviceEventEnvelope]
   private var checkpoints: [Checkpoint]
+  /// The fold of every event in `sortedEvents`, kept separately from the
+  /// checkpoint cache so the cache never has to hold a tail entry per insert.
+  private var currentState: VisitState
   private let checkpointInterval: Int
 
   /// - Parameter checkpointInterval: how many additional sorted events to fold
@@ -32,6 +35,7 @@ public struct IncrementalVisitReplay: Sendable {
     precondition(checkpointInterval >= 1, "checkpoint interval must be positive")
     sortedEvents = []
     checkpoints = []
+    currentState = VisitState()
     self.checkpointInterval = checkpointInterval
   }
 
@@ -47,11 +51,23 @@ public struct IncrementalVisitReplay: Sendable {
 
   /// The projected state of every inserted event, folded in `replayOrder`.
   public var state: VisitState {
-    checkpoints.last?.state ?? VisitState()
+    currentState
   }
 
   public var events: [DeviceEventEnvelope] {
     sortedEvents
+  }
+
+  /// How many checkpoints are currently cached.
+  ///
+  /// Exposed so the compaction contract itself is testable: the cache must stay
+  /// bounded by `checkpointInterval` as history grows, because each entry
+  /// retains a full `VisitState` copy. Without this, a cache that grows once per
+  /// event is indistinguishable from a correct one — every projection still
+  /// matches a full replay while the memory cost quietly exceeds the naive
+  /// replay this type replaced.
+  public var checkpointCount: Int {
+    checkpoints.count
   }
 
   /// Inserts one event into its `replayOrder` position and reprojects only the
@@ -105,11 +121,16 @@ public struct IncrementalVisitReplay: Sendable {
         capturedOutcome = transition.outcome
       }
       index += 1
-      if index % checkpointInterval == 0 || index == sortedEvents.count {
+      // Only interval boundaries are cached. The tail is held in
+      // `currentState`, so appending never grows the cache — with a tail
+      // checkpoint per insert the cache would grow 1:1 with history and each
+      // entry retains a full VisitState copy.
+      if index % checkpointInterval == 0 {
         checkpoints.append(Checkpoint(eventCount: index, state: state))
       }
     }
 
+    currentState = state
     if sortedEvents.isEmpty {
       checkpoints = []
     }

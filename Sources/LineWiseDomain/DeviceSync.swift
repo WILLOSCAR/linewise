@@ -320,7 +320,23 @@ public struct DeviceEventOutbox: Sendable {
     let localEvents = events.filter { $0.originDeviceID == originDeviceID }
     var inbox = DeviceEventInbox()
     _ = try inbox.receive(localEvents)
-    eventsByID = Dictionary(uniqueKeysWithValues: localEvents.map { ($0.eventID, $0) })
+    // `inbox.receive` tolerates an exact duplicate as idempotent redelivery, so
+    // reaching here does not imply the list is unique. Building the index with
+    // `uniqueKeysWithValues` would trap on a journal that recorded the same
+    // locally-originated envelope twice — a crash on every launch, with no
+    // recoverable error and no way for the user to reach their history. Keep the
+    // first occurrence and report a genuine conflict instead.
+    var index: [ActionID: DeviceEventEnvelope] = [:]
+    for event in localEvents {
+      if let existing = index[event.eventID] {
+        guard existing == event else {
+          throw DeviceSyncError.conflictingEventID(event.eventID)
+        }
+        continue
+      }
+      index[event.eventID] = event
+    }
+    eventsByID = index
     self.acknowledgedEventIDs = acknowledgedEventIDs.intersection(eventsByID.keys)
     nextSequence = (localEvents.map(\.sequence).max() ?? 0) + 1
   }

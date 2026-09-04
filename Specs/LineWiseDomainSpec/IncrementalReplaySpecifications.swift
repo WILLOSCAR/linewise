@@ -40,7 +40,57 @@ func incrementalReplaySpecifications() -> [(String, () throws -> Void)] {
       "re-inserting an already-recorded event is a duplicate that changes nothing",
       incrementalReplayReportsDuplicateWithoutChangingHistory
     ),
+    (
+      "the checkpoint cache stays bounded by the interval as history grows",
+      checkpointCacheStaysBoundedAsHistoryGrows
+    ),
   ]
+}
+
+/// Compaction has to bound the cache, not just the fold. The point of a
+/// checkpoint interval is that a long visit keeps a handful of cached
+/// `VisitState` copies rather than one per event; a cache that grows 1:1 with
+/// history costs more memory than the naive full replay it replaced, which
+/// inverts the optimization instead of delivering it.
+private func checkpointCacheStaysBoundedAsHistoryGrows() throws {
+  let interval = 8
+  let eventCount = 200
+  var engine = IncrementalVisitReplay(checkpointInterval: interval)
+  var envelopes: [DeviceEventEnvelope] = []
+
+  for index in 0..<eventCount {
+    let sequence = UInt64(index + 1)
+    let entry = envelope(
+      sequence,
+      .createRouteCard(
+        actionID: ActionID("bounded-action-\(index)"),
+        routeCardID: RouteCardID("bounded-route-\(index)"),
+        label: "Route \(index)",
+        availability: .present,
+        occurredAt: Instant(millisecondsSince1970: Int64(index + 1) * 1_000),
+        source: .watch
+      )
+    )
+    envelopes.append(entry)
+    engine.insert(entry)
+  }
+
+  // One cached checkpoint per interval, plus at most one partial tail.
+  let allowed = eventCount / interval + 1
+  try expect(
+    engine.checkpointCount <= allowed,
+    """
+    a \(eventCount) event history at interval \(interval) must cache at most \
+    \(allowed) checkpoints, not \(engine.checkpointCount) — each retains a full \
+    VisitState copy, so a cache that grows per event defeats compaction
+    """
+  )
+
+  // Bounding the cache must not change the projection it exists to accelerate.
+  try expect(
+    engine.state.snapshot == fullReplayState(of: envelopes).snapshot,
+    "a bounded checkpoint cache must still project exactly the full replay"
+  )
 }
 
 private func incrementalReplayMatchesFullReplayOnAppend() throws {
