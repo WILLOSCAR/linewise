@@ -76,7 +76,7 @@
           routeCardID: routeID,
           label: label,
           availability: .present,
-          occurredAt: now,
+          occurredAt: Self.now,
           source: .iPhone
         )
       )
@@ -88,7 +88,7 @@
         .startVisit(
           actionID: ActionID(UUID().uuidString),
           visitID: GymVisitID(UUID().uuidString),
-          occurredAt: now,
+          occurredAt: Self.now,
           source: source
         )
       )
@@ -137,7 +137,7 @@
         .recordAttempt(
           actionID: ActionID(UUID().uuidString),
           attemptID: AttemptID(UUID().uuidString),
-          occurredAt: now,
+          occurredAt: Self.now,
           source: source
         )
       )
@@ -149,7 +149,7 @@
         .markSend(
           actionID: ActionID(UUID().uuidString),
           attemptID: attempt.id,
-          occurredAt: now,
+          occurredAt: Self.now,
           source: source
         )
       )
@@ -161,7 +161,7 @@
           .stopRest(
             actionID: ActionID(UUID().uuidString),
             restID: activeRest.id,
-            occurredAt: now
+            occurredAt: Self.now
           )
         )
       } else {
@@ -170,7 +170,7 @@
             actionID: ActionID(UUID().uuidString),
             restID: RestIntervalID(UUID().uuidString),
             afterAttemptID: projection.currentRouteAttempts.last?.id,
-            occurredAt: now
+            occurredAt: Self.now
           )
         )
       }
@@ -182,7 +182,7 @@
         .undo(
           actionID: ActionID(UUID().uuidString),
           targetActionID: targetActionID,
-          occurredAt: now,
+          occurredAt: Self.now,
           source: source
         )
       )
@@ -192,7 +192,7 @@
       handle(
         .endVisit(
           actionID: ActionID(UUID().uuidString),
-          occurredAt: now,
+          occurredAt: Self.now,
           source: source
         )
       )
@@ -459,7 +459,9 @@
 
             Text(model.syncStatusText)
               .font(.caption2)
-              .foregroundStyle(model.syncStatus.pendingCount == 0 ? .secondary : .orange)
+              .foregroundStyle(
+                model.syncStatus.pendingCount == 0 ? Color.secondary : Color.orange
+              )
               .accessibilityLabel("Device sync status")
               .accessibilityValue(model.syncStatusText)
 
