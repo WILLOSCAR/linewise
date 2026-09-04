@@ -510,11 +510,144 @@ private func learningCandidatesStaySuggestedAndNonSafety() throws {
   )
 }
 
+private func timingAnnotationsNeverEndBeforeTheyStart() throws {
+  // A timing annotation derived from a video seek can arrive with a negative
+  // offset. Clamping must leave a usable, non-negative, ordered interval so a
+  // consumer computing end - start never sees a negative duration.
+  let negativeBoth = TimingAnnotation(
+    startMilliseconds: -100,
+    endMilliseconds: -50,
+    certainty: .certain
+  )
+  try datasetCompareExpect(
+    negativeBoth.startMilliseconds >= 0 && negativeBoth.endMilliseconds >= 0,
+    "a negative video offset must not survive clamping"
+  )
+  try datasetCompareExpect(
+    negativeBoth.endMilliseconds >= negativeBoth.startMilliseconds,
+    "a clamped timing annotation must not end before it starts"
+  )
+
+  let negativeStart = TimingAnnotation(
+    startMilliseconds: -100,
+    endMilliseconds: 250,
+    certainty: .uncertain
+  )
+  try datasetCompareExpect(
+    negativeStart.startMilliseconds == 0 && negativeStart.endMilliseconds == 250,
+    "a negative start must clamp to zero while keeping a valid end"
+  )
+
+  let reversed = TimingAnnotation(
+    startMilliseconds: 400,
+    endMilliseconds: 100,
+    certainty: .certain
+  )
+  try datasetCompareExpect(
+    reversed.endMilliseconds >= reversed.startMilliseconds,
+    "a reversed interval must be corrected into an ordered one"
+  )
+
+  // The ordering invariant must also hold after a save/reopen round trip, since
+  // the annotation reaches analysis through the exported manifest.
+  let reopened = try JSONDecoder().decode(
+    TimingAnnotation.self,
+    from: JSONEncoder().encode(negativeBoth)
+  )
+  try datasetCompareExpect(
+    reopened.endMilliseconds >= reopened.startMilliseconds && reopened.startMilliseconds >= 0,
+    "a stored timing annotation must reopen with its ordering intact"
+  )
+}
+
+private func derivedMediaCannotClaimSourcesFromAnotherRouteCard() throws {
+  // Evidence must never cross a RouteCard boundary: a frame extracted from
+  // route A's video cannot be filed as route B's evidence, because the lineage
+  // (and the tombstone that preserves it) is exported and read by later analysis.
+  var dataset = PersonalDataset()
+  let routeASource = datasetAsset(id: RouteMediaAssetID("route-a-source"))
+  try dataset.add(routeASource)
+
+  let routeBDerived = RouteMediaAsset(
+    id: RouteMediaAssetID("route-b-derived"),
+    routeCardID: RouteCardID("route-green"),
+    localReference: LocalMediaReference(
+      fileIdentifier: "local-route-b-derived",
+      sandboxRelativePath: "Media/route-b-derived.heic"
+    ),
+    kind: .extractedFrame,
+    mimeType: "image/heic",
+    byteCount: 100,
+    dimensions: MediaDimensions(pixelWidth: 100, pixelHeight: 100),
+    contentDigest: MediaContentDigest(algorithm: .sha256, hexValue: "hash-route-b-derived"),
+    purpose: .planActualComparison,
+    consent: routeASource.consent,
+    captureProvenance: routeASource.captureProvenance,
+    origin: .derived(
+      sourceAssetIDs: [routeASource.id],
+      transform: MediaDerivation(
+        kind: .frameExtraction,
+        implementationIdentifier: "linewise-local-frame-extractor",
+        version: "1"
+      )
+    ),
+    quality: .unreviewed,
+    retention: .keepUntilUserDeletes
+  )
+
+  do {
+    try dataset.add(routeBDerived)
+    throw DatasetCompareSpecFailure.expected(
+      "media lineage must not cross a RouteCard boundary"
+    )
+  } catch let error as PersonalDatasetError {
+    try datasetCompareExpect(
+      error
+        == .sourceAssetRouteCardMismatch(
+          sourceAssetID: routeASource.id,
+          expected: RouteCardID("route-green"),
+          actual: RouteCardID("route-blue")
+        ),
+      "the rejection should name the route boundary that was crossed"
+    )
+  }
+  try datasetCompareExpect(
+    dataset.asset(id: routeBDerived.id) == nil,
+    "a rejected cross-route derivation must not be stored"
+  )
+
+  // A derivation within the same RouteCard remains valid.
+  let routeADerived = datasetAsset(
+    id: RouteMediaAssetID("route-a-derived"),
+    origin: .derived(
+      sourceAssetIDs: [routeASource.id],
+      transform: MediaDerivation(
+        kind: .frameExtraction,
+        implementationIdentifier: "linewise-local-frame-extractor",
+        version: "1"
+      )
+    )
+  )
+  try dataset.add(routeADerived)
+  try datasetCompareExpect(
+    dataset.asset(id: routeADerived.id)?.sourceAssetIDs == [routeASource.id],
+    "lineage within one RouteCard must still be allowed"
+  )
+}
+
 public func datasetCompareSpecifications() -> [(String, () throws -> Void)] {
   [
     (
       "source and derived media remain distinct in export",
       sourceAndDerivedMediaRemainDistinctInExport
+    ),
+    (
+      "timing annotations never end before they start",
+      timingAnnotationsNeverEndBeforeTheyStart
+    ),
+    (
+      "derived media cannot claim sources from another RouteCard",
+      derivedMediaCannotClaimSourcesFromAnotherRouteCard
     ),
     (
       "model suggestions cannot become confirmed annotations",

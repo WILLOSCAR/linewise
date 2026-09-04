@@ -341,6 +341,7 @@ struct LineWiseAIAdaptersSpecRunner {
     ]
     specifications += routeMediaReadSpecifications()
     specifications += qualitativeRouteAnalysisAdapterSpecifications()
+    specifications += routeSceneContractSpecifications()
 
     let passed = try await runSpecifications(specifications)
     print("LineWiseAIAdaptersSpec: \(passed) passed")

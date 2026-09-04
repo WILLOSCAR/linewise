@@ -21,6 +21,10 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       experienceArchiveDecodesForwardCompatibleArchive
     ),
     (
+      "a populated experience archive survives an encode and decode round trip",
+      experienceArchiveRoundTripsEveryPopulatedCollection
+    ),
+    (
       "experience lifecycle exports and deletes all non visit data",
       experienceLifecycleExportsAndDeletesAllNonVisitData
     ),
@@ -254,7 +258,18 @@ private func suggestedMediaRouteReadAttachesAndReopens() throws {
 
 private func experienceArchiveReopensAllNonVisitState() throws {
   let visitStore = MemoryVisitEventStore()
-  let archiveStore = MemoryExperienceArchiveStore()
+  // A durable store, not an in-memory handback: reopening must survive a real
+  // encode/decode cycle, because that is what an app relaunch does. A store
+  // that returns the same struct it was handed would pass this specification
+  // even with a broken Codable.
+  let archiveDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "linewise-experience-reopen-\(UUID().uuidString)",
+    isDirectory: true
+  )
+  defer { try? FileManager.default.removeItem(at: archiveDirectory) }
+  let archiveStore = FoundationFileExperienceArchiveStore(
+    fileURL: archiveDirectory.appendingPathComponent("experience.json")
+  )
   let repository = try VisitRepository(
     store: visitStore,
     localDeviceID: DeviceID("experience-persistence-phone")
@@ -388,6 +403,17 @@ private func experienceArchiveReopensAllNonVisitState() throws {
   try expect(startRestFeedback.isSuccess, "expected active rest")
   let beforeReopen = experience.projection
 
+  // The fixture must actually contain the history whose survival is being
+  // asserted; otherwise the round-trip comparison below would hold vacuously.
+  try expect(
+    !beforeReopen.rehearsals.isEmpty
+      && !beforeReopen.physiologyContexts.isEmpty
+      && !beforeReopen.recall.failureEpisodes.isEmpty
+      && !beforeReopen.learning.trainingPaths.isEmpty
+      && !beforeReopen.learning.proofChecks.isEmpty,
+    "expected the fixture to hold recall, learning, physiology and rehearsal history"
+  )
+
   let reopenedRepository = try VisitRepository(
     store: visitStore,
     localDeviceID: DeviceID("experience-persistence-phone")
@@ -398,6 +424,22 @@ private func experienceArchiveReopensAllNonVisitState() throws {
   )
 
   try expect(reopened.projection == beforeReopen, "expected lossless experience restoration")
+  try expect(
+    reopened.projection.rehearsals == beforeReopen.rehearsals,
+    "every persisted RouteRehearsal must reopen"
+  )
+  try expect(
+    reopened.projection.recall == beforeReopen.recall,
+    "confirmed recall history must reopen"
+  )
+  try expect(
+    reopened.projection.learning == beforeReopen.learning,
+    "confirmed learning history must reopen"
+  )
+  try expect(
+    reopened.projection.physiologyContexts == beforeReopen.physiologyContexts,
+    "recorded physiology context must reopen"
+  )
   try expect(
     reopened.archive.provenance.writerVersion == "1.2.3",
     "expected archive provenance to survive"
@@ -503,6 +545,75 @@ private func experienceSaveFailureLeavesMemoryUnapplied() throws {
   try expect(experience.projection == before, "expected failed save to preserve in-memory state")
 }
 
+/// The archive is the only thing that survives an app relaunch, so every
+/// collection it declares must come back byte-for-byte through a real
+/// encode/decode cycle. A coordinator round trip cannot pin this on its own:
+/// where the repository is the authority for a field (reversible action IDs)
+/// the restored coordinator prefers the repository's value, which would mask a
+/// decoder that silently dropped the archived one.
+private func experienceArchiveRoundTripsEveryPopulatedCollection() throws {
+  let archive = try persistencePopulatedArchive(
+    namespace: "archive-round-trip",
+    provenance: ExperienceArchiveProvenance(
+      writerIdentifier: "linewise.local",
+      writerVersion: "9.9.9"
+    )
+  )
+
+  // Assert the fixture is genuinely populated, so the comparison below cannot
+  // hold vacuously on a collection that happens to be empty.
+  try expect(
+    !archive.recallTrainingState.snapshot.failureEpisodes.isEmpty
+      && !archive.recallTrainingState.snapshot.moveCues.isEmpty
+      && !archive.learningLoopState.snapshot.trainingPaths.isEmpty
+      && !archive.learningLoopState.snapshot.proofChecks.isEmpty
+      && !archive.microDrillCatalog.approvedDrills.isEmpty
+      && !archive.physiologyContexts.isEmpty
+      && !archive.rehearsalAssociations.isEmpty
+      && !archive.reversibleActionIDs.isEmpty,
+    "expected the round-trip fixture to populate every archived collection"
+  )
+
+  let restored = try LineWiseExperienceArchiveCodec.decode(
+    try LineWiseExperienceArchiveCodec.encode(archive)
+  )
+
+  // Field by field, so a failure names the collection that was lost rather
+  // than only reporting that two large archives differ.
+  try expect(
+    restored.recallTrainingState == archive.recallTrainingState,
+    "the user's confirmed recall history must survive the archive round trip"
+  )
+  try expect(
+    restored.learningLoopState == archive.learningLoopState,
+    "the user's confirmed learning history must survive the archive round trip"
+  )
+  try expect(
+    restored.microDrillCatalog == archive.microDrillCatalog,
+    "the approved MicroDrill catalog must survive the archive round trip"
+  )
+  try expect(
+    restored.physiologyContexts == archive.physiologyContexts,
+    "recorded physiology context must survive the archive round trip"
+  )
+  try expect(
+    restored.rehearsalAssociations == archive.rehearsalAssociations,
+    "every persisted RouteRehearsal must survive the archive round trip"
+  )
+  try expect(
+    restored.reversibleActionIDs == archive.reversibleActionIDs,
+    "the Undo history must survive the archive round trip"
+  )
+  try expect(
+    restored.restState == archive.restState
+      && restored.selectedRouteCardID == archive.selectedRouteCardID
+      && restored.provenance == archive.provenance
+      && restored.schemaVersion == archive.schemaVersion,
+    "rest, selection, provenance and schema must survive the archive round trip"
+  )
+  try expect(restored == archive, "the archive round trip must be lossless")
+}
+
 private func experienceArchiveDecodesForwardCompatibleArchive() throws {
   // An older app build wrote a schema-1 archive before newer optional
   // collections (physiology contexts, rehearsal associations, reversible
@@ -510,11 +621,24 @@ private func experienceArchiveDecodesForwardCompatibleArchive() throws {
   // than hard-failing, so a user's recall/learning history survives an app
   // update. The provenance and core state that DID exist must be preserved.
   //
-  // Source of truth: encode a real archive, then delete the newer top-level
-  // keys from the JSON to reproduce what an older writer would have emitted.
-  let fullArchive = LineWiseExperienceArchive(
+  // Source of truth: encode a real archive holding real history, then delete
+  // the newer top-level keys from the JSON to reproduce what an older writer
+  // would have emitted. The history matters — an empty fixture would satisfy
+  // the "defaults to empty" assertions by construction and would not notice a
+  // decoder that dropped the collections an older writer really did store.
+  let fullArchive = try persistencePopulatedArchive(
+    namespace: "forward-compatible",
     provenance: ExperienceArchiveProvenance(writerIdentifier: "linewise.local", writerVersion: "0")
   )
+  try expect(
+    !fullArchive.recallTrainingState.snapshot.failureEpisodes.isEmpty
+      && !fullArchive.learningLoopState.snapshot.trainingPaths.isEmpty
+      && !fullArchive.physiologyContexts.isEmpty
+      && !fullArchive.rehearsalAssociations.isEmpty
+      && !fullArchive.reversibleActionIDs.isEmpty,
+    "expected the older-writer fixture to hold real history in every collection"
+  )
+
   let encoded = try LineWiseExperienceArchiveCodec.encode(fullArchive)
   guard
     var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
@@ -533,6 +657,20 @@ private func experienceArchiveDecodesForwardCompatibleArchive() throws {
     archive.provenance.writerIdentifier == "linewise.local"
       && archive.provenance.writerVersion == "0",
     "the older writer's provenance must survive decoding"
+  )
+  try expect(
+    archive.recallTrainingState == fullArchive.recallTrainingState,
+    "the recall history the older writer did store must survive decoding"
+  )
+  try expect(
+    archive.learningLoopState == fullArchive.learningLoopState,
+    "the learning history the older writer did store must survive decoding"
+  )
+  try expect(
+    archive.microDrillCatalog == fullArchive.microDrillCatalog
+      && archive.restState == fullArchive.restState
+      && archive.selectedRouteCardID == fullArchive.selectedRouteCardID,
+    "the remaining state the older writer did store must survive decoding"
   )
   try expect(
     archive.physiologyContexts.isEmpty,
@@ -697,6 +835,136 @@ private func prepareFailedAttempt(
     let feedback = try experience.handle(intent)
     try expect(feedback.isSuccess, "expected setup intent: \(intent)")
   }
+}
+
+/// Drives a coordinator through the real confirmation paths so that every
+/// archived collection holds genuine user history — recall episodes and cues,
+/// a training path with a proof check, a physiology context, a rehearsal
+/// association, and a reversible action ID.
+private func persistencePopulatedArchive(
+  namespace: String,
+  provenance: ExperienceArchiveProvenance
+) throws -> LineWiseExperienceArchive {
+  let drill = persistenceApprovedDrill()
+  let repository = try VisitRepository(
+    store: MemoryVisitEventStore(),
+    localDeviceID: DeviceID("\(namespace)-phone")
+  )
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: MemoryExperienceArchiveStore(),
+    repository: repository,
+    microDrillCatalog: ApprovedMicroDrillCatalog(drills: [drill]),
+    provenance: provenance
+  )
+
+  let routeID = RouteCardID("\(namespace)-route")
+  let visitID = GymVisitID("\(namespace)-visit")
+  let attemptID = AttemptID("\(namespace)-attempt")
+  try prepareFailedAttempt(
+    in: &experience,
+    routeID: routeID,
+    projectID: ProjectID("\(namespace)-project"),
+    visitID: visitID,
+    attemptID: attemptID
+  )
+
+  let episodeID = FailureEpisodeID("\(namespace)-episode")
+  let moveCueID = MoveCueID("\(namespace)-move-cue")
+  let nextCueID = NextSessionCueID("\(namespace)-next-cue")
+  let reviewOutcome = try experience.completeFailureReview(
+    FailureReviewRequest(
+      failureActionID: ActionID("\(namespace)-failure-action"),
+      moveCueActionID: ActionID("\(namespace)-move-action"),
+      nextSessionCueActionID: ActionID("\(namespace)-next-action"),
+      episodeID: episodeID,
+      attemptID: attemptID,
+      routeCardID: routeID,
+      primaryBlocker: .bodyTension,
+      locationNote: "At the compression move",
+      moveCueID: moveCueID,
+      moveCueText: "Keep the left toe loaded",
+      nextSessionCueID: nextCueID,
+      projectID: ProjectID("\(namespace)-project"),
+      nextAction: "Retry the same sequence at lower intensity",
+      occurredAt: persistenceInstant(10)
+    )
+  )
+  try expect(reviewOutcome == .accepted, "expected fixture review")
+
+  let pathID = TrainingPathID("\(namespace)-path")
+  let draftOutcome = try experience.submitLearning(
+    .draftTrainingPath(
+      actionID: ActionID("\(namespace)-draft"),
+      pathID: pathID,
+      failureEpisodeID: episodeID,
+      moveCueID: moveCueID,
+      microDrillID: drill.id,
+      nextSessionCueID: nextCueID,
+      proofQuestion: "Did the left toe stay loaded?",
+      occurredAt: persistenceInstant(11)
+    )
+  )
+  try expect(draftOutcome == .accepted, "expected fixture training path")
+  let activationOutcome = try experience.submitLearning(
+    .activateTrainingPath(
+      actionID: ActionID("\(namespace)-activate"),
+      pathID: pathID,
+      occurredAt: persistenceInstant(12)
+    )
+  )
+  try expect(activationOutcome == .accepted, "expected fixture active training path")
+  let laterAttemptID = AttemptID("\(namespace)-later-attempt")
+  let laterAttemptFeedback = try experience.handle(
+    .recordAttempt(
+      actionID: ActionID("\(namespace)-later-attempt-action"),
+      attemptID: laterAttemptID,
+      occurredAt: persistenceInstant(13),
+      source: .iPhone
+    )
+  )
+  try expect(laterAttemptFeedback.isSuccess, "expected fixture later Attempt")
+  let proofOutcome = try experience.submitLearning(
+    .recordProofCheck(
+      actionID: ActionID("\(namespace)-proof"),
+      proofCheckID: ProofCheckID("\(namespace)-proof-check"),
+      pathID: pathID,
+      attemptID: laterAttemptID,
+      outcome: .triedTargetBehaviorChanged,
+      decision: .retain,
+      note: "The hip stayed closer to the wall",
+      occurredAt: persistenceInstant(14)
+    )
+  )
+  try expect(proofOutcome == .accepted, "expected fixture proof check")
+  let physiologyOutcome = try experience.recordPhysiology(
+    contextID: PhysiologyContextID("\(namespace)-physiology"),
+    visitID: visitID,
+    subjective: SubjectivePhysiologyCheckIn(
+      sessionEffort1To10: 8,
+      wholeBodyFatigue0To10: 6,
+      forearmPumpOverall: .strong
+    ),
+    healthKitSummary: HealthKitWorkoutSummary(
+      durationSeconds: 2_700,
+      averageHeartRateBPM: 136,
+      maximumHeartRateBPM: 174,
+      heartRateCoverage: 0.78,
+      activeEnergyKilocalories: 310,
+      workoutEffortScore: 8,
+      workoutEffortSource: .perceived,
+      sourceVersion: "healthkit-v2"
+    ),
+    recordedAt: persistenceInstant(15)
+  )
+  try expect(physiologyOutcome.isAccepted, "expected fixture physiology context")
+  let rehearsalOutcome = try experience.attachRehearsal(
+    try persistenceRehearsalEngine(),
+    routeCardID: routeID,
+    plannedVisitID: visitID
+  )
+  try expect(rehearsalOutcome == .accepted, "expected fixture rehearsal association")
+
+  return experience.archive
 }
 
 private func persistenceApprovedDrill() -> MicroDrill {

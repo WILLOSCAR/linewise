@@ -1857,6 +1857,7 @@ specifications += correctionSpecifications()
 specifications += datasetCompareSpecifications()
 specifications += qualitativeRouteAnalysisSpecifications()
 specifications += physiologyCoverageSpecifications()
+specifications += routeSceneInvariantSpecifications()
 
 var failures: [String] = []
 

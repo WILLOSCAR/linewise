@@ -304,7 +304,7 @@ public struct TimingAnnotation: Hashable, Codable, Sendable {
     certainty: MediaAnnotationCertainty
   ) {
     self.startMilliseconds = max(startMilliseconds, 0)
-    self.endMilliseconds = max(endMilliseconds, startMilliseconds)
+    self.endMilliseconds = max(endMilliseconds, self.startMilliseconds)
     self.certainty = certainty
   }
 }
@@ -452,6 +452,11 @@ public enum PersonalDatasetError: Error, Equatable, Sendable {
   case assetNotFound(RouteMediaAssetID)
   case derivedAssetRequiresSource
   case sourceAssetNotFound(RouteMediaAssetID)
+  case sourceAssetRouteCardMismatch(
+    sourceAssetID: RouteMediaAssetID,
+    expected: RouteCardID,
+    actual: RouteCardID
+  )
   case duplicateAnnotationRevisionID(MediaAnnotationRevisionID)
   case duplicateCorrectionRevisionID(MediaCorrectionRevisionID)
   case invalidAnnotationRevision(expected: Int, actual: Int)
@@ -499,8 +504,19 @@ public struct PersonalDataset: Equatable, Codable, Sendable {
         throw PersonalDatasetError.derivedAssetRequiresSource
       }
       for sourceAssetID in sourceAssetIDs {
-        guard assetsByID[sourceAssetID] != nil else {
+        guard let source = assetsByID[sourceAssetID] else {
           throw PersonalDatasetError.sourceAssetNotFound(sourceAssetID)
+        }
+        // Evidence must never cross a RouteCard boundary: a frame extracted from
+        // one route's video cannot be filed as another route's evidence, because
+        // the lineage outlives the bytes in the export manifest and in the
+        // deletion tombstone.
+        guard source.routeCardID == asset.routeCardID else {
+          throw PersonalDatasetError.sourceAssetRouteCardMismatch(
+            sourceAssetID: sourceAssetID,
+            expected: asset.routeCardID,
+            actual: source.routeCardID
+          )
         }
       }
     }
