@@ -381,7 +381,21 @@ public struct LineWiseExperienceCoordinator {
   public mutating func receive(
     _ envelopes: [DeviceEventEnvelope]
   ) -> LineWiseDeviceSyncOutcome {
-    appCoordinator.receive(envelopes)
+    let outcome = appCoordinator.receive(envelopes)
+    guard case .received = outcome else {
+      return outcome
+    }
+    // The Watch owns starting a Visit, so that start usually arrives here rather
+    // than through `handle`. Cue reopening must follow the Visit itself, not the
+    // code path that delivered it, or the recall loop skips exactly the sessions
+    // the product is designed for. Reopening is idempotent per visit, so a
+    // redelivered envelope does not resurface an already-reopened cue.
+    for envelope in envelopes {
+      if case .startVisit(_, let visitID, let occurredAt, _) = envelope.command {
+        reopenEligibleCues(in: visitID, at: occurredAt)
+      }
+    }
+    return outcome
   }
 
   /// Rebuilds the user-decision queue from durable capture state without

@@ -1194,12 +1194,41 @@ public enum VisitMemory {
         sentAt = closedAt
       }
       let supportingAttempt = supportingAttemptID.flatMap { state.attemptsByID[$0] }
+      // Route identity is compared canonically so a merge does not invalidate a
+      // send. It must also survive the merge being UNDONE: unmerge clears the
+      // link before reprojecting, so a cycle closed while the identities were
+      // one would find no match at all and silently flip back to active,
+      // un-recording a send whose Attempt is untouched and still sent.
+      //
+      // A closure recorded while the routes were merged stays valid. The user
+      // really sent the route; splitting the identity afterwards is a
+      // bookkeeping correction, not evidence the send did not happen. Retract
+      // the Undo or the Attempt to reopen the cycle — that is what those
+      // commands are for.
+      let closedWhileRoutesWereMerged: Bool = {
+        guard let closure = latestClosure, let attemptRouteCardID = supportingAttempt?.routeCardID
+        else { return false }
+        return state.appliedCommands.values.contains { applied in
+          guard
+            case .confirmRouteCardMerge(
+              let mergeActionID, let duplicateRouteCardID, let canonicalRouteCardID, let mergedAt, _
+            ) = applied,
+            !state.retractedActionIDs.contains(mergeActionID),
+            mergedAt <= closure.occurredAt
+          else { return false }
+          let pair: Set<RouteCardID> = [duplicateRouteCardID, canonicalRouteCardID]
+          return pair.contains(attemptRouteCardID) && pair.contains(project.routeCardID)
+        }
+      }()
+      let supportRoutesMatch =
+        supportingAttempt?.routeCardID.flatMap({
+          canonicalRouteCardID(for: $0, in: state)
+        }) == canonicalRouteCardID(for: project.routeCardID, in: state)
+        || closedWhileRoutesWereMerged
       let hasValidSupport =
         supportingAttempt?.recordState == .active
         && supportingAttempt?.outcome == .sent
-        && supportingAttempt?.routeCardID.flatMap({
-          canonicalRouteCardID(for: $0, in: state)
-        }) == canonicalRouteCardID(for: project.routeCardID, in: state)
+        && supportRoutesMatch
 
       let routeIsGone =
         canonicalRouteCardID(for: project.routeCardID, in: state)

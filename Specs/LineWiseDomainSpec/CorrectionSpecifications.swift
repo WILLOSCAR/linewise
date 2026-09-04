@@ -473,6 +473,131 @@ private func routeMergePreservesConflictWhenBothSidesHaveActiveProjects() throws
   )
 }
 
+/// At most one Project cycle may be active per RouteCard. `confirmRouteCardMerge`
+/// and `correctAttemptRoute` both reproject and then refuse the command if that
+/// invariant would break. Unmerge reprojects too, and it changes how route IDs
+/// canonicalize — which is exactly what `reprojectProjects` uses to decide whether
+/// a closed cycle still has valid support. A cycle closed `.sent` by an Attempt on
+/// the other identity loses that support when the identities split, flips back to
+/// `.active`, and can join a cycle that is already active on the same route.
+private func unmergeCannotLeaveTwoActiveProjectCyclesOnOneRouteCard() throws {
+  let duplicateID = RouteCardID("route-unmerge-overlap-duplicate")
+  let canonicalID = RouteCardID("route-unmerge-overlap-canonical")
+  let visitID = GymVisitID("visit-unmerge-overlap")
+  let attemptID = AttemptID("attempt-unmerge-overlap")
+  let closedCycleID = ProjectID("project-unmerge-overlap-closed")
+  let activeCycleID = ProjectID("project-unmerge-overlap-active")
+  var state = VisitState()
+
+  for command in [
+    VisitCommand.createRouteCard(
+      actionID: ActionID("create-unmerge-overlap-duplicate"),
+      routeCardID: duplicateID,
+      label: "Duplicate",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1),
+      source: .iPhone
+    ),
+    .createRouteCard(
+      actionID: ActionID("create-unmerge-overlap-canonical"),
+      routeCardID: canonicalID,
+      label: "Canonical",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 2),
+      source: .iPhone
+    ),
+    // A cycle on the duplicate, closed sent by an Attempt recorded on the
+    // CANONICAL route. While merged the two resolve alike, so support is valid.
+    .startProject(
+      actionID: ActionID("start-unmerge-overlap-closed"),
+      projectID: closedCycleID,
+      routeCardID: duplicateID,
+      occurredAt: Instant(millisecondsSince1970: 3),
+      source: .iPhone
+    ),
+    .confirmRouteCardMerge(
+      actionID: ActionID("merge-unmerge-overlap"),
+      duplicateRouteCardID: duplicateID,
+      canonicalRouteCardID: canonicalID,
+      occurredAt: Instant(millisecondsSince1970: 4),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("start-unmerge-overlap-visit"),
+      visitID: visitID,
+      occurredAt: Instant(millisecondsSince1970: 5),
+      source: .iPhone
+    ),
+    .recordAttempt(
+      actionID: ActionID("record-unmerge-overlap-attempt"),
+      attemptID: attemptID,
+      visitID: visitID,
+      routeCardID: canonicalID,
+      occurredAt: Instant(millisecondsSince1970: 6),
+      source: .watch
+    ),
+    .markSend(
+      actionID: ActionID("send-unmerge-overlap-attempt"),
+      attemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 7),
+      source: .watch
+    ),
+    .closeProjectSent(
+      actionID: ActionID("close-unmerge-overlap-closed"),
+      projectID: closedCycleID,
+      supportingAttemptID: attemptID,
+      occurredAt: Instant(millisecondsSince1970: 8),
+      source: .iPhone
+    ),
+    // Now a fresh active cycle on the canonical route. Legal: the other one is
+    // closed.
+    .startProject(
+      actionID: ActionID("start-unmerge-overlap-active"),
+      projectID: activeCycleID,
+      routeCardID: canonicalID,
+      occurredAt: Instant(millisecondsSince1970: 9),
+      source: .iPhone
+    ),
+  ] {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let activeBefore = state.snapshot.projects.filter { $0.state == .active }
+  try expect(
+    activeBefore.map(\.id) == [activeCycleID],
+    "expected exactly one active cycle before the unmerge, got \(activeBefore.map(\.id))"
+  )
+
+  let unmerged = VisitMemory.apply(
+    .unmergeRouteCard(
+      actionID: ActionID("unmerge-overlap"),
+      mergedRouteCardID: duplicateID,
+      occurredAt: Instant(millisecondsSince1970: 10),
+      source: .iPhone
+    ),
+    to: state
+  )
+
+  // Either unmerge refuses, or it must not produce two active cycles resolving
+  // to one RouteCard. Silently producing the overlap is the defect.
+  if case .accepted = unmerged.outcome {
+    let closed = unmerged.state.snapshot.projects.first { $0.id == closedCycleID }
+    try expect(
+      closed?.state == .sent,
+      """
+      unmerge silently reopened a cycle the user had closed sent: \
+      \(closedCycleID.rawValue) is now \(String(describing: closed?.state)). The send \
+      really happened and its Attempt is untouched, so splitting a route identity \
+      must not un-record it
+      """
+    )
+    try expect(
+      closed?.supportingAttemptID == attemptID,
+      "the supporting Attempt for a sent cycle must survive an unmerge"
+    )
+  }
+}
+
 private func explicitUnmergeRestoresThePreMergeVisibility() throws {
   let recoveredID = RouteCardID("route-unmerge-recovered")
   let formerCanonicalID = RouteCardID("route-unmerge-canonical")
@@ -793,6 +918,10 @@ func correctionSpecifications() -> [(String, () throws -> Void)] {
     (
       "explicit unmerge restores the pre-merge visibility",
       explicitUnmergeRestoresThePreMergeVisibility
+    ),
+    (
+      "unmerge cannot leave two active Project cycles on one RouteCard",
+      unmergeCannotLeaveTwoActiveProjectCyclesOnOneRouteCard
     ),
     (
       "Attempt route correction keeps audit and reopens reviewed visit",

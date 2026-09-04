@@ -27,7 +27,74 @@ func experienceSpecifications() -> [(String, () throws -> Void)] {
       "a decided cue keeps the decision the user actually made",
       aDecidedCueKeepsTheDecisionTheUserActuallyMade
     ),
+    (
+      "a Visit started on the Watch reopens cues on the phone",
+      aVisitStartedOnTheWatchReopensCuesOnThePhone
+    ),
   ]
+}
+
+/// The Watch owns starting a Visit, and that start reaches the phone as a synced
+/// envelope rather than a local intent. NextSessionCue reopening must follow the
+/// Visit, not the code path that happened to create it — otherwise the whole
+/// recall loop silently skips exactly the sessions the product is designed for,
+/// where the user taps start on their wrist.
+private func aVisitStartedOnTheWatchReopensCuesOnThePhone() throws {
+  let repository = try VisitRepository(
+    store: MemoryVisitEventStore(),
+    localDeviceID: DeviceID("phone-watch-reopen")
+  )
+  var experience = LineWiseExperienceCoordinator(repository: repository)
+  let cueID = NextSessionCueID("cue-watch-reopen")
+  try prepareReopenedCue(
+    in: &experience,
+    label: "watch-reopen",
+    cueID: cueID,
+    visitID: GymVisitID("visit-watch-reopen")
+  )
+  try expect(
+    experience.handle(
+      .endVisit(
+        actionID: ActionID("end-watch-reopen"),
+        occurredAt: instant(40),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected the cue-producing Visit to end"
+  )
+  try expect(
+    experience.projection.reopenedNextSessionCues.isEmpty,
+    "no cue should be reopened before the next Visit begins"
+  )
+
+  // Exactly what the Watch sends: the next Visit arrives as a synced envelope.
+  let nextVisitID = GymVisitID("visit-started-on-watch")
+  let outcome = experience.receive([
+    DeviceEventEnvelope(
+      originDeviceID: DeviceID("watch-watch-reopen"),
+      sequence: 1,
+      command: .startVisit(
+        actionID: ActionID("start-on-watch"),
+        visitID: nextVisitID,
+        occurredAt: instant(41),
+        source: .watch
+      )
+    )
+  ])
+  guard case .received = outcome else {
+    throw ApplicationSpecFailure.expected("expected the Watch Visit to be received, got \(outcome)")
+  }
+  try expect(
+    experience.projection.capture.activeVisit?.id == nextVisitID,
+    "the synced Watch Visit must become the active Visit"
+  )
+  try expect(
+    experience.projection.reopenedNextSessionCues.map(\.id) == [cueID],
+    """
+    a Visit started on the Watch must reopen the cue just as a phone-started \
+    Visit does — recall cannot depend on which device tapped start
+    """
+  )
 }
 
 /// "Later" carries no deadline. Deferring without one must mean "not this visit", never
