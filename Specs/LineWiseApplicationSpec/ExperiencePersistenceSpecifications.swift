@@ -17,6 +17,10 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       failedArchiveSaveDoesNotStrandACapturedAttempt
     ),
     (
+      "a committed Visit keeps the cue reopening it earned",
+      committedVisitKeepsTheCueReopeningItEarned
+    ),
+    (
       "experience file store rejects corrupt and future archives",
       experienceFileStoreRejectsCorruptAndFutureArchives
     ),
@@ -514,6 +518,92 @@ private func experienceArchiveReopensAllNonVisitState() throws {
 /// already durably in the event journal before `persist` runs. A failed save then
 /// leaves the journal holding an Attempt the UI does not show and cannot Undo,
 /// and retrying records a second copy of the same action.
+/// Starting a Visit both writes an event to the journal AND derives experience
+/// state — it reopens eligible NextSessionCues. Those are one user action, so they
+/// must not split. If the Visit is durable but the reopening is discarded, the
+/// user opens a session showing none of the cues they saved, and no relaunch
+/// recovers them because the reopening was never persisted.
+private func committedVisitKeepsTheCueReopeningItEarned() throws {
+  let repository = try VisitRepository(
+    store: MemoryVisitEventStore(),
+    localDeviceID: DeviceID("torn-reopen-phone")
+  )
+  let archiveStore = FailingExperienceArchiveStore()
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: archiveStore,
+    repository: repository
+  )
+  let routeID = RouteCardID("torn-reopen-route")
+  let projectID = ProjectID("torn-reopen-project")
+  let visitID = GymVisitID("torn-reopen-visit")
+  let attemptID = AttemptID("torn-reopen-attempt")
+  let cueID = NextSessionCueID("torn-reopen-cue")
+  try prepareFailedAttempt(
+    in: &experience,
+    routeID: routeID,
+    projectID: projectID,
+    visitID: visitID,
+    attemptID: attemptID
+  )
+  let reviewOutcome = try experience.completeFailureReview(
+    FailureReviewRequest(
+      failureActionID: ActionID("torn-reopen-failure-action"),
+      moveCueActionID: ActionID("torn-reopen-cue-action"),
+      nextSessionCueActionID: ActionID("torn-reopen-next-action"),
+      episodeID: FailureEpisodeID("torn-reopen-episode"),
+      attemptID: attemptID,
+      routeCardID: routeID,
+      primaryBlocker: .footwork,
+      locationNote: nil,
+      moveCueID: MoveCueID("torn-reopen-cue-move"),
+      moveCueText: "Name the foot before the hand move",
+      nextSessionCueID: cueID,
+      projectID: projectID,
+      nextAction: "Try the named foot once",
+      occurredAt: persistenceInstant(30)
+    )
+  )
+  try expect(
+    reviewOutcome == .accepted,
+    "expected a confirmed cue to carry into the next Visit"
+  )
+  _ = try experience.handle(
+    .endVisit(
+      actionID: ActionID("torn-reopen-end"),
+      occurredAt: persistenceInstant(31),
+      source: .iPhone
+    )
+  )
+
+  archiveStore.failNextSave = true
+  let nextVisitID = GymVisitID("torn-reopen-next-visit")
+  do {
+    _ = try experience.handle(
+      .startVisit(
+        actionID: ActionID("torn-reopen-next-start"),
+        visitID: nextVisitID,
+        occurredAt: persistenceInstant(32),
+        source: .iPhone
+      )
+    )
+    throw ApplicationSpecFailure.expected("expected the injected archive failure to surface")
+  } catch FailingExperienceArchiveStore.Failure.save {
+    // Expected: the caller must learn the archive write failed.
+  }
+
+  try expect(
+    experience.projection.capture.activeVisit?.id == nextVisitID,
+    "the Visit reached the journal, so it must remain the active Visit"
+  )
+  try expect(
+    experience.projection.reopenedNextSessionCues.map(\.id) == [cueID],
+    """
+    the Visit was committed but its cue reopening was discarded, so the user starts \
+    a session with none of the cues they saved and no relaunch restores them
+    """
+  )
+}
+
 private func failedArchiveSaveDoesNotStrandACapturedAttempt() throws {
   let visitStore = MemoryVisitEventStore()
   let repository = try VisitRepository(
@@ -596,6 +686,17 @@ private func failedArchiveSaveDoesNotStrandACapturedAttempt() throws {
       """
       the journal kept the capture but no reversible action remains, so the user \
       can see the Attempt and cannot Undo it
+      """
+    )
+    // Sharper still: Undo must target the capture the user actually just made.
+    // A stale target is worse than none — tapping Undo would retract an EARLIER
+    // Attempt while the one they meant to remove stays active.
+    try expect(
+      experience.projection.capture.lastAcceptedActionID == ActionID("torn-commit-record"),
+      """
+      Undo points at \
+      \(String(describing: experience.projection.capture.lastAcceptedActionID?.rawValue)) \
+      rather than the capture just recorded, so Undo would retract the wrong Attempt
       """
     )
   }

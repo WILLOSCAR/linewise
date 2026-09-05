@@ -496,8 +496,14 @@ public enum VisitMemory {
         return VisitTransition(state: state, outcome: .rejected(.visitDoesNotExist))
       }
       let isOpenCapture = visit.captureState == .open && next.openVisitID == visitID
-      let isLateCapture =
-        visit.captureState == .ended && occurredAt <= (visit.endedAt ?? occurredAt)
+      // A capture belonging to an ended visit is late, not invalid — whether its
+      // timestamp lands before or after `endedAt`. The Watch is often offline at
+      // the end of a session, and its clock can run ahead of the phone's, so an
+      // Attempt recorded as the user walks out legitimately carries a time after
+      // the end. Doctrine requires late events to reopen review rather than be
+      // discarded, and dropping the climb outright is the one outcome that loses
+      // user data with nothing surfaced anywhere.
+      let isLateCapture = visit.captureState == .ended
       guard isOpenCapture || isLateCapture else {
         return VisitTransition(state: state, outcome: .rejected(.visitIsNotOpen))
       }

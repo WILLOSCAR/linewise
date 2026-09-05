@@ -593,6 +593,46 @@ func lateAttemptAfterCompletedReviewIsPreservedAndNeedsRecheck() throws {
   try expect(
     late.state.snapshot.visits.first?.reviewState == .needsRecheck,
     "expected late material event to reopen review attention")
+
+  // The offline-Watch case: the Attempt is timestamped AFTER the visit ended,
+  // because the Watch clock ran ahead or the user recorded the last boulder while
+  // walking out. Doctrine says late events reopen review; they must never be
+  // silently discarded. Dropping the climb is the one outcome that is not allowed.
+  let afterEnd = VisitMemory.apply(
+    .recordAttempt(
+      actionID: ActionID("action-attempt-after-visit-end"),
+      attemptID: AttemptID("attempt-after-visit-end"),
+      visitID: visitID,
+      routeCardID: nil,
+      occurredAt: Instant(millisecondsSince1970: 9_000),
+      source: .watch
+    ),
+    to: late.state
+  )
+  try expect(
+    afterEnd.outcome != .rejected(.visitIsNotOpen),
+    """
+    an Attempt arriving after the visit ended was rejected and dropped: no Attempt \
+    stored, no reconciliation issue raised, review not reopened. This is the ordinary \
+    offline-Watch case and the climb disappears from history with nothing surfaced
+    """
+  )
+  let storedAfterEnd = afterEnd.state.snapshot.attempts
+    .contains { $0.id == AttemptID("attempt-after-visit-end") }
+  let surfacedAfterEnd = !afterEnd.state.snapshot.reconciliationIssues.isEmpty
+  try expect(
+    storedAfterEnd || surfacedAfterEnd,
+    """
+    a late Attempt must either be preserved in history or surfaced as a \
+    reconciliation issue for the user to resolve — silence loses the climb
+    """
+  )
+  if storedAfterEnd {
+    try expect(
+      afterEnd.state.snapshot.visits.first?.reviewState == .needsRecheck,
+      "an Attempt recorded after the visit ended must reopen review"
+    )
+  }
 }
 
 func lateResultAfterCompletedReviewNeedsRecheck() throws {

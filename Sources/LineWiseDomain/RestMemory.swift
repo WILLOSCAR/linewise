@@ -56,8 +56,21 @@ public struct RestSnapshot: Equatable, Codable, Sendable {
     self.intervals = intervals
   }
 
+  /// The rest the user is currently in.
+  ///
+  /// A visit can end without its rest being stopped, so more than one interval may
+  /// remain `.active` — an abandoned one from a finished session plus the live one.
+  /// The newest start is the live one. Picking the first match would also be
+  /// non-deterministic, since these come from an unordered dictionary.
   public var activeRest: RestIntervalSnapshot? {
-    intervals.first { $0.state == .active }
+    intervals
+      .filter { $0.state == .active }
+      .max {
+        if $0.startedAt != $1.startedAt {
+          return $0.startedAt < $1.startedAt
+        }
+        return $0.id.rawValue < $1.id.rawValue
+      }
   }
 }
 
@@ -141,7 +154,19 @@ public enum RestMemory {
       guard next.intervalsByID[restID] == nil else {
         return RestTransition(state: state, outcome: .rejected(.restAlreadyExists))
       }
-      guard !next.intervalsByID.values.contains(where: { $0.state == .active }) else {
+      // Only a rest belonging to a still-open visit blocks a new one. Ending a
+      // visit does not stop its rest — nothing reconciles the two — so a session
+      // finished without tapping stop leaves an interval active forever. Treating
+      // that as "a rest is already running" would refuse the rest timer in every
+      // later visit and keep accruing a cross-session duration the Watch renders
+      // as live. A rest whose visit has ended is abandoned, not current.
+      let blockingRest = next.intervalsByID.values.first { interval in
+        guard interval.state == .active else { return false }
+        return visitSnapshot.visits.contains {
+          $0.id == interval.visitID && $0.captureState == .open
+        }
+      }
+      guard blockingRest == nil else {
         return RestTransition(state: state, outcome: .rejected(.restAlreadyActive))
       }
       guard

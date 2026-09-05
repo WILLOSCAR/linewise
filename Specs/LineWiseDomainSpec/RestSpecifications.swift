@@ -117,5 +117,95 @@ func restSpecifications() -> [(String, () throws -> Void)] {
         try expect(rejected.state == restState, "expected rejection to preserve current rest")
       }
     ),
+    (
+      "a rest left running in an ended visit does not block the next visit",
+      {
+        // The user starts a rest, then ends the visit without stopping it — the
+        // ordinary way a session finishes. Nothing reconciles the two, so the
+        // rest stays active forever. At the next visit the rest timer is refused
+        // outright, and `elapsedMilliseconds` keeps ticking across the gap, so the
+        // Watch renders an unbounded rest time from days ago.
+        let firstVisitID = GymVisitID("visit-rest-orphan-first")
+        let secondVisitID = GymVisitID("visit-rest-orphan-second")
+        var visitState = VisitState()
+        for command in [
+          VisitCommand.startVisit(
+            actionID: ActionID("action-start-rest-orphan-first"),
+            visitID: firstVisitID,
+            occurredAt: Instant(millisecondsSince1970: 1_000),
+            source: .watch
+          ),
+          .endVisit(
+            actionID: ActionID("action-end-rest-orphan-first"),
+            visitID: firstVisitID,
+            occurredAt: Instant(millisecondsSince1970: 3_000),
+            source: .watch
+          ),
+        ] {
+          visitState = try acceptedState(VisitMemory.apply(command, to: visitState))
+        }
+        // Start the rest while the first visit is still open, then end that visit.
+        var openState = VisitState()
+        openState = try acceptedState(
+          VisitMemory.apply(
+            .startVisit(
+              actionID: ActionID("action-start-rest-orphan-open"),
+              visitID: firstVisitID,
+              occurredAt: Instant(millisecondsSince1970: 1_000),
+              source: .watch
+            ),
+            to: openState
+          )
+        )
+        let orphaned = RestMemory.apply(
+          .start(
+            actionID: ActionID("action-start-rest-orphan"),
+            restID: RestIntervalID("rest-orphan"),
+            visitID: firstVisitID,
+            afterAttemptID: nil,
+            occurredAt: Instant(millisecondsSince1970: 2_000)
+          ),
+          visitSnapshot: openState.snapshot,
+          to: RestState()
+        )
+        try expect(orphaned.outcome == .accepted, "expected the rest to start in an open visit")
+
+        // Now the next session begins; the first visit is ended in this snapshot.
+        visitState = try acceptedState(
+          VisitMemory.apply(
+            .startVisit(
+              actionID: ActionID("action-start-rest-orphan-second"),
+              visitID: secondVisitID,
+              occurredAt: Instant(millisecondsSince1970: 10_000),
+              source: .watch
+            ),
+            to: visitState
+          )
+        )
+        let nextVisitRest = RestMemory.apply(
+          .start(
+            actionID: ActionID("action-start-rest-orphan-next"),
+            restID: RestIntervalID("rest-orphan-next"),
+            visitID: secondVisitID,
+            afterAttemptID: nil,
+            occurredAt: Instant(millisecondsSince1970: 11_000)
+          ),
+          visitSnapshot: visitState.snapshot,
+          to: orphaned.state
+        )
+        try expect(
+          nextVisitRest.outcome == .accepted,
+          """
+          a rest abandoned in an ended visit blocked the new visit's rest timer \
+          (\(nextVisitRest.outcome)); a stale interval from a finished session must \
+          not disable rest tracking for every session afterwards
+          """
+        )
+        try expect(
+          nextVisitRest.state.snapshot.activeRest?.id == RestIntervalID("rest-orphan-next"),
+          "the active rest must be the one in the visit the user is actually in"
+        )
+      }
+    ),
   ]
 }
