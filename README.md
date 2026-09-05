@@ -89,7 +89,7 @@ swift run linewise-demo
 
 Run the same checks with `-c release` before shipping a branch.
 
-The current executable-spec baseline is 238 passing behaviors in both Debug and Release: Domain 118, Application 51, Apple adapters 52, and AI adapters 17. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+The current executable-spec baseline is 241 passing behaviors in both Debug and Release: Domain 118, Application 51, Apple adapters 55, and AI adapters 17. The command-line demo additionally exercises a two-visit manual-to-learning loop.
 
 Each suite derives its reported total from the specifications it actually ran, so removing one lowers the count. That is deliberate: the Apple and AI runners previously printed a fixed block of `PASS:` lines and summed hardcoded per-suite integers, which made a green suite unfalsifiable.
 
@@ -117,7 +117,9 @@ swift build --triple x86_64-apple-ios18.0-macabi \
   -Xswiftc -I -Xswiftc "$SDK/System/iOSSupport/usr/lib/swift"
 ```
 
-Run this before claiming an Apple-surface change is verified; plain `swift build` will not catch an error in it. No triple available here makes `os(watchOS)` true, so `#if os(watchOS)` branches remain uncompiled, and running on signed devices is still the only way to close the platform gate. Where a spec covers a gated path, it covers the platform-independent logic that path delegates to, not the gated code itself.
+Prefer `scripts/verify-apple-surfaces.sh`, which runs this plus two stages for code no triple here can reach: it forces the `#if os(watchOS)` branches active and builds them for macOS, and type-checks the HealthKit recorder against Catalyst. Run it before claiming an Apple-surface change is verified; plain `swift build` will not catch an error in any of it.
+
+Two APIs the recorder needs — `HKWorkoutSession.init(healthStore:configuration:)` and `associatedWorkoutBuilder()` — are `API_UNAVAILABLE(macCatalyst)`, so creating a workout session is compiled only by a real watchOS SDK. Everything else in that file is verified. All runtime behaviour, and the whole platform gate, still closes only on signed devices.
 
 Field evidence recording is disabled by default and requires explicit session consent. It stores controlled event categories and aggregate numerators/denominators, not route labels, health payloads, media, free text, or stable user identity.
 

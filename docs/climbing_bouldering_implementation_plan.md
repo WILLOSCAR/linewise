@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: End-to-end implementation foundation present; command-line behavior verification is active at 238 specifications; a 62-finding review pass is closed; the `os(iOS)` surfaces compile via the Catalyst triple in Section 5, `os(watchOS)` branches remain uncompiled, and real-device and real-gym evidence remains open.
+Status: End-to-end implementation foundation present; command-line behavior verification is active at 241 specifications; a 62-finding review pass is closed; `scripts/verify-apple-surfaces.sh` compiles the `os(iOS)` surfaces, the `os(watchOS)` SwiftUI branches, and all but two APIs of the HealthKit recorder; real-device and real-gym evidence remains open.
 
 Product: LineWise / 线感
 
@@ -165,7 +165,7 @@ git diff --check
 
 The executable specification targets are used because the currently selected Command Line Tools installation does not expose the full Xcode test runtime. They exercise only public module interfaces and exit nonzero on a violated expectation.
 
-Current baseline: 118 Domain + 51 Application + 52 Apple adapter + 17 AI adapter behaviors = 238 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+Current baseline: 118 Domain + 51 Application + 55 Apple adapter + 17 AI adapter behaviors = 241 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
 
 Each suite derives its total from the specifications it ran rather than a hardcoded constant, so a removed or skipped specification lowers the count instead of silently reporting the old number.
 
@@ -180,7 +180,12 @@ swift build --triple x86_64-apple-ios18.0-macabi \
   -Xswiftc -I -Xswiftc "$SDK/System/iOSSupport/usr/lib/swift"
 ```
 
-This build is what first caught the eight `static member 'now'` errors in `AppleSurfaces.swift`. Treat it as required for any change to an Apple surface. No triple available here makes `os(watchOS)` true, so `#if os(watchOS)` branches are still compiled by nobody; verify those expressions in isolation or on a device.
+This build is what first caught the eight `static member 'now'` errors in `AppleSurfaces.swift`. `scripts/verify-apple-surfaces.sh` wraps it as one of four stages and is what to run for any Apple-surface change:
+
+1. `swift build` — the platform-independent modules and the SwiftUI surfaces gated on bare `canImport(SwiftUI)`.
+2. The Catalyst triple above — the `os(iOS)` capture surfaces and the WatchConnectivity transport.
+3. The `#if os(watchOS)` SwiftUI branches, forced active and built for macOS. No triple here makes `os(watchOS)` true, and a type error in an inactive branch is invisible to `swiftc -parse` and `-typecheck` alike, so making the branch active is the only way to reach it.
+4. The HealthKit recorder, type-checked against Catalyst. Exactly two APIs it calls are `API_UNAVAILABLE(macCatalyst)`; the stage tolerates those and fails on a third.
 
 ## 6. Apple Validation Procedure
 
