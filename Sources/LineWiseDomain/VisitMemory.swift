@@ -928,7 +928,9 @@ public enum VisitMemory {
         return VisitTransition(state: state, outcome: .rejected(.projectAlreadyExists))
       }
       guard let routeCard = next.routeCardsByID[routeCardID] else {
-        return VisitTransition(state: state, outcome: .rejected(.routeCardDoesNotExist))
+        // The RouteCard may simply not have been folded yet; park the cycle rather
+        // than losing it to arrival order.
+        return deferred(command, reason: .missingRouteCard(routeCardID), from: state)
       }
       guard routeCard.recordVisibility == .active && routeCard.availability != .gone else {
         return VisitTransition(state: state, outcome: .rejected(.routeCardIsNotAvailable))
@@ -953,7 +955,10 @@ public enum VisitMemory {
 
     case .closeProjectSent(_, let projectID, let supportingAttemptID, let occurredAt, _):
       guard let project = next.projectsByID[projectID] else {
-        return VisitTransition(state: state, outcome: .rejected(.projectDoesNotExist))
+        // Replay is ordered by business time, so a close can legitimately be folded
+        // before the start it refers to. Park it rather than discarding the user's
+        // send because of arrival order.
+        return deferred(command, reason: .missingProject(projectID), from: state)
       }
       guard project.state == .active else {
         return VisitTransition(state: state, outcome: .rejected(.projectIsNotActive))

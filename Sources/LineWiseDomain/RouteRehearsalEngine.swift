@@ -195,7 +195,13 @@ public struct MovementIntent: Equatable, Codable, Sendable {
   ) {
     self.purpose = purpose
     self.family = family
-    self.expectedDurationSeconds = max(expectedDurationSeconds, 0.05)
+    // `max(x, 0.05)` returns NaN when x is NaN, so a non-finite duration would be
+    // stored verbatim and JSONEncoder would then throw on the whole timeline —
+    // making the rehearsal unsaveable and collapsing `timelineVersion` to a
+    // constant that every unencodable plan shares, which silently defeats evidence
+    // pinning. Non-finite input falls back to the same floor as a too-small one.
+    self.expectedDurationSeconds =
+      expectedDurationSeconds.isFinite ? max(expectedDurationSeconds, 0.05) : 0.05
     self.cue = cue
     self.uncertainty = uncertainty
     self.provenance = provenance
@@ -247,7 +253,13 @@ public struct MovementStep: Equatable, Codable, Sendable {
     self.retainedLimbs = retainedLimbs
     self.gainedLimbs = gainedLimbs
     self.releasedLimbs = releasedLimbs
-    self.expectedDurationSeconds = max(expectedDurationSeconds, 0.05)
+    // `max(x, 0.05)` returns NaN when x is NaN, so a non-finite duration would be
+    // stored verbatim and JSONEncoder would then throw on the whole timeline —
+    // making the rehearsal unsaveable and collapsing `timelineVersion` to a
+    // constant that every unencodable plan shares, which silently defeats evidence
+    // pinning. Non-finite input falls back to the same floor as a too-small one.
+    self.expectedDurationSeconds =
+      expectedDurationSeconds.isFinite ? max(expectedDurationSeconds, 0.05) : 0.05
     self.family = family
     self.explanation = explanation
     self.provenance = provenance

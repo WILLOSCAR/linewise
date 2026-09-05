@@ -21,6 +21,10 @@ func experiencePersistenceSpecifications() -> [(String, () throws -> Void)] {
       committedVisitKeepsTheCueReopeningItEarned
     ),
     (
+      "a deferred command survives to be applied when its subject arrives",
+      aDeferredCommandSurvivesUntilItsSubjectArrives
+    ),
+    (
       "experience file store rejects corrupt and future archives",
       experienceFileStoreRejectsCorruptAndFutureArchives
     ),
@@ -523,6 +527,73 @@ private func experienceArchiveReopensAllNonVisitState() throws {
 /// must not split. If the Visit is durable but the reopening is discarded, the
 /// user opens a session showing none of the cues they saved, and no relaunch
 /// recovers them because the reopening was never persisted.
+/// A deferred command is not a failure — it is a command waiting for its subject,
+/// which is exactly how out-of-order cross-device delivery is supposed to behave.
+/// `applying` commits only when the outcome "succeeds", and a deferral does not, so
+/// the proposed state holding the parked command was discarded and the user's Send
+/// vanished when the Attempt it referred to finally arrived.
+private func aDeferredCommandSurvivesUntilItsSubjectArrives() throws {
+  var experience = try PersistentLineWiseExperienceCoordinator(
+    store: MemoryExperienceArchiveStore()
+  )
+  let routeID = RouteCardID("deferred-route")
+  let visitID = GymVisitID("deferred-visit")
+  let attemptID = AttemptID("deferred-attempt")
+  for intent in [
+    LineWiseAppIntent.createRoute(
+      actionID: ActionID("deferred-create"),
+      routeCardID: routeID,
+      label: "Deferred route",
+      availability: .present,
+      occurredAt: persistenceInstant(1),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("deferred-start"),
+      visitID: visitID,
+      occurredAt: persistenceInstant(2),
+      source: .iPhone
+    ),
+    .selectRoute(routeID),
+  ] {
+    _ = try experience.handle(intent)
+  }
+
+  // The Send arrives before the Attempt it refers to — ordinary reordered delivery.
+  let early = try experience.handle(
+    .markSend(
+      actionID: ActionID("deferred-send"),
+      attemptID: attemptID,
+      occurredAt: persistenceInstant(4),
+      source: .watch
+    )
+  )
+  try expect(
+    !early.isSuccess,
+    "a Send for an Attempt that has not arrived must not be reported as accepted"
+  )
+
+  let arrival = try experience.handle(
+    .recordAttempt(
+      actionID: ActionID("deferred-record"),
+      attemptID: attemptID,
+      occurredAt: persistenceInstant(3),
+      source: .watch
+    )
+  )
+  try expect(arrival.isSuccess, "expected the Attempt itself to be recorded")
+
+  let attempt = experience.projection.capture.attempts.first { $0.id == attemptID }
+  try expect(
+    attempt?.outcome == .sent,
+    """
+    the Attempt is \(String(describing: attempt?.outcome)) instead of sent: the deferred \
+    Send was discarded when it parked, so the user's confirmed result was lost by \
+    delivery order alone
+    """
+  )
+}
+
 private func committedVisitKeepsTheCueReopeningItEarned() throws {
   let repository = try VisitRepository(
     store: MemoryVisitEventStore(),

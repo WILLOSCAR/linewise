@@ -173,9 +173,13 @@ public enum LineWiseExperienceArchiveCodec {
   }
 
   static func validate(_ archive: LineWiseExperienceArchive) throws {
-    guard archive.schemaVersion == LineWiseExperienceArchive.currentSchemaVersion else {
-      throw ExperiencePersistenceError.unsupportedSchemaVersion(archive.schemaVersion)
-    }
+    // `schemaVersion` is not checked here: both initializers set it to
+    // `currentSchemaVersion`, so an in-memory archive can never carry another value
+    // and a guard on it would be unreachable. Future-schema rejection is the raw
+    // `SchemaHeader` peek in `decode`, which reads the version off the JSON before
+    // the model is constructed — the only point where a foreign version exists.
+    // Keeping a dead guard here would suggest a second line of defence that is not
+    // actually there; if the model ever gains a real version field, restore it.
     guard !archive.provenance.writerIdentifier.isEmpty else {
       throw ExperiencePersistenceError.corruptedStore("empty writer identifier")
     }
@@ -425,9 +429,22 @@ public struct PersistentLineWiseExperienceCoordinator {
   public mutating func handle(_ intent: LineWiseAppIntent) throws -> LineWiseAppFeedback {
     // Capture intents reach VisitRepository, so their event is already durable
     // when the archive save runs.
+    //
+    // `isSuccess` is the right answer for the USER — a deferral is not a confirmed
+    // action — but it is the wrong commit predicate. A deferred command is parked
+    // waiting for its subject and a conflict is preserved for review; both carry
+    // state the doctrine requires to survive, so discarding the proposed
+    // coordinator would lose a Send that merely arrived before its Attempt.
     try applying(
       { $0.handle(intent) },
-      commitsWhen: { $0.isSuccess },
+      commitsWhen: { feedback in
+        switch feedback.outcome {
+        case .accepted, .duplicate, .selectionChanged, .deferred, .conflict:
+          true
+        case .rejected, .restRejected, .persistenceFailed, .locallyRejected:
+          false
+        }
+      },
       writesToVisitJournal: true
     )
   }

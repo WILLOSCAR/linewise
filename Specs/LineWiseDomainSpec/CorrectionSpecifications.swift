@@ -920,6 +920,10 @@ func correctionSpecifications() -> [(String, () throws -> Void)] {
       explicitUnmergeRestoresThePreMergeVisibility
     ),
     (
+      "a command naming an absent Project or RouteCard is parked, not discarded",
+      aCommandNamingAnAbsentProjectOrRouteIsParkedNotDiscarded
+    ),
+    (
       "unmerge cannot leave two active Project cycles on one RouteCard",
       unmergeCannotLeaveTwoActiveProjectCyclesOnOneRouteCard
     ),
@@ -936,4 +940,82 @@ func correctionSpecifications() -> [(String, () throws -> Void)] {
       archivedProjectStaysTerminalAndReworkStartsANewCycle
     ),
   ]
+}
+
+/// Cross-device delivery is ordered by business time, so a command can legitimately
+/// be folded before the subject it names — a Watch running a second behind emits a
+/// close_project_sent that sorts before the phone's start_project. Rejecting it
+/// outright discards the user's send with nothing surfaced: no pending command, no
+/// reconciliation issue. Every other command in this reducer that can name an
+/// absent subject defers instead, and the pending command is drained when the
+/// subject arrives.
+private func aCommandNamingAnAbsentProjectOrRouteIsParkedNotDiscarded() throws {
+  let projectID = ProjectID("project-deferred-subject")
+  let routeID = RouteCardID("route-deferred-subject")
+
+  // close_project_sent before its Project exists.
+  let earlyClose = VisitMemory.apply(
+    .closeProjectSent(
+      actionID: ActionID("action-close-before-start"),
+      projectID: projectID,
+      supportingAttemptID: AttemptID("attempt-deferred-subject"),
+      occurredAt: Instant(millisecondsSince1970: 5_000),
+      source: .watch
+    ),
+    to: VisitState()
+  )
+  try expect(
+    earlyClose.outcome != .rejected(.projectDoesNotExist),
+    """
+    closing a Project that has not arrived yet was rejected outright, so the user's \
+    send is discarded by delivery order with nothing parked and nothing surfaced
+    """
+  )
+  try expect(
+    !earlyClose.state.snapshot.pendingActionIDs.isEmpty
+      || !earlyClose.state.snapshot.reconciliationIssues.isEmpty,
+    "a command waiting for its Project must be visible as pending or as an issue"
+  )
+
+  // start_project before its RouteCard exists.
+  let earlyStart = VisitMemory.apply(
+    .startProject(
+      actionID: ActionID("action-start-before-route"),
+      projectID: projectID,
+      routeCardID: routeID,
+      occurredAt: Instant(millisecondsSince1970: 6_000),
+      source: .watch
+    ),
+    to: VisitState()
+  )
+  try expect(
+    earlyStart.outcome != .rejected(.routeCardDoesNotExist),
+    """
+    starting a Project on a RouteCard that has not arrived yet was rejected outright, \
+    so a valid cycle is lost to arrival order alone
+    """
+  )
+
+  // The parked command must apply once its subject arrives.
+  var state = earlyStart.state
+  state = try acceptedState(
+    VisitMemory.apply(
+      .createRouteCard(
+        actionID: ActionID("action-create-deferred-subject"),
+        routeCardID: routeID,
+        label: "Late route",
+        availability: .present,
+        occurredAt: Instant(millisecondsSince1970: 4_000),
+        source: .iPhone
+      ),
+      to: state
+    )
+  )
+  try expect(
+    state.snapshot.projects.contains { $0.id == projectID && $0.state == .active },
+    """
+    the parked start_project did not drain when its RouteCard arrived: \
+    \(state.snapshot.projects.map { "\($0.id.rawValue)=\($0.state)" })
+    """
+  )
 }

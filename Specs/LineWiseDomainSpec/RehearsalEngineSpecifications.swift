@@ -1109,6 +1109,10 @@ public func rehearsalEngineSpecifications() -> [(String, () throws -> Void)] {
       movementIntentSurvivesUnrelatedEditsAndNeedsReviewAfterContactChange
     ),
     (
+      "a movement intent duration is always a finite encodable number",
+      aMovementIntentDurationIsAlwaysFiniteAndEncodable
+    ),
+    (
       "practice segment playback stops and loops inside one to three steps",
       practiceSegmentPlaybackStopsAndLoopsInsideOneToThreeSteps
     ),
@@ -1141,4 +1145,34 @@ public func rehearsalEngineSpecifications() -> [(String, () throws -> Void)] {
       aPoseSavedByAnEarlierBuildStillLoads
     ),
   ]
+}
+
+/// `max(x, 0.05)` returns NaN when x is NaN, so a non-finite duration was stored
+/// verbatim. JSONEncoder then throws on the whole timeline, which makes the
+/// rehearsal unsaveable and collapses `timelineVersion` to a constant fallback —
+/// so two materially different plans report the same pinned version and evidence
+/// pinning silently stops distinguishing them.
+private func aMovementIntentDurationIsAlwaysFiniteAndEncodable() throws {
+  for candidate in [Double.nan, .infinity, -.infinity, -5] {
+    let intent = MovementIntent(
+      purpose: .stabilize,
+      family: .staticMove,
+      expectedDurationSeconds: candidate,
+      cue: "Press through both feet",
+      provenance: .manual
+    )
+    try rehearsalExpect(
+      intent.expectedDurationSeconds.isFinite,
+      """
+      a duration of \(candidate) was stored as \(intent.expectedDurationSeconds), which \
+      cannot be encoded — the rehearsal becomes unsaveable and its pinned version \
+      collapses to a constant shared by every other unencodable plan
+      """
+    )
+    try rehearsalExpect(
+      intent.expectedDurationSeconds > 0,
+      "a movement step must have a positive duration, got \(intent.expectedDurationSeconds)"
+    )
+    _ = try JSONEncoder().encode(intent)
+  }
 }
