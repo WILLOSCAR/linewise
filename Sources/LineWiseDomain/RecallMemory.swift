@@ -377,6 +377,16 @@ public enum RecallTrainingCommand: Equatable, Codable, Sendable {
     itemID: ReviewInboxItemID,
     occurredAt: Instant
   )
+  /// Returns a closed review item to the queue because the condition it recorded
+  /// has recurred — for example the user undid the Send that resolved it, so the
+  /// Attempt is `unresolved` again. Answering a question once must not mean it can
+  /// never be asked again; otherwise the Visit is flagged for recheck while the
+  /// queue that says what to recheck is empty.
+  case reopenReviewItem(
+    actionID: ActionID,
+    itemID: ReviewInboxItemID,
+    occurredAt: Instant
+  )
   case confirmFailureEpisode(
     actionID: ActionID,
     episodeID: FailureEpisodeID,
@@ -592,6 +602,19 @@ public enum RecallTraining {
       }
       next.reviewItemsByID[itemID] = item.replacing(
         status: .dismissed,
+        snoozedUntil: nil,
+        updatedAt: occurredAt
+      )
+
+    case .reopenReviewItem(_, let itemID, let occurredAt):
+      guard let item = next.reviewItemsByID[itemID] else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.reviewItemDoesNotExist))
+      }
+      guard item.status == .resolved || item.status == .dismissed else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.reviewItemAlreadyExists))
+      }
+      next.reviewItemsByID[itemID] = item.replacing(
+        status: .pending,
         snoozedUntil: nil,
         updatedAt: occurredAt
       )
@@ -1016,6 +1039,7 @@ extension RecallTrainingCommand {
       .snoozeReviewItem(let actionID, _, _, _),
       .resolveReviewItem(let actionID, _, _),
       .dismissReviewItem(let actionID, _, _),
+      .reopenReviewItem(let actionID, _, _),
       .confirmFailureEpisode(let actionID, _, _, _, _, _, _),
       .suggestFailureEpisode(let actionID, _, _, _, _, _, _, _),
       .acceptFailureSuggestion(let actionID, _, _, _),

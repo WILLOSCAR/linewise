@@ -12,7 +12,78 @@ func reviewInboxReconciliationSpecifications() -> [(String, () throws -> Void)] 
       "Review Inbox reconciliation retries after an archive write failure",
       reviewInboxReconciliationRetriesAfterArchiveWriteFailure
     ),
+    (
+      "an undone result returns its Attempt to the review queue",
+      anUndoneResultReturnsItsAttemptToTheReviewQueue
+    ),
   ]
+}
+
+/// Resolving an inbox item records that the user answered the question once. It
+/// does not mean the question can never be asked again: undoing the Send returns
+/// the Attempt to `unresolved`, and the Visit correctly flips to `needsRecheck`.
+/// Treating a resolved sourceKey as permanently satisfied leaves the Visit flagged
+/// for recheck while the queue that tells the user WHAT to recheck is empty — an
+/// Attempt with no confirmed result, invisible.
+private func anUndoneResultReturnsItsAttemptToTheReviewQueue() throws {
+  let fixture = try reviewSyncFixture()
+  var phone = fixture.phone
+  _ = phone.receive(fixture.envelopes)
+  try phone.reconcileReviewInboxFromCapture()
+
+  let attemptID = AttemptID("attempt-assigned-sync-review")
+  let itemID = ReviewInboxItemID("unresolved/\(attemptID.rawValue)")
+  let sendActionID = ActionID("send-assigned-sync-review")
+  try expect(
+    phone.projection.recall.reviewItems.contains { $0.id == itemID },
+    "expected the unresolved Attempt to be queued before it is answered"
+  )
+
+  let markSend = try phone.handle(
+    .markSend(
+      actionID: sendActionID,
+      attemptID: attemptID,
+      occurredAt: reviewInstant(40),
+      source: .iPhone
+    )
+  )
+  try expect(markSend.isSuccess, "expected the user to be able to confirm a Send")
+  let resolved = try phone.submitRecall(
+    .resolveReviewItem(
+      actionID: ActionID("resolve-assigned-sync-review"),
+      itemID: itemID,
+      occurredAt: reviewInstant(41)
+    )
+  )
+  try expect(resolved == .accepted, "expected the answered item to be resolvable")
+
+  // The user changes their mind: undo the Send. The Attempt is unresolved again.
+  let undo = try phone.handle(
+    .undo(
+      actionID: ActionID("undo-assigned-sync-review"),
+      targetActionID: sendActionID,
+      occurredAt: reviewInstant(42),
+      source: .iPhone
+    )
+  )
+  try expect(undo.isSuccess, "expected the Send to be undoable")
+  try expect(
+    phone.projection.capture.attempts.first { $0.id == attemptID }?.outcome == .unresolved,
+    "undoing the Send must return the Attempt to unresolved"
+  )
+
+  try phone.reconcileReviewInboxFromCapture()
+  let openItems = phone.projection.recall.reviewItems.filter {
+    $0.status == .pending || $0.status == .snoozed
+  }
+  try expect(
+    openItems.contains { $0.sourceKey == "attempt/\(attemptID.rawValue)/unresolved" },
+    """
+    the Attempt is unresolved again but no open review item covers it \
+    (open: \(openItems.map(\.id))). The Visit is flagged for recheck while the queue \
+    that says what to recheck is empty, so an unresolved Attempt is silently invisible
+    """
+  )
 }
 
 private func syncedEndedVisitRestoresAnIdempotentReviewInbox() throws {
@@ -167,16 +238,12 @@ private func reviewSyncFixture(
       source: .watch
     ),
     .selectRoute(nil),
+    // Recording with "no route selected" now yields an unassigned Attempt
+    // directly. This previously needed a follow-up correctAttemptRoute(nil) to
+    // undo a route binding the selection fallback fabricated.
     .recordAttempt(
       actionID: ActionID("record-unassigned-sync-review"),
       attemptID: AttemptID("attempt-unassigned-sync-review"),
-      occurredAt: reviewInstant(4),
-      source: .watch
-    ),
-    .correctAttemptRoute(
-      actionID: ActionID("unassign-attempt-sync-review"),
-      attemptID: AttemptID("attempt-unassigned-sync-review"),
-      routeCardID: nil,
       occurredAt: reviewInstant(4),
       source: .watch
     ),

@@ -1030,9 +1030,16 @@ public enum VisitMemory {
         createdAt: occurredAt
       )
 
+      // Resolve through confirmed merges: a cycle attached to a merged duplicate of
+      // the reset route belongs to the same physical route and must close with it.
+      // A raw comparison leaves it active on a route that is now gone, which wrongly
+      // refuses a new cycle on the successor and lets some unrelated command flip it
+      // to gone later with `closedAt` lost.
       for project in next.projectsByID.values
       where
-        project.routeCardID == oldRouteCardID && project.state == .active
+        (canonicalRouteCardID(for: project.routeCardID, in: next) ?? project.routeCardID)
+        == (canonicalRouteCardID(for: oldRouteCardID, in: next) ?? oldRouteCardID)
+        && project.state == .active
       {
         next.projectsByID[project.id] = ProjectSnapshot(
           id: project.id,

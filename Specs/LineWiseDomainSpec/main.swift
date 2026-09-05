@@ -988,6 +988,82 @@ func materialResetCreatesASuccessorAndClosesOnlyTheActiveProjectGone() throws {
     "expected Project history to stay on predecessor")
 }
 
+/// A reset closes the active cycle on the route that was reset. Route identity is
+/// resolved through confirmed merges everywhere else, so a cycle attached to a
+/// merged duplicate of the reset route belongs to the same physical route and must
+/// close too. Comparing raw IDs leaves it `.active` on a route that is now `.gone`,
+/// which wrongly refuses a new cycle on the survivor, and it is later flipped to
+/// `.gone` by whatever unrelated command happens to reproject next — losing
+/// `closedAt`, so the history says the cycle ended at no particular time.
+func materialResetClosesACycleOnAMergedDuplicateOfTheResetRoute() throws {
+  let canonicalID = RouteCardID("route-reset-merge-canonical")
+  let duplicateID = RouteCardID("route-reset-merge-duplicate")
+  let successorID = RouteCardID("route-reset-merge-successor")
+  let projectID = ProjectID("project-reset-merge")
+  let resetAt = Instant(millisecondsSince1970: 5_000)
+
+  var state = VisitState()
+  for command in [
+    VisitCommand.createRouteCard(
+      actionID: ActionID("action-reset-merge-canonical"),
+      routeCardID: canonicalID,
+      label: "Canonical",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 1_000),
+      source: .iPhone
+    ),
+    .createRouteCard(
+      actionID: ActionID("action-reset-merge-duplicate"),
+      routeCardID: duplicateID,
+      label: "Duplicate",
+      availability: .present,
+      occurredAt: Instant(millisecondsSince1970: 2_000),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("action-reset-merge-project"),
+      projectID: projectID,
+      routeCardID: duplicateID,
+      occurredAt: Instant(millisecondsSince1970: 3_000),
+      source: .iPhone
+    ),
+    .confirmRouteCardMerge(
+      actionID: ActionID("action-reset-merge-confirm"),
+      duplicateRouteCardID: duplicateID,
+      canonicalRouteCardID: canonicalID,
+      occurredAt: Instant(millisecondsSince1970: 4_000),
+      source: .iPhone
+    ),
+    .replaceRouteAfterReset(
+      actionID: ActionID("action-reset-merge-reset"),
+      oldRouteCardID: canonicalID,
+      successorRouteCardID: successorID,
+      successorLabel: "Reset successor",
+      occurredAt: resetAt,
+      source: .iPhone
+    ),
+  ] {
+    state = try acceptedState(VisitMemory.apply(command, to: state))
+  }
+
+  let project = state.snapshot.projects.first { $0.id == projectID }
+  try expect(
+    project?.state == .gone,
+    """
+    the cycle on the merged duplicate is still \(String(describing: project?.state)) \
+    after its physical route was reset: the route is gone but the cycle stays active, \
+    so a new cycle on the successor is wrongly refused
+    """
+  )
+  try expect(
+    project?.closedAt == resetAt,
+    """
+    the cycle closed at \(String(describing: project?.closedAt)) instead of the reset \
+    time, so history records no moment for a closure the reset caused
+    """
+  )
+}
+
 func undoingTheOnlySupportingSendReopensTheProjectCycle() throws {
   let routeID = RouteCardID("route-undo-project-send")
   let projectID = ProjectID("project-undo-project-send")
@@ -1841,6 +1917,10 @@ var specifications: [(String, () throws -> Void)] = [
   (
     "a Project closes sent only with a sent Attempt on the same route",
     aProjectCanCloseSentOnlyWithASentAttemptOnTheSameRoute
+  ),
+  (
+    "material reset closes a cycle on a merged duplicate of the reset route",
+    materialResetClosesACycleOnAMergedDuplicateOfTheResetRoute
   ),
   (
     "material reset creates a successor and closes the active Project gone",

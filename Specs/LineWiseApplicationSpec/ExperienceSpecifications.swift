@@ -31,7 +31,154 @@ func experienceSpecifications() -> [(String, () throws -> Void)] {
       "a Visit started on the Watch reopens cues on the phone",
       aVisitStartedOnTheWatchReopensCuesOnThePhone
     ),
+    (
+      "an Actual track still links after its route is deduplicated",
+      anActualTrackStillLinksAfterItsRouteIsDeduplicated
+    ),
+    (
+      "explicitly choosing no route leaves the next Attempt unassigned",
+      explicitlyChoosingNoRouteLeavesTheNextAttemptUnassigned
+    ),
   ]
+}
+
+/// The route picker has an explicit "No route selected" row. Choosing it is the
+/// user saying they do not know which route this was — `unassigned` is a real
+/// answer that Review Inbox is built to collect. Falling back to the most recent
+/// Attempt's route fabricates a binding the user just declined, which corrupts the
+/// per-route history silently and with no correction prompt.
+private func explicitlyChoosingNoRouteLeavesTheNextAttemptUnassigned() throws {
+  let firstRouteID = RouteCardID("route-deselect-first")
+  let secondRouteID = RouteCardID("route-deselect-second")
+  let visitID = GymVisitID("visit-deselect")
+  var experience = LineWiseExperienceCoordinator()
+
+  for command in basicAttemptCommands(
+    routeID: firstRouteID,
+    visitID: visitID,
+    attemptID: AttemptID("attempt-deselect-first")
+  ) {
+    try expect(experience.handle(command).isSuccess, "expected capture on the first route")
+  }
+  // A second selectable route exists, so the single-route shortcut cannot apply.
+  try expect(
+    experience.handle(
+      .createRoute(
+        actionID: ActionID("create-deselect-second"),
+        routeCardID: secondRouteID,
+        label: "Second route",
+        availability: .present,
+        occurredAt: instant(70),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected a second selectable route"
+  )
+  try expect(
+    experience.projection.capture.currentRouteCard?.id == firstRouteID,
+    "expected the first route to be current before deselecting"
+  )
+
+  try expect(
+    experience.handle(.selectRoute(nil)).isSuccess,
+    "expected the explicit No route selected row to be accepted"
+  )
+  try expect(
+    experience.projection.capture.currentRouteCard == nil,
+    """
+    the user chose No route selected but the projection still shows \
+    \(String(describing: experience.projection.capture.currentRouteCard?.id.rawValue))
+    """
+  )
+
+  let unassignedID = AttemptID("attempt-deselect-unassigned")
+  try expect(
+    experience.handle(
+      .recordAttempt(
+        actionID: ActionID("record-deselect-unassigned"),
+        attemptID: unassignedID,
+        occurredAt: instant(71),
+        source: .watch
+      )
+    ).isSuccess,
+    "expected the Attempt to be recorded"
+  )
+  let recorded = experience.projection.capture.attempts.first { $0.id == unassignedID }
+  try expect(
+    recorded?.routeCardID == nil,
+    """
+    the Attempt was bound to \(String(describing: recorded?.routeCardID?.rawValue)) after \
+    the user explicitly declined to name a route — an honest unassigned Attempt became \
+    a fabricated route binding
+    """
+  )
+}
+
+/// Merging two RouteCards must not rewrite history, so a historical Attempt keeps
+/// the duplicate's ID while the rest of the app selects the canonical one. Every
+/// other route comparison in this layer resolves through the merge before deciding,
+/// and this one has to as well: otherwise confirming a duplicate permanently locks
+/// the user out of comparing their planned line to what they actually climbed on
+/// that route, and `actualAttemptID` is the only gate that admits an Actual track.
+private func anActualTrackStillLinksAfterItsRouteIsDeduplicated() throws {
+  let duplicateID = RouteCardID("route-dedup-actual-duplicate")
+  let canonicalID = RouteCardID("route-dedup-actual-canonical")
+  let visitID = GymVisitID("visit-dedup-actual")
+  let attemptID = AttemptID("attempt-dedup-actual")
+  var experience = LineWiseExperienceCoordinator()
+
+  for command in basicAttemptCommands(
+    routeID: duplicateID,
+    visitID: visitID,
+    attemptID: attemptID
+  ) {
+    try expect(experience.handle(command).isSuccess, "expected capture on the duplicate route")
+  }
+  try expect(
+    experience.handle(
+      .createRoute(
+        actionID: ActionID("create-dedup-actual-canonical"),
+        routeCardID: canonicalID,
+        label: "Canonical route",
+        availability: .present,
+        occurredAt: instant(60),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected the surviving RouteCard to exist"
+  )
+  try expect(
+    experience.handle(
+      .mergeRoute(
+        actionID: ActionID("merge-dedup-actual"),
+        duplicateRouteCardID: duplicateID,
+        canonicalRouteCardID: canonicalID,
+        occurredAt: instant(61),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected the user's duplicate confirmation to be accepted"
+  )
+  try expect(
+    experience.projection.capture.attempts.first?.routeCardID == duplicateID,
+    "a merge must not rewrite the historical Attempt binding"
+  )
+
+  let engine = try makeRehearsalEngine(id: RouteRehearsalID("rehearsal-dedup-actual"))
+  let outcome = experience.attachRehearsal(
+    engine,
+    routeCardID: canonicalID,
+    plannedVisitID: visitID,
+    actualAttemptID: attemptID
+  )
+  try expect(
+    outcome == .accepted,
+    """
+    linking the Actual track was refused with \(outcome) because the Attempt still \
+    carries the pre-merge route ID: after deduplicating a route the user can never \
+    compare plan to actual on it again
+    """
+  )
 }
 
 /// The Watch owns starting a Visit, and that start reaches the phone as a synced

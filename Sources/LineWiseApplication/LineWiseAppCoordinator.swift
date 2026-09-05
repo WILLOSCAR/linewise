@@ -266,6 +266,14 @@ public struct LineWiseAppCoordinator {
   private var repository: VisitRepository?
   private var restState: RestState
   private var selectedRouteCardID: RouteCardID?
+  /// Set when the user explicitly picks "No route selected".
+  ///
+  /// A nil `selectedRouteCardID` is ambiguous: it means either "has not chosen yet"
+  /// — where inferring the current route from recent capture is a convenience — or
+  /// "chose none", where inferring anything fabricates a binding the user just
+  /// declined and quietly corrupts per-route history. `unassigned` is a real answer
+  /// the Review Inbox exists to collect, so the two cases must be distinguishable.
+  private var hasExplicitlyClearedRouteSelection = false
   private var reversibleActionIDs: [ActionID]
 
   public init(
@@ -391,8 +399,10 @@ public struct LineWiseAppCoordinator {
           return feedback(.locallyRejected(.routeIsNotSelectable))
         }
         selectedRouteCardID = canonicalID
+        hasExplicitlyClearedRouteSelection = false
       } else {
         selectedRouteCardID = nil
+        hasExplicitlyClearedRouteSelection = true
       }
       return feedback(.selectionChanged)
     }
@@ -505,6 +515,11 @@ public struct LineWiseAppCoordinator {
 
     if let selected = selectableCanonical(selectedRouteCardID) {
       return selected
+    }
+    // The user said "no route". Inferring one from recent capture would overrule
+    // that answer and bind the next Attempt to a route they just declined.
+    if hasExplicitlyClearedRouteSelection {
+      return nil
     }
     if let activeVisitID = snapshot.visits.first(where: { $0.captureState == .open })?.id,
       let recentAttempt = snapshot.attempts.last(where: {

@@ -416,7 +416,10 @@ public struct LineWiseExperienceCoordinator {
         }
       }
     )
-    let trackedSourceKeys = Set(recallTrainingState.snapshot.reviewItems.map(\.sourceKey))
+    let trackedItemsBySourceKey = Dictionary(
+      recallTrainingState.snapshot.reviewItems.map { ($0.sourceKey, $0) },
+      uniquingKeysWith: { first, _ in first }
+    )
     var proposedRecallState = recallTrainingState
     var newlyTrackedSourceKeys: Set<String> = []
     var enqueuedItemIDs: [ReviewInboxItemID] = []
@@ -433,11 +436,33 @@ public struct LineWiseExperienceCoordinator {
 
       for candidate in candidates {
         let sourceKey = "attempt/\(attempt.id.rawValue)/\(candidate.suffix)"
-        guard
-          !trackedSourceKeys.contains(sourceKey),
-          !newlyTrackedSourceKeys.contains(sourceKey)
-        else { continue }
+        guard !newlyTrackedSourceKeys.contains(sourceKey) else { continue }
         let itemID = ReviewInboxItemID("\(candidate.suffix)/\(attempt.id.rawValue)")
+
+        if let tracked = trackedItemsBySourceKey[sourceKey] {
+          // The item exists. Leave an open one alone, but reopen a closed one: the
+          // condition it recorded is true again (the user undid the result that
+          // resolved it), so the decision is outstanding once more. Without this the
+          // Visit stays flagged for recheck while its queue is empty.
+          guard tracked.status == .resolved || tracked.status == .dismissed else { continue }
+          let reopened = RecallTraining.apply(
+            .reopenReviewItem(
+              actionID: ActionID(
+                "experience.reconcile-review/reopen/\(sourceKey)/\(attempt.occurredAt.rawValue)"
+              ),
+              itemID: tracked.id,
+              occurredAt: attempt.occurredAt
+            ),
+            visitSnapshot: visitSnapshotForRecall,
+            to: proposedRecallState
+          )
+          if case .accepted = reopened.outcome {
+            proposedRecallState = reopened.state
+            newlyTrackedSourceKeys.insert(sourceKey)
+            enqueuedItemIDs.append(tracked.id)
+          }
+          continue
+        }
         let transition = RecallTraining.apply(
           .enqueueReviewItem(
             actionID: ActionID("experience.reconcile-review/\(sourceKey)"),
@@ -789,7 +814,16 @@ public struct LineWiseExperienceCoordinator {
       guard let attempt = capture.attempts.first(where: { $0.id == actualAttemptID }) else {
         return .attemptDoesNotExist
       }
-      guard attempt.routeCardID == routeCardID else {
+      // A merge must not rewrite history, so a historical Attempt keeps the
+      // duplicate's route ID while the rest of the app selects the canonical one.
+      // Comparing raw IDs would therefore lock the user out of linking an Actual
+      // track on any route they have ever deduplicated. Resolve both sides through
+      // the confirmed merge, as every other route comparison in this layer does.
+      let snapshot = visitSnapshotForRecall
+      let attemptRoute = attempt.routeCardID.flatMap {
+        snapshot.canonicalRouteCardID(for: $0)
+      }
+      guard attemptRoute == snapshot.canonicalRouteCardID(for: routeCardID) else {
         return .attemptRouteMismatch
       }
       if let plannedVisitID, attempt.visitID != plannedVisitID {
