@@ -266,14 +266,18 @@ public actor DeviceEnvelopeBridge {
     }
 
     public func capabilityState() async -> OptionalCapabilityState {
-      guard HKHealthStore.isHealthDataAvailable() else { return .unavailable }
+      // The mapping itself is specified in WorkoutCapability, which compiles on
+      // every platform; only reading HealthKit's status needs this gate.
+      guard HKHealthStore.isHealthDataAvailable() else {
+        return WorkoutCapability.state(healthDataAvailable: false, isAuthorized: nil)
+      }
       switch healthStore.authorizationStatus(for: HKObjectType.workoutType()) {
       case .notDetermined:
-        return .authorizationRequired
+        return WorkoutCapability.state(healthDataAvailable: true, isAuthorized: nil)
       case .sharingDenied:
-        return .denied
+        return WorkoutCapability.state(healthDataAvailable: true, isAuthorized: false)
       case .sharingAuthorized:
-        return .ready
+        return WorkoutCapability.state(healthDataAvailable: true, isAuthorized: true)
       @unknown default:
         return .failed("Unknown HealthKit workout authorization state")
       }
@@ -339,27 +343,26 @@ public actor DeviceEnvelopeBridge {
       // One critical section closes the live window, reads the start instant and
       // folds the accumulator, so a final delegate callback either lands fully
       // inside this workout's coverage or is cleanly excluded from it.
-      let (duration, coverage) = summaryLock.withLock {
-        () -> (TimeInterval, Double?) in
-        let elapsed = max(0, date.timeIntervalSince(workoutStartedAt ?? date))
-        let coverage =
-          elapsed > 0 ? coverageAccumulator.coverage(overWorkoutDurationSeconds: elapsed) : nil
+      let (startedAt, accumulator) = summaryLock.withLock {
+        () -> (Date, HeartRateCoverageAccumulator) in
+        let started = workoutStartedAt ?? date
+        let folded = coverageAccumulator
         workoutStartedAt = nil
-        return (elapsed, coverage)
+        return (started, folded)
       }
-      let summary = HealthKitWorkoutSummary(
-        durationSeconds: duration,
+      // Duration, coverage and absent-reading handling are specified in
+      // WorkoutSummaryBuilder, which is compiled and tested on every platform.
+      let summary = WorkoutSummaryBuilder.summary(
+        startedAt: startedAt,
+        endedAt: date,
+        coverageAccumulator: accumulator,
         averageHeartRateBPM: heartRateStatistics?.averageQuantity()?.doubleValue(
           for: heartRateUnit),
         maximumHeartRateBPM: heartRateStatistics?.maximumQuantity()?.doubleValue(
           for: heartRateUnit),
-        heartRateCoverage: coverage,
         activeEnergyKilocalories: activeEnergyStatistics?.sumQuantity()?.doubleValue(
           for: .kilocalorie()
-        ),
-        workoutEffortScore: nil,
-        workoutEffortSource: nil,
-        sourceVersion: "healthkit-live-workout-v1"
+        )
       )
       summaryLock.withLock { storedLatestSummary = summary }
       workoutSession = nil

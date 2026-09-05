@@ -32,6 +32,7 @@ struct LineWiseAppleAdaptersSpecRunner {
     specifications += experienceSurfaceSpecifications()
     specifications += learningExperienceSurfaceSpecifications()
     specifications += routeMediaLibrarySpecifications()
+    specifications += workoutSummaryBuildingSpecifications()
 
     let passed = try await runSpecifications(specifications)
     print("LineWiseAppleAdaptersSpec: \(passed) passed")
