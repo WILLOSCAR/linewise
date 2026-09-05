@@ -23,7 +23,8 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 - A Watch event is acknowledged only after the reliable WatchConnectivity transfer completion callback; received payloads stay in a durable inbox until repository persistence succeeds.
 - Ending a visit on Watch creates stable unresolved/unassigned Review Inbox work on iPhone and safely retries that reconciliation after restart or write failure.
 - Full export and deletion APIs; redacted diagnostics omit route labels, health values, timestamps, and device IDs.
-- Persistent experience state covers review, recall, training, physiology context, rehearsal, and active rest.
+- Persistent experience state covers review, recall, training, physiology context, rehearsal, and active rest. A failed archive save leaves no partial change to that state; a capture command is already in the durable journal by then, so the two are kept consistent rather than one being silently rolled back.
+- A command that names a subject which has not arrived yet — a Send before its Attempt, a Project close before its start — is parked and applied when the subject lands, rather than rejected.
 
 ### Physiology context
 
@@ -88,7 +89,9 @@ swift run linewise-demo
 
 Run the same checks with `-c release` before shipping a branch.
 
-The current executable-spec baseline is 181 passing behaviors in both Debug and Release: Domain 85, Application 39, Apple adapters 42, and AI adapters 15. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+The current executable-spec baseline is 238 passing behaviors in both Debug and Release: Domain 118, Application 51, Apple adapters 52, and AI adapters 17. The command-line demo additionally exercises a two-visit manual-to-learning loop.
+
+Each suite derives its reported total from the specifications it actually ran, so removing one lowers the count. That is deliberate: the Apple and AI runners previously printed a fixed block of `PASS:` lines and summed hardcoded per-suite integers, which made a green suite unfalsifiable.
 
 For the Apple apps, open `LineWise.xcodeproj` in a full Xcode installation, choose the shared `LineWise` or `LineWise-Watch` scheme, configure signing, and run on a paired iPhone/Apple Watch. HealthKit and WatchConnectivity behavior must be verified on real signed devices; Swift Package tests alone do not establish that evidence.
 

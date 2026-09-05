@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: End-to-end implementation foundation present; command-line behavior verification is active at 181 specifications; the `os(iOS)` surfaces now compile via the Catalyst triple in Section 5, `os(watchOS)` branches remain uncompiled, and real-device and real-gym evidence remains open.
+Status: End-to-end implementation foundation present; command-line behavior verification is active at 238 specifications; a 62-finding review pass is closed; the `os(iOS)` surfaces compile via the Catalyst triple in Section 5, `os(watchOS)` branches remain uncompiled, and real-device and real-gym evidence remains open.
 
 Product: LineWise / 线感
 
@@ -90,7 +90,7 @@ flowchart TB
 - Stable device envelopes, inbox/outbox, completion-confirmed acknowledgement, retry, duplicate suppression, and origin-sequence conflict handling.
 - Role-scoped durable WatchConnectivity payload inboxes that are consumed only after repository persistence succeeds.
 - Export, scoped delete, and redacted diagnostics.
-- Transactional experience archive covering Recall, Learning, Physiology, Rehearsal, and Rest state.
+- Experience archive covering Recall, Learning, Physiology, Rehearsal, and Rest state. A change that touches only this archive is all-or-nothing. A capture command is not: its event reaches the durable journal before the archive save runs, so a failed save commits the coordinator that matches the journal and surfaces the error rather than leaving an Attempt the user can see and cannot Undo.
 
 ### C. Recall, teaching, and physiology
 
@@ -165,7 +165,9 @@ git diff --check
 
 The executable specification targets are used because the currently selected Command Line Tools installation does not expose the full Xcode test runtime. They exercise only public module interfaces and exit nonzero on a violated expectation.
 
-Current baseline: 85 Domain + 39 Application + 42 Apple adapter + 15 AI adapter behaviors = 181 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+Current baseline: 118 Domain + 51 Application + 52 Apple adapter + 17 AI adapter behaviors = 238 passing specifications in both Debug and Release, plus the end-to-end command-line demo.
+
+Each suite derives its total from the specifications it ran rather than a hardcoded constant, so a removed or skipped specification lowers the count instead of silently reporting the old number.
 
 These commands do not cover all of the platform-gated Apple code. The SwiftUI surfaces in `ExperienceSurfaces.swift` and `RehearsalSurfaces.swift` are gated only on `canImport(SwiftUI)`, which is true on macOS, so `swift build` does compile them. What it skips is `os(iOS)`, `os(watchOS)`, `canImport(HealthKit)`, `canImport(WatchConnectivity)`, and `canImport(PhotosUI)`: the Watch and iPhone capture surfaces, the HealthKit workout recorder, the WatchConnectivity transport, the photo import surface, and both app entry points.
 
