@@ -32,6 +32,13 @@ public struct SubjectivePhysiologyCheckIn: Equatable, Codable, Sendable {
     self.wholeBodyFatigue0To10 = wholeBodyFatigue0To10
     self.forearmPumpOverall = forearmPumpOverall
   }
+
+  /// Whether the climber actually answered any question. A check-in where every
+  /// field was skipped is an empty envelope, not a subjective report, so it must
+  /// never be presented as something the user told us.
+  public var hasAnyReportedValue: Bool {
+    sessionEffort1To10 != nil || wholeBodyFatigue0To10 != nil || forearmPumpOverall != nil
+  }
 }
 
 public enum WorkoutEffortSource: String, Equatable, Codable, Sendable {
@@ -160,25 +167,28 @@ public enum PhysiologyContextService {
     healthKitSummary: HealthKitWorkoutSummary?,
     recordedAt: Instant
   ) -> PhysiologyContextBuildResult {
-    guard subjective != nil || healthKitSummary != nil else {
+    // A check-in whose every field was skipped carries no user report, so it is
+    // treated as absent rather than being stamped as a subjective report.
+    let reportedSubjective = subjective.flatMap { $0.hasAnyReportedValue ? $0 : nil }
+    guard reportedSubjective != nil || healthKitSummary != nil else {
       return .rejected(.noContextProvided)
     }
 
-    if let effort = subjective?.sessionEffort1To10, !(1...10).contains(effort) {
+    if let effort = reportedSubjective?.sessionEffort1To10, !(1...10).contains(effort) {
       return .rejected(.sessionEffortOutOfRange)
     }
-    if let fatigue = subjective?.wholeBodyFatigue0To10, !(0...10).contains(fatigue) {
+    if let fatigue = reportedSubjective?.wholeBodyFatigue0To10, !(0...10).contains(fatigue) {
       return .rejected(.wholeBodyFatigueOutOfRange)
     }
 
     if let summary = healthKitSummary {
-      guard summary.durationSeconds >= 0 else {
+      guard summary.durationSeconds.isFinite, summary.durationSeconds >= 0 else {
         return .rejected(.invalidWorkoutDuration)
       }
-      if let average = summary.averageHeartRateBPM, average <= 0 {
+      if let average = summary.averageHeartRateBPM, !average.isFinite || average <= 0 {
         return .rejected(.invalidHeartRate)
       }
-      if let maximum = summary.maximumHeartRateBPM, maximum <= 0 {
+      if let maximum = summary.maximumHeartRateBPM, !maximum.isFinite || maximum <= 0 {
         return .rejected(.invalidHeartRate)
       }
       if let average = summary.averageHeartRateBPM,
@@ -187,13 +197,14 @@ public enum PhysiologyContextService {
       {
         return .rejected(.invalidHeartRate)
       }
-      if let coverage = summary.heartRateCoverage, !(0...1).contains(coverage) {
+      if let coverage = summary.heartRateCoverage, !coverage.isFinite || !(0...1).contains(coverage)
+      {
         return .rejected(.invalidHeartRateCoverage)
       }
-      if let energy = summary.activeEnergyKilocalories, energy < 0 {
+      if let energy = summary.activeEnergyKilocalories, !energy.isFinite || energy < 0 {
         return .rejected(.invalidActiveEnergy)
       }
-      if let effort = summary.workoutEffortScore, !(1...10).contains(effort) {
+      if let effort = summary.workoutEffortScore, !effort.isFinite || !(1...10).contains(effort) {
         return .rejected(.invalidWorkoutEffort)
       }
       if summary.workoutEffortScore != nil && summary.workoutEffortSource == nil {
@@ -208,9 +219,9 @@ public enum PhysiologyContextService {
       PhysiologyContextSnapshot(
         id: contextID,
         visitID: visitID,
-        subjective: subjective,
+        subjective: reportedSubjective,
         healthKitSummary: healthKitSummary,
-        primarySource: subjective == nil ? .none : .subjectiveReport,
+        primarySource: reportedSubjective == nil ? .none : .subjectiveReport,
         healthKitRole: healthKitSummary == nil ? .absent : .optionalSupportingContext,
         claimBoundary: .contextOnlyNonDiagnostic,
         recordedAt: recordedAt

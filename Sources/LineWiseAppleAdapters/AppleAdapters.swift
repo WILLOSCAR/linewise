@@ -325,6 +325,14 @@ public actor DeviceEnvelopeBridge {
     // contribution cannot be exercised by the Swift-package specs. The pure
     // accumulation logic it delegates to (HeartRateCoverageAccumulator) is
     // covered by physiologyCoverageSpecifications.
+    //
+    // `statistics(for:)` on a live builder is cumulative: the SDK documents it as
+    // "statistics for all the samples of the given type that have been added to
+    // the receiver", so its startDate...endDate spans the whole workout so far
+    // regardless of sensor dropouts. Feeding that span to the accumulator would
+    // report full coverage for an almost entirely missing stream, so this reports
+    // only the newest reading's own timing and lets the accumulator decide how
+    // much time a single reading is worth.
     public func workoutBuilder(
       _ workoutBuilder: HKLiveWorkoutBuilder,
       didCollectDataOf collectedTypes: Set<HKSampleType>
@@ -337,17 +345,31 @@ public actor DeviceEnvelopeBridge {
       else { return }
 
       let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
-      guard let averageBPM = statistics.averageQuantity()?.doubleValue(for: heartRateUnit) else {
-        return
-      }
-      let windowStart = statistics.startDate.timeIntervalSince(start)
-      let windowEnd = statistics.endDate.timeIntervalSince(start)
+      // The reported bpm is context for the accumulator's own average/maximum;
+      // stop() reads avg/max from the cumulative statistics directly. Falling
+      // back to the cumulative average keeps a reading from being dropped
+      // entirely when the most-recent option is unavailable, which would
+      // understate coverage just as badly as the span overstated it.
+      guard
+        let bpm = (statistics.mostRecentQuantity() ?? statistics.averageQuantity())?
+          .doubleValue(for: heartRateUnit)
+      else { return }
+
       summaryLock.withLock {
-        coverageAccumulator.observeWindow(
-          startSeconds: max(0, windowStart),
-          endSeconds: max(0, windowEnd),
-          bpm: averageBPM
-        )
+        if let interval = statistics.mostRecentQuantityDateInterval() {
+          coverageAccumulator.observeWindow(
+            startSeconds: max(0, interval.start.timeIntervalSince(start)),
+            endSeconds: max(0, interval.end.timeIntervalSince(start)),
+            bpm: bpm
+          )
+        } else {
+          // No per-reading interval: credit the instant the newest sample landed,
+          // never the cumulative window back to the first sample.
+          coverageAccumulator.observeSample(
+            at: max(0, statistics.endDate.timeIntervalSince(start)),
+            bpm: bpm
+          )
+        }
       }
     }
   }
