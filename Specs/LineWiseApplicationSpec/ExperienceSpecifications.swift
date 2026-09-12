@@ -19,7 +19,206 @@ func experienceSpecifications() -> [(String, () throws -> Void)] {
       "route rehearsal links plan and actual without blocking capture",
       routeRehearsalLinksPlanAndActualWithoutBlockingCapture
     ),
+    (
+      "a cue deferred without a deadline returns at the next visit",
+      aCueDeferredWithoutADeadlineReturnsAtTheNextVisit
+    ),
+    (
+      "a decided cue keeps the decision the user actually made",
+      aDecidedCueKeepsTheDecisionTheUserActuallyMade
+    ),
   ]
+}
+
+/// "Later" carries no deadline. Deferring without one must mean "not this visit", never
+/// "never again" — the cue has to come back the next time the user opens a Visit.
+private func aCueDeferredWithoutADeadlineReturnsAtTheNextVisit() throws {
+  var experience = LineWiseExperienceCoordinator()
+  let cueID = NextSessionCueID("cue-deferred-open-ended")
+  let deferVisitID = GymVisitID("visit-defer-open-ended")
+  try prepareReopenedCue(
+    in: &experience,
+    label: "open-ended",
+    cueID: cueID,
+    visitID: deferVisitID
+  )
+
+  try expect(
+    experience.submitRecall(
+      .deferNextSessionCue(
+        actionID: ActionID("defer-open-ended"),
+        cueID: cueID,
+        until: nil,
+        occurredAt: instant(31)
+      )
+    ) == .accepted,
+    "expected an open-ended deferral to be accepted"
+  )
+  try expect(
+    experience.projection.recall.nextSessionCues.first?.status == .deferred,
+    "expected the cue to be deferred"
+  )
+
+  try expect(
+    experience.handle(
+      .endVisit(
+        actionID: ActionID("end-defer-open-ended"),
+        occurredAt: instant(32),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected the deferring Visit to end"
+  )
+  let laterVisitID = GymVisitID("visit-after-open-ended-defer")
+  try expect(
+    experience.handle(
+      .startVisit(
+        actionID: ActionID("start-after-open-ended-defer"),
+        visitID: laterVisitID,
+        occurredAt: instant(33),
+        source: .iPhone
+      )
+    ).isSuccess,
+    "expected a later Visit to start"
+  )
+
+  try expect(
+    experience.projection.reopenedNextSessionCues.map(\.id) == [cueID],
+    "a cue deferred with no deadline must resurface at the next Visit, not disappear"
+  )
+  try expect(
+    experience.projection.recall.nextSessionCues.first?.status == .ready
+      && experience.projection.recall.nextSessionCues.first?.reopenedInVisitID == laterVisitID,
+    "the reopened cue should be actionable again in the Visit that surfaced it"
+  )
+}
+
+/// A NextSessionCue records only its current status, so overwriting a terminal decision
+/// would erase what the user actually chose. Each decision must be made once.
+private func aDecidedCueKeepsTheDecisionTheUserActuallyMade() throws {
+  var experience = LineWiseExperienceCoordinator()
+  let cueID = NextSessionCueID("cue-decided-once")
+  try prepareReopenedCue(
+    in: &experience,
+    label: "decided",
+    cueID: cueID,
+    visitID: GymVisitID("visit-decided-once")
+  )
+
+  try expect(
+    experience.submitRecall(
+      .dismissNextSessionCue(
+        actionID: ActionID("dismiss-decided"),
+        cueID: cueID,
+        occurredAt: instant(31)
+      )
+    ) == .accepted,
+    "expected the user to be able to ignore a cue"
+  )
+
+  let laterCompletion = experience.submitRecall(
+    .completeNextSessionCue(
+      actionID: ActionID("complete-after-dismiss"),
+      cueID: cueID,
+      occurredAt: instant(32)
+    )
+  )
+  try expect(
+    laterCompletion == .rejected(.nextSessionCueIsClosed),
+    "a dismissed cue must not be silently claimed as practiced"
+  )
+  try expect(
+    experience.projection.recall.nextSessionCues.first?.status == .dismissed,
+    "the user's own decision must survive a later conflicting command"
+  )
+
+  let laterDeferral = experience.submitRecall(
+    .deferNextSessionCue(
+      actionID: ActionID("defer-after-dismiss"),
+      cueID: cueID,
+      until: nil,
+      occurredAt: instant(33)
+    )
+  )
+  try expect(
+    laterDeferral == .rejected(.nextSessionCueIsClosed),
+    "a dismissed cue must not quietly return to the deferred queue"
+  )
+  try expect(
+    experience.projection.recall.nextSessionCues.first?.status == .dismissed,
+    "a closed cue only returns through an explicit reopen at a later Visit"
+  )
+}
+
+/// Builds the shortest honest path to one confirmed NextSessionCue that is open in an
+/// active Visit: route, project, visit, attempt, explicit Not Sent, and a failure review.
+private func prepareReopenedCue(
+  in experience: inout LineWiseExperienceCoordinator,
+  label: String,
+  cueID: NextSessionCueID,
+  visitID: GymVisitID
+) throws {
+  let routeID = RouteCardID("route-\(label)")
+  let projectID = ProjectID("project-\(label)")
+  let attemptID = AttemptID("attempt-\(label)")
+  let setup: [LineWiseAppIntent] = [
+    .createRoute(
+      actionID: ActionID("create-route-\(label)"),
+      routeCardID: routeID,
+      label: "Cue route \(label)",
+      availability: .present,
+      occurredAt: instant(21),
+      source: .iPhone
+    ),
+    .startProject(
+      actionID: ActionID("start-project-\(label)"),
+      projectID: projectID,
+      routeCardID: routeID,
+      occurredAt: instant(22),
+      source: .iPhone
+    ),
+    .startVisit(
+      actionID: ActionID("start-visit-\(label)"),
+      visitID: visitID,
+      occurredAt: instant(23),
+      source: .iPhone
+    ),
+    .selectRoute(routeID),
+    .recordAttempt(
+      actionID: ActionID("record-attempt-\(label)"),
+      attemptID: attemptID,
+      occurredAt: instant(24),
+      source: .iPhone
+    ),
+    .confirmNotSent(
+      actionID: ActionID("not-sent-\(label)"),
+      attemptID: attemptID,
+      occurredAt: instant(25),
+      source: .iPhone
+    ),
+  ]
+  for intent in setup {
+    try expect(experience.handle(intent).isSuccess, "expected cue fixture setup: \(intent)")
+  }
+  let review = experience.completeFailureReview(
+    FailureReviewRequest(
+      failureActionID: ActionID("failure-\(label)"),
+      moveCueActionID: ActionID("move-cue-\(label)"),
+      nextSessionCueActionID: ActionID("next-cue-\(label)"),
+      episodeID: FailureEpisodeID("failure-episode-\(label)"),
+      attemptID: attemptID,
+      routeCardID: routeID,
+      primaryBlocker: .footwork,
+      locationNote: nil,
+      moveCueID: MoveCueID("move-\(label)"),
+      moveCueText: "Name the foot before the hand move",
+      nextSessionCueID: cueID,
+      projectID: projectID,
+      nextAction: "Try the named foot once",
+      occurredAt: instant(26)
+    )
+  )
+  try expect(review == .accepted, "expected a confirmed recall chain for the cue fixture")
 }
 
 private func failureReviewBecomesACueInTheNextVisit() throws {

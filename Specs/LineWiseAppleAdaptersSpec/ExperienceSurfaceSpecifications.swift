@@ -22,7 +22,82 @@ func experienceSurfaceSpecifications() -> [(String, () async throws -> Void)] {
       "synced ended Visit restores the Review Inbox and can begin review",
       { try syncedEndedVisitRestoresReviewInboxAndCanBeginReview() }
     ),
+    (
+      "the Later button returns a cue instead of retiring it",
+      { try theLaterButtonReturnsACueInsteadOfRetiringIt() }
+    ),
   ]
+}
+
+/// The iPhone cue row offers Completed / Later / Ignore. "Later" sends no deadline, so a
+/// user who taps it must still see the cue at the next Visit, and "Ignore" must stay final.
+@MainActor
+private func theLaterButtonReturnsACueInsteadOfRetiringIt() throws {
+  let model = LineWiseExperienceViewModel(
+    coordinator: try PersistentLineWiseExperienceCoordinator(
+      store: MemoryExperienceArchiveStore()
+    )
+  )
+  let routeID = RouteCardID("route-later-button")
+  let projectID = ProjectID("project-later-button")
+  let visitID = GymVisitID("visit-later-button")
+  let attemptID = AttemptID("attempt-later-button")
+  let cueID = NextSessionCueID("cue-later-button")
+  model.createRoute(label: "Later button route", routeCardID: routeID, at: surfaceInstant(80))
+  model.startProject(routeCardID: routeID, projectID: projectID, at: surfaceInstant(81))
+  model.startVisit(visitID: visitID, at: surfaceInstant(82))
+  model.recordAttempt(attemptID: attemptID, at: surfaceInstant(83))
+  model.markAttemptNotSent(attemptID, at: surfaceInstant(84))
+  try expect(
+    model.completeFailureReview(
+      itemID: nil,
+      attemptID: attemptID,
+      routeCardID: routeID,
+      projectID: projectID,
+      blocker: .footwork,
+      locationNote: nil,
+      moveCueText: "Name the foot before the hand move",
+      nextAction: "Try the named foot once",
+      failureEpisodeID: FailureEpisodeID("failure-later-button"),
+      moveCueID: MoveCueID("move-later-button"),
+      nextSessionCueID: cueID,
+      at: surfaceInstant(85)
+    ),
+    "expected a confirmed recall chain behind the cue row"
+  )
+
+  // Exactly what Button("Later") sends: no deadline at all.
+  try expect(
+    model.deferNextSessionCue(cueID, at: surfaceInstant(86)),
+    "expected the Later button to be accepted"
+  )
+  model.endVisitAndPrepareReview(at: surfaceInstant(87))
+  model.completeVisitReview(visitID, at: surfaceInstant(88))
+  model.startVisit(visitID: GymVisitID("visit-after-later-button"), at: surfaceInstant(89))
+  try expect(
+    model.reopenedNextSessionCues.map(\.id) == [cueID],
+    "a cue put off with Later must come back at the next Visit"
+  )
+
+  try expect(
+    model.dismissNextSessionCue(cueID, at: surfaceInstant(90)),
+    "expected Ignore to be accepted on a reopened cue"
+  )
+  try expect(
+    !model.completeNextSessionCue(cueID, at: surfaceInstant(91)),
+    "an ignored cue must not be flipped to completed behind the user's back"
+  )
+  try expect(
+    model.projection.recall.nextSessionCues.first?.status == .dismissed,
+    "the user's Ignore must remain the recorded decision"
+  )
+  if case .operation(let message) = model.issue {
+    try expect(!message.isEmpty, "expected a readable reason the cue could not change")
+  } else {
+    throw AppleAdapterSpecFailure.expected(
+      "a refused cue decision must surface a visible reason"
+    )
+  }
 }
 
 @MainActor

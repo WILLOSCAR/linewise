@@ -484,6 +484,7 @@ public enum RecallTrainingRejection: Equatable, Sendable {
   case emptyMoveCue
   case nextSessionCueAlreadyExists
   case nextSessionCueDoesNotExist
+  case nextSessionCueIsClosed
   case activeNextSessionCueAlreadyExists
   case projectDoesNotExist
   case projectIsNotActive
@@ -690,10 +691,17 @@ public enum RecallTraining {
         )
       }
       guard
-        let attempt = visitSnapshot.attempts.first(where: { $0.id == episode.attemptID }),
-        attempt.recordState == .active,
-        attempt.outcome == .notSent
+        let attempt = visitSnapshot.attempts.first(where: { $0.id == episode.attemptID })
       else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.attemptDoesNotExist))
+      }
+      guard
+        canonicalRouteCardID(attempt.routeCardID, in: visitSnapshot)
+          == canonicalRouteCardID(episode.routeCardID, in: visitSnapshot)
+      else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.attemptRouteDoesNotMatch))
+      }
+      guard attempt.recordState == .active, attempt.outcome == .notSent else {
         return RecallTrainingTransition(
           state: state,
           outcome: .rejected(.confirmedFailureRequiresActiveNotSentAttempt)
@@ -909,6 +917,9 @@ public enum RecallTraining {
           outcome: .rejected(.nextSessionCueDoesNotExist)
         )
       }
+      guard cue.isOpenForDecision else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.nextSessionCueIsClosed))
+      }
       guard until.map({ $0 > occurredAt }) ?? true else {
         return RecallTrainingTransition(state: state, outcome: .rejected(.invalidCueDeferral))
       }
@@ -926,6 +937,9 @@ public enum RecallTraining {
           outcome: .rejected(.nextSessionCueDoesNotExist)
         )
       }
+      guard cue.isOpenForDecision else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.nextSessionCueIsClosed))
+      }
       next.nextSessionCuesByID[cueID] = cue.replacing(
         status: .completed,
         deferredUntil: nil,
@@ -939,6 +953,9 @@ public enum RecallTraining {
           state: state,
           outcome: .rejected(.nextSessionCueDoesNotExist)
         )
+      }
+      guard cue.isOpenForDecision else {
+        return RecallTrainingTransition(state: state, outcome: .rejected(.nextSessionCueIsClosed))
       }
       next.nextSessionCuesByID[cueID] = cue.replacing(
         status: .dismissed,
@@ -978,6 +995,17 @@ public enum RecallTraining {
 
     next.appliedCommands[command.actionID] = command
     return RecallTrainingTransition(state: next, outcome: .accepted)
+  }
+
+  /// Resolves a RouteCard to the identity a later merge folded it into, so recall evidence
+  /// stays anchored across a RouteCard merge. An unknown RouteCard stays its own anchor,
+  /// and an Attempt with no RouteCard yet never matches a route-anchored record.
+  private static func canonicalRouteCardID(
+    _ routeCardID: RouteCardID?,
+    in visitSnapshot: VisitSnapshot
+  ) -> RouteCardID? {
+    guard let routeCardID else { return nil }
+    return visitSnapshot.canonicalRouteCardID(for: routeCardID) ?? routeCardID
   }
 }
 
@@ -1025,6 +1053,18 @@ extension ReviewInboxItemSnapshot {
 }
 
 extension NextSessionCueSnapshot {
+  /// A cue accepts a new complete/defer/dismiss decision only while it is still open.
+  /// A snapshot keeps just its current status, so overwriting a terminal decision would
+  /// erase what the user chose; a closed cue returns only through an explicit reopen.
+  fileprivate var isOpenForDecision: Bool {
+    switch status {
+    case .ready, .deferred:
+      true
+    case .completed, .dismissed:
+      false
+    }
+  }
+
   fileprivate func replacing(
     status: NextSessionCueStatus,
     deferredUntil: Instant?,

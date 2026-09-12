@@ -443,6 +443,7 @@ public struct LearningLoopTransition: Equatable, Sendable {
 public enum LearningLoop {
   public static func apply(
     _ command: LearningLoopCommand,
+    visitSnapshot: VisitSnapshot,
     recallSnapshot: RecallTrainingSnapshot,
     catalog: ApprovedMicroDrillCatalog,
     to state: LearningLoopState
@@ -654,6 +655,32 @@ public enum LearningLoop {
       guard path.status == .active else {
         return LearningLoopTransition(state: state, outcome: .rejected(.trainingPathIsNotActive))
       }
+      guard
+        let attempt = visitSnapshot.attempts.first(where: {
+          $0.id == attemptID && $0.recordState == .active
+        })
+      else {
+        return LearningLoopTransition(
+          state: state,
+          outcome: .rejected(.proofCheckAttemptDoesNotExist)
+        )
+      }
+      guard
+        let attemptRouteCardID = attempt.routeCardID,
+        canonicalRouteCardID(attemptRouteCardID, in: visitSnapshot)
+          == canonicalRouteCardID(path.routeCardID, in: visitSnapshot)
+      else {
+        return LearningLoopTransition(
+          state: state,
+          outcome: .rejected(.proofCheckAttemptRouteMismatch)
+        )
+      }
+      guard attempt.occurredAt > path.createdAt else {
+        return LearningLoopTransition(
+          state: state,
+          outcome: .rejected(.proofCheckAttemptIsNotLaterThanPath)
+        )
+      }
       next.proofChecksByID[proofCheckID] = ProofCheckSnapshot(
         id: proofCheckID,
         pathID: pathID,
@@ -690,6 +717,16 @@ public enum LearningLoop {
 
     next.appliedCommands[command.actionID] = command
     return LearningLoopTransition(state: next, outcome: .accepted)
+  }
+
+  /// Resolves a RouteCard to the identity a later merge folded it into, so a ProofCheck
+  /// survives a RouteCard merge instead of silently losing its route anchor. An unknown
+  /// RouteCard stays its own anchor rather than becoming a wildcard.
+  private static func canonicalRouteCardID(
+    _ routeCardID: RouteCardID,
+    in visitSnapshot: VisitSnapshot
+  ) -> RouteCardID {
+    visitSnapshot.canonicalRouteCardID(for: routeCardID) ?? routeCardID
   }
 }
 

@@ -26,7 +26,8 @@ private func emptyVisitSnapshot() -> VisitSnapshot {
 
 private func visitSnapshotWithAttempt(
   outcome: AttemptOutcome,
-  recordState: AttemptRecordState = .active
+  recordState: AttemptRecordState = .active,
+  routeCardID: RouteCardID = RouteCardID("route-failure")
 ) -> VisitSnapshot {
   VisitSnapshot(
     visits: [],
@@ -34,7 +35,7 @@ private func visitSnapshotWithAttempt(
       AttemptSnapshot(
         id: AttemptID("attempt-failure"),
         visitID: GymVisitID("visit-failure"),
-        routeCardID: RouteCardID("route-failure"),
+        routeCardID: routeCardID,
         occurredAt: Instant(millisecondsSince1970: 1_000),
         recordedBy: .watch,
         recordState: recordState,
@@ -305,6 +306,156 @@ private func suggestedFailureStaysSuggestedUntilTheUserConfirmsIt() throws {
   )
 }
 
+private func acceptingAFailureSuggestionRequiresTheAttemptToStayOnTheSameRoute() throws {
+  let episodeID = FailureEpisodeID("failure-route-moved")
+  let suggested = RecallTraining.apply(
+    .suggestFailureEpisode(
+      actionID: ActionID("suggest-route-moved"),
+      episodeID: episodeID,
+      attemptID: AttemptID("attempt-failure"),
+      routeCardID: RouteCardID("route-failure"),
+      primaryBlocker: .bodyPosition,
+      locationNote: nil,
+      provenance: SuggestionProvenance(
+        suggestionID: "suggestion-route-moved",
+        source: .model,
+        sourceReference: "route-read-9",
+        sourceVersion: "model-v3",
+        confidence: 0.5,
+        decision: .pending
+      ),
+      occurredAt: Instant(millisecondsSince1970: 2_000)
+    ),
+    visitSnapshot: visitSnapshotWithAttempt(outcome: .unresolved),
+    to: RecallTrainingState()
+  )
+  try recallExpect(
+    suggested.outcome == .accepted,
+    "an unresolved attempt on the suggested route may carry a suggestion"
+  )
+
+  // The user then corrects the Attempt onto a different RouteCard and confirms it Not Sent.
+  // The episode is still anchored to the original route, so its only Attempt evidence now
+  // lives on another route and can no longer confirm this episode.
+  let afterRouteCorrection = RecallTraining.apply(
+    .acceptFailureSuggestion(
+      actionID: ActionID("accept-route-moved"),
+      episodeID: episodeID,
+      blockerOverride: nil,
+      occurredAt: Instant(millisecondsSince1970: 3_000)
+    ),
+    visitSnapshot: visitSnapshotWithAttempt(
+      outcome: .notSent,
+      routeCardID: RouteCardID("route-somewhere-else")
+    ),
+    to: suggested.state
+  )
+  try recallExpect(
+    afterRouteCorrection.outcome == .rejected(.attemptRouteDoesNotMatch),
+    "an Attempt reassigned to another RouteCard must not confirm this episode"
+  )
+  try recallExpect(
+    afterRouteCorrection.state.snapshot.failureEpisodes.first?.status == .suggested,
+    "the episode must stay a suggestion the user can review, not become confirmed evidence"
+  )
+
+  let onOriginalRoute = RecallTraining.apply(
+    .acceptFailureSuggestion(
+      actionID: ActionID("accept-route-unchanged"),
+      episodeID: episodeID,
+      blockerOverride: nil,
+      occurredAt: Instant(millisecondsSince1970: 4_000)
+    ),
+    visitSnapshot: visitSnapshotWithAttempt(outcome: .notSent),
+    to: suggested.state
+  )
+  try recallExpect(
+    onOriginalRoute.outcome == .accepted
+      && onOriginalRoute.state.snapshot.failureEpisodes.first?.status == .userConfirmed,
+    "an Attempt still on the episode RouteCard should confirm normally"
+  )
+
+  // The user can also clear an Attempt's route entirely. An Attempt with no RouteCard
+  // carries no route evidence, so it must not confirm a route-anchored episode.
+  let unassignedRoute = RecallTraining.apply(
+    .acceptFailureSuggestion(
+      actionID: ActionID("accept-route-cleared"),
+      episodeID: episodeID,
+      blockerOverride: nil,
+      occurredAt: Instant(millisecondsSince1970: 5_000)
+    ),
+    visitSnapshot: VisitSnapshot(
+      visits: [],
+      attempts: [
+        AttemptSnapshot(
+          id: AttemptID("attempt-failure"),
+          visitID: GymVisitID("visit-failure"),
+          routeCardID: nil,
+          occurredAt: Instant(millisecondsSince1970: 1_000),
+          recordedBy: .watch,
+          recordState: .active,
+          outcome: .notSent
+        )
+      ],
+      routeCards: [],
+      projects: [],
+      pendingActionIDs: [],
+      reconciliationIssues: []
+    ),
+    to: suggested.state
+  )
+  try recallExpect(
+    unassignedRoute.outcome == .rejected(.attemptRouteDoesNotMatch),
+    "an Attempt with no RouteCard must not confirm a route-anchored episode"
+  )
+
+  // A RouteCard merge is not a route change: an Attempt now filed under the canonical
+  // successor is still the same physical route and remains valid confirmation.
+  let afterMerge = RecallTraining.apply(
+    .acceptFailureSuggestion(
+      actionID: ActionID("accept-after-merge"),
+      episodeID: episodeID,
+      blockerOverride: nil,
+      occurredAt: Instant(millisecondsSince1970: 6_000)
+    ),
+    visitSnapshot: VisitSnapshot(
+      visits: [],
+      attempts: visitSnapshotWithAttempt(
+        outcome: .notSent,
+        routeCardID: RouteCardID("route-canonical")
+      ).attempts,
+      routeCards: [
+        RouteCardSnapshot(
+          id: RouteCardID("route-failure"),
+          label: "Blue slab",
+          recordVisibility: .merged,
+          availability: .present,
+          mergedIntoRouteCardID: RouteCardID("route-canonical"),
+          successorRouteCardID: nil,
+          createdAt: Instant(millisecondsSince1970: 100)
+        ),
+        RouteCardSnapshot(
+          id: RouteCardID("route-canonical"),
+          label: "Blue slab (canonical)",
+          recordVisibility: .active,
+          availability: .present,
+          mergedIntoRouteCardID: nil,
+          successorRouteCardID: nil,
+          createdAt: Instant(millisecondsSince1970: 90)
+        ),
+      ],
+      projects: [],
+      pendingActionIDs: [],
+      reconciliationIssues: []
+    ),
+    to: suggested.state
+  )
+  try recallExpect(
+    afterMerge.outcome == .accepted,
+    "a RouteCard merge must not block confirmation of evidence on the canonical route"
+  )
+}
+
 private func moveCueBecomesANextSessionCueAndReopensAtTheNextVisit() throws {
   let failureID = FailureEpisodeID("failure-chain")
   let moveCueID = MoveCueID("move-cue-chain")
@@ -388,6 +539,130 @@ private func moveCueBecomesANextSessionCueAndReopensAtTheNextVisit() throws {
   )
 }
 
+private func aDismissedCueOnlyReturnsThroughAnExplicitReopen() throws {
+  let projectID = ProjectID("project-failure")
+  let failureID = FailureEpisodeID("failure-cue-decision")
+  let moveCueID = MoveCueID("move-cue-decision")
+  let cueID = NextSessionCueID("next-cue-decision")
+  var state =
+    RecallTraining.apply(
+      .confirmFailureEpisode(
+        actionID: ActionID("confirm-cue-decision-failure"),
+        episodeID: failureID,
+        attemptID: AttemptID("attempt-failure"),
+        routeCardID: RouteCardID("route-failure"),
+        primaryBlocker: .footwork,
+        locationNote: nil,
+        occurredAt: Instant(millisecondsSince1970: 2_000)
+      ),
+      visitSnapshot: activeProjectVisitSnapshot(),
+      to: RecallTrainingState()
+    ).state
+  state =
+    RecallTraining.apply(
+      .createMoveCue(
+        actionID: ActionID("create-cue-decision-move-cue"),
+        moveCueID: moveCueID,
+        failureEpisodeID: failureID,
+        text: "Left foot high before right hand.",
+        occurredAt: Instant(millisecondsSince1970: 3_000)
+      ),
+      visitSnapshot: activeProjectVisitSnapshot(),
+      to: state
+    ).state
+  state =
+    RecallTraining.apply(
+      .createNextSessionCue(
+        actionID: ActionID("create-cue-decision-next-cue"),
+        cueID: cueID,
+        projectID: projectID,
+        failureEpisodeID: failureID,
+        moveCueID: moveCueID,
+        nextAction: "Try the high foot before pulling.",
+        occurredAt: Instant(millisecondsSince1970: 4_000)
+      ),
+      visitSnapshot: activeProjectVisitSnapshot(),
+      to: state
+    ).state
+
+  let dismissal = RecallTraining.apply(
+    .dismissNextSessionCue(
+      actionID: ActionID("dismiss-cue-decision"),
+      cueID: cueID,
+      occurredAt: Instant(millisecondsSince1970: 5_000)
+    ),
+    visitSnapshot: activeProjectVisitSnapshot(),
+    to: state
+  )
+  try recallExpect(dismissal.outcome == .accepted, "the user should be able to ignore a cue")
+  state = dismissal.state
+
+  let laterCompletion = RecallTraining.apply(
+    .completeNextSessionCue(
+      actionID: ActionID("complete-after-dismiss-cue-decision"),
+      cueID: cueID,
+      occurredAt: Instant(millisecondsSince1970: 6_000)
+    ),
+    visitSnapshot: activeProjectVisitSnapshot(),
+    to: state
+  )
+  try recallExpect(
+    laterCompletion.outcome == .rejected(.nextSessionCueIsClosed)
+      && laterCompletion.state.snapshot.nextSessionCues.first?.status == .dismissed,
+    "an ignored cue must not be reclassified as practiced"
+  )
+
+  let laterDeferral = RecallTraining.apply(
+    .deferNextSessionCue(
+      actionID: ActionID("defer-after-dismiss-cue-decision"),
+      cueID: cueID,
+      until: Instant(millisecondsSince1970: 9_000),
+      occurredAt: Instant(millisecondsSince1970: 6_000)
+    ),
+    visitSnapshot: activeProjectVisitSnapshot(),
+    to: state
+  )
+  try recallExpect(
+    laterDeferral.outcome == .rejected(.nextSessionCueIsClosed),
+    "an ignored cue must not slip back into the deferred queue"
+  )
+
+  // The one legitimate way back is an explicit reopen tied to a later open Visit, which
+  // records where the user saw the cue again.
+  let nextVisitID = GymVisitID("visit-cue-decision-next")
+  let reopened = RecallTraining.apply(
+    .reopenNextSessionCue(
+      actionID: ActionID("reopen-cue-decision"),
+      cueID: cueID,
+      visitID: nextVisitID,
+      occurredAt: Instant(millisecondsSince1970: 11_000)
+    ),
+    visitSnapshot: activeProjectVisitSnapshot(openVisitID: nextVisitID),
+    to: state
+  )
+  try recallExpect(
+    reopened.outcome == .accepted
+      && reopened.state.snapshot.nextSessionCues.first?.status == .ready
+      && reopened.state.snapshot.nextSessionCues.first?.reopenedInVisitID == nextVisitID,
+    "an explicit reopen in a later Visit should make the cue actionable again"
+  )
+
+  let completion = RecallTraining.apply(
+    .completeNextSessionCue(
+      actionID: ActionID("complete-reopened-cue-decision"),
+      cueID: cueID,
+      occurredAt: Instant(millisecondsSince1970: 12_000)
+    ),
+    visitSnapshot: activeProjectVisitSnapshot(openVisitID: nextVisitID),
+    to: reopened.state
+  )
+  try recallExpect(
+    completion.outcome == .accepted
+      && completion.state.snapshot.nextSessionCues.first?.status == .completed,
+    "a reopened cue should accept a fresh decision"
+  )
+}
+
 private func setterLensSuggestionPreservesEvidenceAndUserCorrection() throws {
   let readingID = SetterLensReadingID("setter-reading")
   let provenance = SuggestionProvenance(
@@ -416,6 +691,7 @@ private func setterLensSuggestionPreservesEvidenceAndUserCorrection() throws {
       provenance: provenance,
       occurredAt: Instant(millisecondsSince1970: 1_000)
     ),
+    visitSnapshot: emptyVisitSnapshot(),
     recallSnapshot: RecallTrainingState().snapshot,
     catalog: ApprovedMicroDrillCatalog(drills: []),
     to: LearningLoopState()
@@ -435,6 +711,7 @@ private func setterLensSuggestionPreservesEvidenceAndUserCorrection() throws {
       interpretationOverride: "Rotate the hip before initiating the reach.",
       occurredAt: Instant(millisecondsSince1970: 2_000)
     ),
+    visitSnapshot: emptyVisitSnapshot(),
     recallSnapshot: RecallTrainingState().snapshot,
     catalog: ApprovedMicroDrillCatalog(drills: []),
     to: state
@@ -530,6 +807,249 @@ private func approvedDrillCatalog() -> ApprovedMicroDrillCatalog {
   )
 }
 
+/// Capture evidence a TrainingPath on `route-learning` can be proven against: one later
+/// Attempt on the same route, one Attempt on a different route, and one retracted Attempt.
+private func learningVisitSnapshot(
+  laterAttemptRouteCardID: RouteCardID = RouteCardID("route-learning"),
+  laterAttemptRecordState: AttemptRecordState = .active,
+  laterAttemptOccurredAt: Instant = Instant(millisecondsSince1970: 5_500),
+  routeCards: [RouteCardSnapshot] = [
+    RouteCardSnapshot(
+      id: RouteCardID("route-learning"),
+      label: "Learning route",
+      recordVisibility: .active,
+      availability: .present,
+      mergedIntoRouteCardID: nil,
+      successorRouteCardID: nil,
+      createdAt: Instant(millisecondsSince1970: 100)
+    ),
+    RouteCardSnapshot(
+      id: RouteCardID("route-other"),
+      label: "Other route",
+      recordVisibility: .active,
+      availability: .present,
+      mergedIntoRouteCardID: nil,
+      successorRouteCardID: nil,
+      createdAt: Instant(millisecondsSince1970: 110)
+    ),
+  ]
+) -> VisitSnapshot {
+  VisitSnapshot(
+    visits: [],
+    attempts: [
+      AttemptSnapshot(
+        id: AttemptID("attempt-learning"),
+        visitID: GymVisitID("visit-learning"),
+        routeCardID: RouteCardID("route-learning"),
+        occurredAt: Instant(millisecondsSince1970: 900),
+        recordedBy: .iPhone,
+        recordState: .active,
+        outcome: .notSent
+      ),
+      AttemptSnapshot(
+        id: AttemptID("attempt-learning-later"),
+        visitID: GymVisitID("visit-learning-next"),
+        routeCardID: laterAttemptRouteCardID,
+        occurredAt: laterAttemptOccurredAt,
+        recordedBy: .iPhone,
+        recordState: laterAttemptRecordState,
+        outcome: .unresolved
+      ),
+    ],
+    routeCards: routeCards,
+    projects: [],
+    pendingActionIDs: [],
+    reconciliationIssues: []
+  )
+}
+
+private func activeLearningPath(
+  pathID: TrainingPathID,
+  visitSnapshot: VisitSnapshot
+) throws -> LearningLoopState {
+  let draft = LearningLoop.apply(
+    .draftTrainingPath(
+      actionID: ActionID("draft-\(pathID.rawValue)"),
+      pathID: pathID,
+      failureEpisodeID: FailureEpisodeID("failure-learning"),
+      moveCueID: MoveCueID("move-learning"),
+      microDrillID: MicroDrillID("drill-hip-rotation"),
+      nextSessionCueID: NextSessionCueID("next-learning"),
+      proofQuestion: "Did the supporting foot stay in place?",
+      occurredAt: Instant(millisecondsSince1970: 4_000)
+    ),
+    visitSnapshot: visitSnapshot,
+    recallSnapshot: learningRecallSnapshot(),
+    catalog: approvedDrillCatalog(),
+    to: LearningLoopState()
+  )
+  try recallExpect(draft.outcome == .accepted, "expected a draft from the confirmed recall chain")
+  let activated = LearningLoop.apply(
+    .activateTrainingPath(
+      actionID: ActionID("activate-\(pathID.rawValue)"),
+      pathID: pathID,
+      occurredAt: Instant(millisecondsSince1970: 5_000)
+    ),
+    visitSnapshot: visitSnapshot,
+    recallSnapshot: learningRecallSnapshot(),
+    catalog: approvedDrillCatalog(),
+    to: draft.state
+  )
+  try recallExpect(activated.outcome == .accepted, "expected the user to activate the draft")
+  return activated.state
+}
+
+private func proofCheckRequiresALaterRouteMatchedAttempt() throws {
+  func recordProof(
+    _ label: String,
+    attemptID: AttemptID,
+    visitSnapshot: VisitSnapshot
+  ) throws -> LearningLoopTransition {
+    let pathID = TrainingPathID("path-proof-\(label)")
+    let state = try activeLearningPath(pathID: pathID, visitSnapshot: visitSnapshot)
+    return LearningLoop.apply(
+      .recordProofCheck(
+        actionID: ActionID("proof-\(label)"),
+        proofCheckID: ProofCheckID("proof-check-\(label)"),
+        pathID: pathID,
+        attemptID: attemptID,
+        outcome: .triedTargetBehaviorChanged,
+        decision: .retain,
+        note: nil,
+        occurredAt: Instant(millisecondsSince1970: 6_000)
+      ),
+      visitSnapshot: visitSnapshot,
+      recallSnapshot: learningRecallSnapshot(),
+      catalog: approvedDrillCatalog(),
+      to: state
+    )
+  }
+
+  let fabricated = try recordProof(
+    "fabricated",
+    attemptID: AttemptID("attempt-that-was-never-recorded"),
+    visitSnapshot: learningVisitSnapshot()
+  )
+  try recallExpect(
+    fabricated.outcome == .rejected(.proofCheckAttemptDoesNotExist),
+    "a ProofCheck must not bind to an Attempt that was never captured"
+  )
+  try recallExpect(
+    fabricated.state.snapshot.proofChecks.isEmpty
+      && fabricated.state.snapshot.trainingPaths.first?.status == .active,
+    "a rejected ProofCheck must leave the path active and unproven"
+  )
+
+  let retracted = try recordProof(
+    "retracted",
+    attemptID: AttemptID("attempt-learning-later"),
+    visitSnapshot: learningVisitSnapshot(laterAttemptRecordState: .retracted)
+  )
+  try recallExpect(
+    retracted.outcome == .rejected(.proofCheckAttemptDoesNotExist),
+    "a retracted Attempt must not prove a TrainingPath"
+  )
+
+  let otherRoute = try recordProof(
+    "other-route",
+    attemptID: AttemptID("attempt-learning-later"),
+    visitSnapshot: learningVisitSnapshot(
+      laterAttemptRouteCardID: RouteCardID("route-other")
+    )
+  )
+  try recallExpect(
+    otherRoute.outcome == .rejected(.proofCheckAttemptRouteMismatch),
+    "evidence from another RouteCard must not prove this path"
+  )
+
+  let unassignedRoute = try recordProof(
+    "unassigned-route",
+    attemptID: AttemptID("attempt-learning-later"),
+    visitSnapshot: VisitSnapshot(
+      visits: [],
+      attempts: learningVisitSnapshot().attempts.map { attempt in
+        attempt.id == AttemptID("attempt-learning-later")
+          ? AttemptSnapshot(
+            id: attempt.id,
+            visitID: attempt.visitID,
+            routeCardID: nil,
+            occurredAt: attempt.occurredAt,
+            recordedBy: attempt.recordedBy,
+            recordState: attempt.recordState,
+            outcome: attempt.outcome
+          ) : attempt
+      },
+      routeCards: learningVisitSnapshot().routeCards,
+      projects: [],
+      pendingActionIDs: [],
+      reconciliationIssues: []
+    )
+  )
+  try recallExpect(
+    unassignedRoute.outcome == .rejected(.proofCheckAttemptRouteMismatch),
+    "an Attempt with no RouteCard yet must not prove a route-anchored path"
+  )
+
+  let earlierAttempt = try recordProof(
+    "earlier",
+    attemptID: AttemptID("attempt-learning"),
+    visitSnapshot: learningVisitSnapshot()
+  )
+  try recallExpect(
+    earlierAttempt.outcome == .rejected(.proofCheckAttemptIsNotLaterThanPath),
+    "the Attempt that produced the failure must not double as its own proof"
+  )
+
+  let accepted = try recordProof(
+    "accepted",
+    attemptID: AttemptID("attempt-learning-later"),
+    visitSnapshot: learningVisitSnapshot()
+  )
+  try recallExpect(
+    accepted.outcome == .accepted
+      && accepted.state.snapshot.proofChecks.first?.attemptID
+        == AttemptID("attempt-learning-later")
+      && accepted.state.snapshot.trainingPaths.first?.status == .retained,
+    "a later Attempt on the path RouteCard should support a retained ProofCheck"
+  )
+
+  // A RouteCard merge folds the path's route into a canonical successor. The Attempt the
+  // user recorded against that successor is still the same physical route, so it must
+  // remain valid proof rather than reading as cross-route evidence.
+  let mergedRoutes = [
+    RouteCardSnapshot(
+      id: RouteCardID("route-learning"),
+      label: "Learning route",
+      recordVisibility: .merged,
+      availability: .present,
+      mergedIntoRouteCardID: RouteCardID("route-canonical"),
+      successorRouteCardID: nil,
+      createdAt: Instant(millisecondsSince1970: 100)
+    ),
+    RouteCardSnapshot(
+      id: RouteCardID("route-canonical"),
+      label: "Canonical learning route",
+      recordVisibility: .active,
+      availability: .present,
+      mergedIntoRouteCardID: nil,
+      successorRouteCardID: nil,
+      createdAt: Instant(millisecondsSince1970: 90)
+    ),
+  ]
+  let afterMerge = try recordProof(
+    "after-merge",
+    attemptID: AttemptID("attempt-learning-later"),
+    visitSnapshot: learningVisitSnapshot(
+      laterAttemptRouteCardID: RouteCardID("route-canonical"),
+      routeCards: mergedRoutes
+    )
+  )
+  try recallExpect(
+    afterMerge.outcome == .accepted,
+    "a RouteCard merge must not invalidate proof recorded on the canonical route"
+  )
+}
+
 private func trainingPathRequiresConfirmedTriggerAndProofCanRetainReviseOrReject() throws {
   let draftWithSuggestedTrigger = LearningLoop.apply(
     .draftTrainingPath(
@@ -542,6 +1062,7 @@ private func trainingPathRequiresConfirmedTriggerAndProofCanRetainReviseOrReject
       proofQuestion: "Did the supporting foot stay in place?",
       occurredAt: Instant(millisecondsSince1970: 4_000)
     ),
+    visitSnapshot: emptyVisitSnapshot(),
     recallSnapshot: learningRecallSnapshot(failureStatus: .suggested),
     catalog: approvedDrillCatalog(),
     to: LearningLoopState()
@@ -558,45 +1079,19 @@ private func trainingPathRequiresConfirmedTriggerAndProofCanRetainReviseOrReject
   ]
   for (index, decisionAndStatus) in decisions.enumerated() {
     let pathID = TrainingPathID("path-\(index)")
-    var transition = LearningLoop.apply(
-      .draftTrainingPath(
-        actionID: ActionID("draft-path-\(index)"),
-        pathID: pathID,
-        failureEpisodeID: FailureEpisodeID("failure-learning"),
-        moveCueID: MoveCueID("move-learning"),
-        microDrillID: MicroDrillID("drill-hip-rotation"),
-        nextSessionCueID: NextSessionCueID("next-learning"),
-        proofQuestion: "Did the supporting foot stay in place?",
-        occurredAt: Instant(millisecondsSince1970: 4_000)
-      ),
-      recallSnapshot: learningRecallSnapshot(),
-      catalog: approvedDrillCatalog(),
-      to: LearningLoopState()
-    )
-    try recallExpect(transition.outcome == .accepted, "confirmed evidence should create a draft")
-    var state = transition.state
-    state =
-      LearningLoop.apply(
-        .activateTrainingPath(
-          actionID: ActionID("activate-path-\(index)"),
-          pathID: pathID,
-          occurredAt: Instant(millisecondsSince1970: 5_000)
-        ),
-        recallSnapshot: learningRecallSnapshot(),
-        catalog: approvedDrillCatalog(),
-        to: state
-      ).state
-    transition = LearningLoop.apply(
+    let state = try activeLearningPath(pathID: pathID, visitSnapshot: learningVisitSnapshot())
+    let transition = LearningLoop.apply(
       .recordProofCheck(
         actionID: ActionID("proof-path-\(index)"),
         proofCheckID: ProofCheckID("proof-\(index)"),
         pathID: pathID,
-        attemptID: AttemptID("later-attempt-\(index)"),
+        attemptID: AttemptID("attempt-learning-later"),
         outcome: .triedTargetBehaviorChanged,
         decision: decisionAndStatus.0,
         note: "Observed by the user on the next visit.",
         occurredAt: Instant(millisecondsSince1970: 6_000)
       ),
+      visitSnapshot: learningVisitSnapshot(),
       recallSnapshot: learningRecallSnapshot(),
       catalog: approvedDrillCatalog(),
       to: state
@@ -712,8 +1207,16 @@ func recallTrainingSpecifications() -> [(String, () throws -> Void)] {
       suggestedFailureStaysSuggestedUntilTheUserConfirmsIt
     ),
     (
+      "accepting a failure suggestion requires the Attempt to stay on the same route",
+      acceptingAFailureSuggestionRequiresTheAttemptToStayOnTheSameRoute
+    ),
+    (
       "MoveCue becomes a NextSessionCue and reopens at the next visit",
       moveCueBecomesANextSessionCueAndReopensAtTheNextVisit
+    ),
+    (
+      "a dismissed NextSessionCue only returns through an explicit reopen",
+      aDismissedCueOnlyReturnsThroughAnExplicitReopen
     ),
     (
       "SetterLens preserves evidence and user correction",
@@ -722,6 +1225,10 @@ func recallTrainingSpecifications() -> [(String, () throws -> Void)] {
     (
       "TrainingPath uses confirmed triggers and ProofCheck retain revise reject",
       trainingPathRequiresConfirmedTriggerAndProofCanRetainReviseOrReject
+    ),
+    (
+      "ProofCheck requires a later route-matched Attempt",
+      proofCheckRequiresALaterRouteMatchedAttempt
     ),
     (
       "subjective physiology is primary and HealthKit is optional context",
