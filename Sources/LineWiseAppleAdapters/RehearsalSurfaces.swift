@@ -277,7 +277,14 @@
     }
   }
 
-  @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
+  /// The route-rehearsal editor is a large-screen surface. It uses `GroupBox`,
+  /// `.pickerStyle(.segmented)` and `Stepper`, which SwiftUI marks
+  /// `@available(watchOS, unavailable)` or watchOS-9-only, and referencing an
+  /// unavailable symbol is a hard compile error rather than a deployment-target
+  /// warning. Declaring the view itself watchOS-unavailable is what makes this
+  /// file compile for the Watch target; the Watch surface stays capture-only.
+  @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
+  @available(watchOS, unavailable)
   @MainActor
   public struct LineWiseRehearsalEditorView: View {
     @StateObject private var model: LineWiseRehearsalViewModel

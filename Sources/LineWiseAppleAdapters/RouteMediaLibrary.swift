@@ -179,6 +179,7 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
     guard FileManager.default.fileExists(atPath: manifestURL.path) else {
       dataset = PersonalDataset()
       modelProcessingConsentRecordedAt = [:]
+      Self.reclaimStagedMediaBytes(in: stagingDirectory)
       return
     }
 
@@ -197,6 +198,7 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
     } catch {
       throw RouteMediaLibraryError.corruptManifest(error.localizedDescription)
     }
+    Self.reclaimStagedMediaBytes(in: stagingDirectory)
   }
 
   public func assets() -> [RouteMediaAsset] {
@@ -256,6 +258,12 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
   public func enforceRetention(at now: Instant) throws -> [MediaDeletionTombstone] {
     let activeAssets = dataset.activeAssets
     let sourceIDsStillUsedByDerivedAssets = Set(activeAssets.flatMap(\.sourceAssetIDs))
+    // "Derived assets removed" must mean derived assets once existed and are
+    // now gone. A source whose derivation step has not run yet has no derived
+    // assets either, and deleting it would destroy the user's only copy.
+    let sourceIDsOfRemovedDerivedAssets = Set(
+      dataset.deletionTombstones.flatMap(\.sourceAssetIDs)
+    )
     let assetIDsToDelete = activeAssets.compactMap { asset -> RouteMediaAssetID? in
       switch asset.retention {
       case .keepUntilUserDeletes:
@@ -263,13 +271,25 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
       case .expiresAt(let expiration):
         expiration <= now ? asset.id : nil
       case .deleteAfterDerivedAssetsRemoved:
-        asset.isSource && !sourceIDsStillUsedByDerivedAssets.contains(asset.id) ? asset.id : nil
+        asset.isSource
+          && sourceIDsOfRemovedDerivedAssets.contains(asset.id)
+          && !sourceIDsStillUsedByDerivedAssets.contains(asset.id) ? asset.id : nil
       }
     }
 
-    return try assetIDsToDelete.map {
-      try deleteAsset($0, at: now, reason: .retentionExpired)
+    // One unusable entry must not shield every other expired asset from its
+    // retention deadline, so the sweep completes before reporting the failure.
+    var tombstones: [MediaDeletionTombstone] = []
+    var firstFailure: (any Error)?
+    for assetID in assetIDsToDelete {
+      do {
+        tombstones.append(try deleteAsset(assetID, at: now, reason: .retentionExpired))
+      } catch {
+        firstFailure = firstFailure ?? error
+      }
     }
+    if let firstFailure { throw firstFailure }
+    return tombstones
   }
 
   @discardableResult
@@ -282,14 +302,23 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
       throw RouteMediaLibraryError.assetNotFound(assetID)
     }
     let fileURL = try resolvedURL(for: registeredAsset.localReference)
-    guard FileManager.default.fileExists(atPath: fileURL.path) else {
-      throw RouteMediaLibraryError.mediaBytesMissing(assetID)
-    }
 
     var candidate = dataset
     let tombstone = try candidate.deleteAsset(assetID, at: deletedAt, reason: reason)
     var candidateConsent = modelProcessingConsentRecordedAt
     candidateConsent.removeValue(forKey: assetID.rawValue)
+
+    // Bytes that are already absent are the desired end state, not a reason to
+    // abort. Refusing here would leave the asset registered with its model
+    // processing consent intact, so a revocation the user asked for would
+    // silently never take effect.
+    guard FileManager.default.fileExists(atPath: fileURL.path) else {
+      try persist(candidate, modelProcessingConsent: candidateConsent)
+      dataset = candidate
+      modelProcessingConsentRecordedAt = candidateConsent
+      return tombstone
+    }
+
     let stagedDeletionURL = stagingDirectory.appendingPathComponent(
       "delete-\(UUID().uuidString).stage",
       isDirectory: false
@@ -547,6 +576,25 @@ public actor FoundationRouteMediaLibrary: RouteMediaDataLoader {
     case "video/quicktime": "mov"
     case "video/mp4": "mp4"
     default: "bin"
+    }
+  }
+
+  /// Reclaims media bytes left in the staging directory by an import or delete
+  /// that was interrupted between staging the bytes and committing the
+  /// manifest. Staging is only ever a transient step of a commit protocol, so
+  /// anything found there at open time belongs to no registered asset and is
+  /// unreachable by `assets()`, retention, deletion and export. Without this
+  /// sweep a full-resolution photo could stay on disk after the user was told
+  /// it was deleted, with no API able to remove it.
+  private static func reclaimStagedMediaBytes(in stagingDirectory: URL) {
+    guard
+      let staged = try? FileManager.default.contentsOfDirectory(
+        at: stagingDirectory,
+        includingPropertiesForKeys: nil
+      )
+    else { return }
+    for orphan in staged where orphan.pathExtension == "stage" {
+      try? FileManager.default.removeItem(at: orphan)
     }
   }
 

@@ -28,7 +28,152 @@ func deviceSyncServiceSpecifications() -> [(String, () async throws -> Void)] {
       "durable inbox survives reopen until explicit acknowledgement",
       { try durableInboxSurvivesReopenUntilExplicitAcknowledgement() }
     ),
+    (
+      "a delivery fault does not withhold already-durable inbound payloads",
+      { try deliveryFaultDoesNotWithholdAlreadyDurablePayloads() }
+    ),
+    (
+      "a transport that never confirms fails instead of blocking sync forever",
+      transportThatNeverConfirmsFailsInsteadOfBlockingSyncForever
+    ),
   ]
+}
+
+private func transportThatNeverConfirmsFailsInsteadOfBlockingSyncForever() async throws {
+  let registry = DeviceTransferCompletionRegistry<String>()
+
+  // WatchConnectivity can drop a transfer without ever calling didFinish: the
+  // counterpart app is missing, the pairing breaks, or the process relaunches.
+  await registry.prepare("transfer-never-confirmed")
+  let abandoned = await registry.wait(
+    for: "transfer-never-confirmed",
+    timeoutNanoseconds: 20_000_000
+  )
+  guard case .failed(let reason) = abandoned else {
+    throw AppleAdapterSpecFailure.expected(
+      "a transport that never confirms must not park the flush indefinitely"
+    )
+  }
+  try expect(
+    reason.localizedCaseInsensitiveContains("did not confirm"),
+    "the unconfirmed transfer must name why it was abandoned"
+  )
+
+  // A callback that does arrive before the deadline still wins outright.
+  await registry.prepare("transfer-confirmed-in-time")
+  let confirmed = Task {
+    await registry.wait(for: "transfer-confirmed-in-time", timeoutNanoseconds: 60_000_000_000)
+  }
+  await registry.complete(.succeeded, for: "transfer-confirmed-in-time")
+  let confirmedCompletion = await confirmed.value
+  try expect(
+    confirmedCompletion == .succeeded,
+    "a bounded wait must not weaken a real completion callback"
+  )
+
+  // A real callback landing after the timeout must not resume a second time;
+  // the durable event is simply retried under its stable ActionID.
+  await registry.prepare("transfer-confirmed-too-late")
+  let lateCompletion = await registry.wait(
+    for: "transfer-confirmed-too-late",
+    timeoutNanoseconds: 20_000_000
+  )
+  guard case .failed = lateCompletion else {
+    throw AppleAdapterSpecFailure.expected("expected the late transfer to time out first")
+  }
+  await registry.complete(.succeeded, for: "transfer-confirmed-too-late")
+  let afterLateCallback = await registry.wait(for: "transfer-confirmed-too-late")
+  guard case .failed(let unprepared) = afterLateCallback else {
+    throw AppleAdapterSpecFailure.expected(
+      "an abandoned transfer must not be resurrected by a late callback"
+    )
+  }
+  try expect(
+    unprepared.localizedCaseInsensitiveContains("not prepared"),
+    "an abandoned transfer ID must be settled, not left waiting"
+  )
+}
+
+private func deliveryFaultDoesNotWithholdAlreadyDurablePayloads() throws {
+  let store = ToggleFailingDevicePayloadInboxStore()
+  let inbox = try DurableDevicePayloadInbox(store: store)
+  let committed = ReceivedDevicePayload(
+    id: DevicePayloadID("payload-committed-before-the-fault"),
+    payload: Data("committed inbound bytes".utf8)
+  )
+  let committedFirst = try inbox.receive(committed)
+  try expect(committedFirst, "expected the first delivery to commit durably")
+
+  // The disk fills up while a later delegate callback tries to persist.
+  store.shouldFailSave = true
+  let dropped = ReceivedDevicePayload(
+    id: DevicePayloadID("payload-lost-to-the-fault"),
+    payload: Data("bytes that never landed".utf8)
+  )
+  do {
+    _ = try inbox.receive(dropped)
+    throw AppleAdapterSpecFailure.expected("expected the scripted write failure")
+  } catch let error as DevicePayloadInboxError {
+    inbox.recordDeliveryFault(error)
+  }
+  try expect(
+    inbox.pendingPayloads == [committed],
+    "a failed write must leave the last durable state intact"
+  )
+
+  let readWhileFaulted = try inbox.readPendingPayloadsReportingFault()
+  try expect(
+    readWhileFaulted == [committed],
+    "a delivery fault must not withhold payloads that were already committed"
+  )
+
+  // The user frees space, but the peer is idle so no new payload arrives.
+  store.shouldFailSave = false
+  let laterRead = try inbox.readPendingPayloadsReportingFault()
+  try expect(
+    laterRead == [committed],
+    "the durable payload must stay readable until it is explicitly acknowledged"
+  )
+  try inbox.acknowledge([committed.id])
+
+  // With nothing durable to hand over, a fault must surface rather than look
+  // like a clean empty inbox.
+  let faultedInbox = try DurableDevicePayloadInbox(
+    store: ToggleFailingDevicePayloadInboxStore()
+  )
+  faultedInbox.recordDeliveryFault(.delegatePersistenceFailed("disk full"))
+  do {
+    _ = try faultedInbox.readPendingPayloadsReportingFault()
+    throw AppleAdapterSpecFailure.expected("expected the delivery fault to surface")
+  } catch let error as DevicePayloadInboxError {
+    try expect(
+      error == .delegatePersistenceFailed("disk full"),
+      "a lost inbound delivery must remain visible, never silent"
+    )
+  }
+  let afterReport = try faultedInbox.readPendingPayloadsReportingFault()
+  try expect(
+    afterReport.isEmpty,
+    "a reported fault must not latch and throw forever on an idle inbox"
+  )
+}
+
+private final class ToggleFailingDevicePayloadInboxStore: DevicePayloadInboxStore {
+  var shouldFailSave = false
+  private var payloads: [ReceivedDevicePayload] = []
+
+  func load() throws -> [ReceivedDevicePayload] { payloads }
+
+  func save(_ payloads: [ReceivedDevicePayload]) throws {
+    if shouldFailSave {
+      throw DevicePayloadInboxError.ioFailure(
+        operation: "atomically write",
+        path: "/spec/toggle-device-inbox",
+        reason: "scripted disk-full failure"
+      )
+    }
+    self.payloads = payloads
+  }
 }
 
 private func completionRegistryHandlesCallbackOrderingAndConcurrency() async throws {
@@ -101,10 +246,14 @@ private func acceptedTransfersBecomeAcknowledgementCandidates() async throws {
   try expect(batch.deliveries.allSatisfy(\.wasDurablyConfirmed), "expected confirmed delivery")
   let received = try await service.pull()
   try expect(
-    received.map(\.envelope) == envelopes,
+    received.envelopes.map(\.envelope) == envelopes,
     "expected lossless pull after accepted delivery"
   )
-  try await service.acknowledgeReceived(received.map(\.payloadID))
+  try expect(
+    received.undecodablePayloads.isEmpty,
+    "expected every well-formed payload to decode"
+  )
+  try await service.acknowledgeReceived(received.envelopes.map(\.payloadID))
   let afterAcknowledgement = try await service.pull()
   try expect(
     afterAcknowledgement.isEmpty,

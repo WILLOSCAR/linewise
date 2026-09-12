@@ -118,7 +118,7 @@ flowchart TB
 - Source/derived media lineage, purpose, consent, hash, quality, retention, annotations, corrections, tombstones, and manifest export.
 - Path-contained local byte loading and explicit model-processing consent.
 - Deterministic-local and HTTP route-analysis providers.
-- Qualitative analysis requests pin only the confirmed FailureEpisode and MoveCue history belonging to the analyzed RouteCard, keeping the failure-to-cue chain on one route.
+- Qualitative analysis requests pin only user-owned recall history belonging to the analyzed RouteCard — confirmed FailureEpisodes and the MoveCues the user authored during review or accepted from a suggestion — keeping the failure-to-cue chain on one route.
 - Explicit media-consent then model-run flow, with suggested RouteRead attachment and durable route-read provenance.
 - Attempt-linked Actual drafts copied from Plan as `userAuthored + manual`, never mislabeled as observed evidence.
 - Typed cancellation, timeout, HTTP, response, consent, and integrity failures.

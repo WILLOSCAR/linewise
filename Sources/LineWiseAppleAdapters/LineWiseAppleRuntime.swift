@@ -137,6 +137,7 @@ public final class LineWiseAppleRuntime {
   private let syncService: LineWiseDeviceSyncService
   private let workoutRecorder: any WorkoutRecording
   private var optionalCapabilityTask: Task<Void, Never>?
+  private var inFlightFlush: Task<DeviceSyncBatchResult, Never>?
   private var authorizedCapabilityAfterOptIn: OptionalCapabilityState?
   private var syncWasActivated = false
 
@@ -234,10 +235,30 @@ public final class LineWiseAppleRuntime {
     )
   }
 
+  /// Flushes the durable Outbox once. `pending` and "no other flush owns these
+  /// envelopes" must both still hold after `await syncService.flush`, so an
+  /// overlapping call joins the running flush instead of starting a second one.
+  /// Without this, every tap during one slow transfer re-sent the same
+  /// unacknowledged envelopes, and a late-finishing flush could overwrite a
+  /// drained Outbox with a `.degraded` status carrying its own stale failure.
   @discardableResult
   public func flushPendingEvents(
     mode: DeviceTransferMode = .reliableBackground
   ) async -> DeviceSyncBatchResult {
+    if let inFlightFlush {
+      return await inFlightFlush.value
+    }
+    let flush = Task { @MainActor [weak self] in
+      guard let self else { return DeviceSyncBatchResult(deliveries: []) }
+      return await self.performFlush(mode: mode)
+    }
+    inFlightFlush = flush
+    let batch = await flush.value
+    inFlightFlush = nil
+    return batch
+  }
+
+  private func performFlush(mode: DeviceTransferMode) async -> DeviceSyncBatchResult {
     await activateSync()
     let pending = captureBackend.pendingOutboundEvents
     syncStatus = LineWiseSyncStatus(phase: .syncing, pendingCount: pending.count)
@@ -273,57 +294,20 @@ public final class LineWiseAppleRuntime {
     return batch
   }
 
+  /// Drains the durable transport inbox into the capture backend.
+  ///
+  /// Every inbound payload is isolated: one payload this build cannot decode, or
+  /// one envelope that conflicts with already-accepted history, must never
+  /// withhold the events that arrived with it or the events that arrive later.
+  /// An unresolved payload stays durable and visible rather than being silently
+  /// discarded or auto-resolved, and only payloads whose events actually
+  /// persisted are acknowledged.
   @discardableResult
   public func pullReceivedEvents() async -> DeviceSyncPullResult {
     await activateSync()
+    let batch: DeviceInboundBatch
     do {
-      let received = try await syncService.pull()
-      switch captureBackend.receive(received.map(\.envelope)) {
-      case .received(let insertedEventIDs, let duplicateEventIDs):
-        do {
-          try await syncService.acknowledgeReceived(received.map(\.payloadID))
-        } catch {
-          let reason = String(describing: error)
-          syncStatus = LineWiseSyncStatus(
-            phase: .degraded,
-            pendingCount: pendingOutboundCount,
-            lastError: reason
-          )
-          return DeviceSyncPullResult(
-            insertedCount: insertedEventIDs.count,
-            duplicateCount: duplicateEventIDs.count,
-            error: reason
-          )
-        }
-        refreshSyncStatusAfterPull()
-        return DeviceSyncPullResult(
-          insertedCount: insertedEventIDs.count,
-          duplicateCount: duplicateEventIDs.count
-        )
-      case .persistenceFailed(let reason):
-        syncStatus = LineWiseSyncStatus(
-          phase: .degraded,
-          pendingCount: pendingOutboundCount,
-          lastError: reason
-        )
-        return DeviceSyncPullResult(insertedCount: 0, duplicateCount: 0, error: reason)
-      case .unavailable:
-        let reason = "Persistent device inbox is unavailable"
-        syncStatus = LineWiseSyncStatus(
-          phase: .degraded,
-          pendingCount: pendingOutboundCount,
-          lastError: reason
-        )
-        return DeviceSyncPullResult(insertedCount: 0, duplicateCount: 0, error: reason)
-      case .acknowledged, .alreadyAcknowledged:
-        let reason = "Unexpected device receive result"
-        syncStatus = LineWiseSyncStatus(
-          phase: .degraded,
-          pendingCount: pendingOutboundCount,
-          lastError: reason
-        )
-        return DeviceSyncPullResult(insertedCount: 0, duplicateCount: 0, error: reason)
-      }
+      batch = try await syncService.pull()
     } catch {
       let reason = String(describing: error)
       syncStatus = LineWiseSyncStatus(
@@ -333,6 +317,91 @@ public final class LineWiseAppleRuntime {
       )
       return DeviceSyncPullResult(insertedCount: 0, duplicateCount: 0, error: reason)
     }
+
+    var undeliverableReasons: [String] = batch.undecodablePayloads.map {
+      "\($0.payloadID.rawValue): \($0.reason)"
+    }
+    let delivery = deliver(batch.envelopes)
+    undeliverableReasons += delivery.failures
+
+    if !delivery.acknowledgeablePayloadIDs.isEmpty {
+      do {
+        try await syncService.acknowledgeReceived(delivery.acknowledgeablePayloadIDs)
+      } catch {
+        let reason = String(describing: error)
+        syncStatus = LineWiseSyncStatus(
+          phase: .degraded,
+          pendingCount: pendingOutboundCount,
+          lastError: reason
+        )
+        return DeviceSyncPullResult(
+          insertedCount: delivery.insertedCount,
+          duplicateCount: delivery.duplicateCount,
+          error: reason
+        )
+      }
+    }
+
+    guard let failure = undeliverableReasons.first else {
+      refreshSyncStatusAfterPull()
+      return DeviceSyncPullResult(
+        insertedCount: delivery.insertedCount,
+        duplicateCount: delivery.duplicateCount
+      )
+    }
+    syncStatus = LineWiseSyncStatus(
+      phase: .degraded,
+      pendingCount: pendingOutboundCount,
+      lastError: failure
+    )
+    return DeviceSyncPullResult(
+      insertedCount: delivery.insertedCount,
+      duplicateCount: delivery.duplicateCount,
+      error: failure
+    )
+  }
+
+  private struct InboundDelivery {
+    var insertedCount = 0
+    var duplicateCount = 0
+    var acknowledgeablePayloadIDs: [DevicePayloadID] = []
+    var failures: [String] = []
+  }
+
+  private func deliver(_ received: [ReceivedDeviceEnvelope]) -> InboundDelivery {
+    var delivery = InboundDelivery()
+    guard !received.isEmpty else { return delivery }
+
+    // The batch path is the common case and keeps replay ordering work to one
+    // fold. A rejection is not attributable to a single envelope, so fall back
+    // to delivering each one on its own to find who is actually undeliverable.
+    switch captureBackend.receive(received.map(\.envelope)) {
+    case .received(let insertedEventIDs, let duplicateEventIDs):
+      delivery.insertedCount = insertedEventIDs.count
+      delivery.duplicateCount = duplicateEventIDs.count
+      delivery.acknowledgeablePayloadIDs = received.map(\.payloadID)
+      return delivery
+    case .persistenceFailed, .unavailable, .acknowledged, .alreadyAcknowledged:
+      break
+    }
+
+    for entry in received {
+      switch captureBackend.receive([entry.envelope]) {
+      case .received(let insertedEventIDs, let duplicateEventIDs):
+        delivery.insertedCount += insertedEventIDs.count
+        delivery.duplicateCount += duplicateEventIDs.count
+        delivery.acknowledgeablePayloadIDs.append(entry.payloadID)
+      case .persistenceFailed(let reason):
+        delivery.failures.append("\(entry.payloadID.rawValue): \(reason)")
+      case .unavailable:
+        delivery.failures.append(
+          "\(entry.payloadID.rawValue): Persistent device inbox is unavailable"
+        )
+      case .acknowledged, .alreadyAcknowledged:
+        delivery.failures.append("\(entry.payloadID.rawValue): Unexpected device receive result")
+      }
+    }
+    return delivery
   }
 
   private func scheduleWorkoutStart(at date: Date) {

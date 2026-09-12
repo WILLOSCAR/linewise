@@ -41,7 +41,7 @@ The repository now contains an end-to-end implementation foundation. P0 remains 
 - One-to-three-step practice segments that can be pinned as a StickFigureCue, looped independently, and supplied to qualitative analysis.
 - Deterministic Plan/Actual comparison across limb contacts, torso movement, and timing.
 - Failure episode → move cue → next-session cue, plus approved micro-drills, training paths, and proof checks.
-- Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance, and pin only the confirmed recall history belonging to the analyzed RouteCard.
+- Qualitative route analysis and routesetter-lens outputs use evidence pins and explicit provenance, and pin only user-owned recall history — confirmed FailureEpisodes and the MoveCues the user authored or accepted — belonging to the analyzed RouteCard.
 
 ### Media and replaceable AI adapters
 

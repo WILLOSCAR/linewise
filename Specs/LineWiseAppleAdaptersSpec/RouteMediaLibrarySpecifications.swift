@@ -290,6 +290,334 @@ private func expiredRetentionDeletesBytesAndRecordsWhy() async throws {
   }
 }
 
+private func missingBytesStillCompleteDeletionAndConsentRevocation() async throws {
+  try await withTemporaryMediaLibrary { rootDirectory in
+    let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    let imported = try await library.importSource(
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID("asset-byteless-revoke"),
+        routeCardID: RouteCardID("route-byteless"),
+        data: onePixelPNG,
+        kind: .routePhoto,
+        mimeType: "image/png",
+        purpose: .routeReference,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .storageOnly,
+          recordedAt: Instant(millisecondsSince1970: 100)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 90),
+        captureDeviceClass: .phone,
+        captureMethod: .photoLibraryImport,
+        retention: .keepUntilUserDeletes
+      )
+    )
+    let authorized = try await library.grantModelProcessingConsent(
+      for: imported.id,
+      at: Instant(millisecondsSince1970: 200)
+    )
+    try expect(
+      authorized.consent.scope == .explicitModelProcessing,
+      "expected the separate model-processing grant to be recorded"
+    )
+
+    // The bytes disappear underneath the manifest: an interrupted earlier
+    // delete, a purged non-backed-up file, or external tampering.
+    try FileManager.default.removeItem(
+      at: rootDirectory.appendingPathComponent(imported.localReference.sandboxRelativePath)
+    )
+
+    let tombstone = try await library.revokeConsentAndDelete(
+      for: imported.id,
+      at: Instant(millisecondsSince1970: 300)
+    )
+    try expect(
+      tombstone.reason == .consentRevoked,
+      "revoking consent for absent bytes must still record why the asset went away"
+    )
+    let activeAfterRevoke = await library.assets()
+    try expect(
+      activeAfterRevoke.isEmpty,
+      "a revoked asset must not stay active just because its bytes were already gone"
+    )
+
+    let reopened = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    let reopenedAsset = await reopened.asset(id: imported.id)
+    let exported = await reopened.exportManifest(createdAt: Instant(millisecondsSince1970: 400))
+    try expect(reopenedAsset == nil, "expected the revocation to survive reopen")
+    try expect(
+      exported.activeAssets.isEmpty && exported.deletionTombstones == [tombstone],
+      "an exported manifest must not keep advertising a withdrawn model-processing grant"
+    )
+
+    let userRequested = try await reopened.importSource(
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID("asset-byteless-delete"),
+        routeCardID: RouteCardID("route-byteless"),
+        data: onePixelPNG,
+        kind: .routePhoto,
+        mimeType: "image/png",
+        purpose: .routeReference,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .storageOnly,
+          recordedAt: Instant(millisecondsSince1970: 500)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 490),
+        captureDeviceClass: .phone,
+        captureMethod: .cameraCapture,
+        retention: .keepUntilUserDeletes
+      )
+    )
+    try FileManager.default.removeItem(
+      at: rootDirectory.appendingPathComponent(userRequested.localReference.sandboxRelativePath)
+    )
+    let userTombstone = try await reopened.deleteAsset(
+      userRequested.id,
+      at: Instant(millisecondsSince1970: 600),
+      reason: .userRequested
+    )
+    try expect(
+      userTombstone.assetID == userRequested.id,
+      "an explicit delete must succeed when the bytes are already absent"
+    )
+    let stillActive = await reopened.assets()
+    try expect(stillActive.isEmpty, "expected no undeletable byte-less asset to remain")
+  }
+}
+
+private func retentionSweepContinuesPastOneUnreadableAsset() async throws {
+  try await withTemporaryMediaLibrary { rootDirectory in
+    let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    let expiringRequest: (String) -> RouteMediaImportRequest = { identifier in
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID(identifier),
+        routeCardID: RouteCardID("route-sweep"),
+        data: onePixelPNG,
+        kind: .routePhoto,
+        mimeType: "image/png",
+        purpose: .routeReference,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .storageOnly,
+          recordedAt: Instant(millisecondsSince1970: 1)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 1),
+        captureDeviceClass: .phone,
+        captureMethod: .fileImport,
+        retention: .expiresAt(Instant(millisecondsSince1970: 10))
+      )
+    }
+    let byteless = try await library.importSource(expiringRequest("asset-sweep-a-byteless"))
+    let tampered = try await library.importSource(expiringRequest("asset-sweep-b-tampered"))
+    let intact = try await library.importSource(expiringRequest("asset-sweep-c-intact"))
+
+    // Three ways one entry can be unusable while its expired siblings are fine.
+    try FileManager.default.removeItem(
+      at: rootDirectory.appendingPathComponent(byteless.localReference.sandboxRelativePath)
+    )
+    let tamperedURL = rootDirectory.appendingPathComponent(
+      tampered.localReference.sandboxRelativePath
+    )
+    let outsideURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "linewise-sweep-outside-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: outsideURL) }
+    try onePixelPNG.write(to: outsideURL)
+    try FileManager.default.removeItem(at: tamperedURL)
+    try FileManager.default.createSymbolicLink(at: tamperedURL, withDestinationURL: outsideURL)
+
+    var sweepError: RouteMediaLibraryError?
+    do {
+      _ = try await library.enforceRetention(at: Instant(millisecondsSince1970: 20))
+    } catch let error as RouteMediaLibraryError {
+      sweepError = error
+    }
+    try expect(
+      sweepError == .unsafeLocalReference,
+      "a tampered reference must remain a visible retention failure"
+    )
+
+    let remaining = await library.assets()
+    try expect(
+      remaining.map(\.id) == [tampered.id],
+      "every other expired asset must still be swept past one unusable entry"
+    )
+    let intactFile = rootDirectory.appendingPathComponent(
+      intact.localReference.sandboxRelativePath
+    )
+    try expect(
+      !FileManager.default.fileExists(atPath: intactFile.path),
+      "expected the expired bytes of the intact asset to be physically removed"
+    )
+    let exported = await library.exportManifest(createdAt: Instant(millisecondsSince1970: 30))
+    try expect(
+      Set(exported.deletionTombstones.map(\.assetID)) == [byteless.id, intact.id],
+      "the sweep must record why each asset it could remove went away"
+    )
+    try expect(
+      exported.deletionTombstones.allSatisfy { $0.reason == .retentionExpired },
+      "expected retention provenance on every swept asset"
+    )
+    try expect(
+      FileManager.default.fileExists(atPath: outsideURL.path),
+      "a retention sweep must never follow a tampered reference outside the library"
+    )
+  }
+}
+
+private func sourceAwaitingItsFirstDerivedAssetSurvivesRetention() async throws {
+  try await withTemporaryMediaLibrary { rootDirectory in
+    let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    let source = try await library.importSource(
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID("asset-pending-derivation"),
+        routeCardID: RouteCardID("route-pending-derivation"),
+        data: onePixelPNG,
+        kind: .actualVideo,
+        mimeType: "video/quicktime",
+        purpose: .routeReference,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .storageOnly,
+          recordedAt: Instant(millisecondsSince1970: 10)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 5),
+        captureDeviceClass: .phone,
+        captureMethod: .cameraCapture,
+        retention: .deleteAfterDerivedAssetsRemoved
+      )
+    )
+
+    // The intended flow is import source -> extract frames -> importDerived. A
+    // retention sweep in that window must not destroy the user's only copy.
+    let beforeDerivation = try await library.enforceRetention(
+      at: Instant(millisecondsSince1970: 20)
+    )
+    try expect(
+      beforeDerivation.isEmpty,
+      "a source whose derived assets were never created must not be swept"
+    )
+    let stillActive = await library.assets()
+    try expect(
+      stillActive.map(\.id) == [source.id],
+      "the pending source must remain available for its derivation step"
+    )
+
+    let derived = try await library.importDerived(
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID("asset-pending-derived"),
+        routeCardID: RouteCardID("route-pending-derivation"),
+        data: Data("extracted frame".utf8),
+        kind: .poseOverlay,
+        mimeType: "application/octet-stream",
+        purpose: .stickFigureCue,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .onDevicePersonalAnalysis,
+          recordedAt: Instant(millisecondsSince1970: 30)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 30),
+        captureDeviceClass: .phone,
+        captureMethod: .derivedLocally,
+        retention: .keepUntilUserDeletes
+      ),
+      sourceAssetIDs: [source.id],
+      transform: MediaDerivation(
+        kind: .poseOverlay,
+        implementationIdentifier: "linewise-frame-extract",
+        version: "1"
+      )
+    )
+    let whileDerivedExists = try await library.enforceRetention(
+      at: Instant(millisecondsSince1970: 40)
+    )
+    try expect(
+      whileDerivedExists.isEmpty,
+      "a source still used by a derived asset must not be swept"
+    )
+
+    _ = try await library.deleteAsset(
+      derived.id,
+      at: Instant(millisecondsSince1970: 50),
+      reason: .userRequested
+    )
+    let afterDerivedRemoval = try await library.enforceRetention(
+      at: Instant(millisecondsSince1970: 60)
+    )
+    try expect(
+      afterDerivedRemoval.map(\.assetID) == [source.id],
+      "once its derived assets are gone the source must be swept as its policy asks"
+    )
+  }
+}
+
+private func reopeningReclaimsMediaBytesOrphanedByAnInterruptedCommit() async throws {
+  try await withTemporaryMediaLibrary { rootDirectory in
+    let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    _ = try await library.importSource(
+      RouteMediaImportRequest(
+        assetID: RouteMediaAssetID("asset-staging-survivor"),
+        routeCardID: RouteCardID("route-staging"),
+        data: onePixelPNG,
+        kind: .routePhoto,
+        mimeType: "image/png",
+        purpose: .routeReference,
+        consent: MediaConsent(
+          status: .granted,
+          scope: .storageOnly,
+          recordedAt: Instant(millisecondsSince1970: 10)
+        ),
+        capturedAt: Instant(millisecondsSince1970: 5),
+        captureDeviceClass: .phone,
+        captureMethod: .cameraCapture,
+        retention: .keepUntilUserDeletes
+      )
+    )
+
+    // Simulate the two ways a process death strands full-resolution media in
+    // staging: an import killed between write and move, and a delete killed
+    // between staging the bytes and persisting the manifest.
+    let stagingDirectory = rootDirectory.appendingPathComponent("staging", isDirectory: true)
+    let strandedImport = stagingDirectory.appendingPathComponent(
+      "\(UUID().uuidString).stage",
+      isDirectory: false
+    )
+    let strandedDelete = stagingDirectory.appendingPathComponent(
+      "delete-\(UUID().uuidString).stage",
+      isDirectory: false
+    )
+    try onePixelPNG.write(to: strandedImport)
+    try onePixelPNG.write(to: strandedDelete)
+
+    let reopened = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
+    let survivingAssets = await reopened.assets()
+    try expect(
+      survivingAssets.map(\.id) == [RouteMediaAssetID("asset-staging-survivor")],
+      "reopening must not disturb registered media while reclaiming orphans"
+    )
+    let stagedAfterReopen = try FileManager.default.contentsOfDirectory(
+      atPath: stagingDirectory.path
+    )
+    try expect(
+      stagedAfterReopen.isEmpty,
+      "media bytes stranded outside the manifest must not survive a relaunch unreachable"
+    )
+    try expect(
+      !FileManager.default.fileExists(atPath: strandedImport.path)
+        && !FileManager.default.fileExists(atPath: strandedDelete.path),
+      "expected both interrupted-commit orphans to be physically reclaimed"
+    )
+    let registeredFile = rootDirectory.appendingPathComponent(
+      survivingAssets[0].localReference.sandboxRelativePath
+    )
+    try expect(
+      FileManager.default.fileExists(atPath: registeredFile.path),
+      "the staging sweep must never touch bytes the manifest still references"
+    )
+  }
+}
+
 private func exportedManifestContainsMetadataWithoutRawBytesOrAbsolutePaths() async throws {
   try await withTemporaryMediaLibrary { rootDirectory in
     let library = try FoundationRouteMediaLibrary(rootDirectory: rootDirectory)
@@ -754,6 +1082,22 @@ func routeMediaLibrarySpecifications() -> [(String, () async throws -> Void)] {
     (
       "expired retention deletes bytes and records why",
       expiredRetentionDeletesBytesAndRecordsWhy
+    ),
+    (
+      "missing bytes still complete deletion and consent revocation",
+      missingBytesStillCompleteDeletionAndConsentRevocation
+    ),
+    (
+      "retention sweep continues past one unreadable asset",
+      retentionSweepContinuesPastOneUnreadableAsset
+    ),
+    (
+      "a source awaiting its first derived asset survives retention",
+      sourceAwaitingItsFirstDerivedAssetSurvivesRetention
+    ),
+    (
+      "reopening reclaims media bytes orphaned by an interrupted commit",
+      reopeningReclaimsMediaBytesOrphanedByAnInterruptedCommit
     ),
     (
       "exported manifest carries metadata without raw bytes or absolute paths",

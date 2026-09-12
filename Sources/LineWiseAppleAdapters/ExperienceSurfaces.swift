@@ -675,8 +675,12 @@
           failureEpisodes: projection.recall.failureEpisodes.filter {
             $0.status == .userConfirmed
           },
+          // A MoveCue the user wrote during manual review is stored as
+          // `.userAuthored`; `.userConfirmed` only covers an accepted
+          // suggestion. Both are user-owned history the analysis contract
+          // accepts, while `.suggested` stays out until the user acts on it.
           moveCues: projection.recall.moveCues.filter {
-            $0.status == .userConfirmed
+            $0.status == .userAuthored || $0.status == .userConfirmed
           }
         )
         rehearsalEditorModels[rehearsalID] = model
@@ -1024,7 +1028,12 @@
     }
   }
 
-  @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
+  /// The full review-and-learning surface is a large-screen experience. It uses
+  /// `NavigationView` and `Stepper` and hosts the rehearsal editor, none of which
+  /// are usable on watchOS, so the view is declared unavailable there rather
+  /// than failing the Watch build. Watch capture lives in `AppleSurfaces`.
+  @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
+  @available(watchOS, unavailable)
   @MainActor
   public struct LineWiseExperienceRootView: View {
     @StateObject private var model: LineWiseExperienceViewModel
@@ -1981,7 +1990,8 @@
     ]
   }
 
-  @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
+  @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
+  @available(watchOS, unavailable)
   @MainActor
   private struct LineWiseExperienceRehearsalDestination: View {
     @ObservedObject var experienceModel: LineWiseExperienceViewModel
