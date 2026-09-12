@@ -17,6 +17,10 @@ func physiologyCoverageSpecifications() -> [(String, () throws -> Void)] {
       overlappingSampleWindowsAreMerged
     ),
     (
+      "a sensor dropout between windows is excluded from coverage",
+      disjointSampleWindowsExcludeTheGap
+    ),
+    (
       "coverage clamps to one and reports zero when no samples arrive",
       coverageClampsAndHandlesEmptyStream
     ),
@@ -50,6 +54,49 @@ private func overlappingSampleWindowsAreMerged() throws {
   try expect(
     approximatelyEqual(coverage, 0.5),
     "overlapping windows must be unioned to 40s of 80s = 0.5, not double counted"
+  )
+
+  // Touching windows [0,20] and [20,40] are contiguous => union [0,40] = 40s.
+  var touching = HeartRateCoverageAccumulator()
+  touching.observeWindow(startSeconds: 0, endSeconds: 20, bpm: 110)
+  touching.observeWindow(startSeconds: 20, endSeconds: 40, bpm: 115)
+  try expect(
+    approximatelyEqual(touching.coverage(overWorkoutDurationSeconds: 80), 0.5),
+    "adjacent windows that touch at a boundary must merge into one 40s span"
+  )
+}
+
+private func disjointSampleWindowsExcludeTheGap() throws {
+  // The reason coverage exists: the Watch dropped out mid-session. Windows
+  // [0,10] and [70,80] of a 100s workout cover 20s, so coverage is 0.2 — the
+  // span from the first to the last sample (80s) is NOT what was measured.
+  var accumulator = HeartRateCoverageAccumulator()
+  accumulator.observeWindow(startSeconds: 0, endSeconds: 10, bpm: 112)
+  accumulator.observeWindow(startSeconds: 70, endSeconds: 80, bpm: 148)
+
+  try expect(
+    approximatelyEqual(accumulator.coverage(overWorkoutDurationSeconds: 100), 0.2),
+    "a dropout between two windows must be excluded: 20 covered seconds of 100 is 0.2"
+  )
+
+  // Three windows with two gaps, delivered out of order, as repeated collection
+  // callbacks arrive: [0,10] + [30,40] + [60,70] = 30s of 100s.
+  var outOfOrder = HeartRateCoverageAccumulator()
+  outOfOrder.observeWindow(startSeconds: 60, endSeconds: 70, bpm: 150)
+  outOfOrder.observeWindow(startSeconds: 0, endSeconds: 10, bpm: 110)
+  outOfOrder.observeWindow(startSeconds: 30, endSeconds: 40, bpm: 130)
+  try expect(
+    approximatelyEqual(outOfOrder.coverage(overWorkoutDurationSeconds: 100), 0.3),
+    "several disjoint windows must sum their own lengths regardless of arrival order"
+  )
+
+  // A window fully contained inside another adds nothing.
+  var nested = HeartRateCoverageAccumulator()
+  nested.observeWindow(startSeconds: 0, endSeconds: 40, bpm: 120)
+  nested.observeWindow(startSeconds: 10, endSeconds: 20, bpm: 125)
+  try expect(
+    approximatelyEqual(nested.coverage(overWorkoutDurationSeconds: 80), 0.5),
+    "a window nested inside another must not extend or shrink coverage"
   )
 }
 

@@ -86,13 +86,41 @@ public struct Hold: Hashable, Codable, Sendable {
   ) {
     self.id = id
     self.center = center
-    self.radius = max(radius, 0)
+    self.radius = radius.isFinite ? max(radius, 0) : 0
     self.kind = kind
     self.routeRole = routeRole
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case center
+    case radius
+    case kind
+    case routeRole
+  }
+
+  /// Decoded holds may come from a remote model or an older writer, so they are
+  /// funnelled through the initializer that clamps `radius` rather than trusting
+  /// the wire value.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try container.decode(HoldID.self, forKey: .id),
+      center: try container.decode(Point2D.self, forKey: .center),
+      radius: try container.decode(Double.self, forKey: .radius),
+      kind: try container.decode(HoldKind.self, forKey: .kind),
+      routeRole: try container.decode(HoldRouteRole.self, forKey: .routeRole)
+    )
   }
 }
 
 public struct RouteScene: Equatable, Codable, Sendable {
+  /// The smallest scale a qualitative solve can honour as written. A scene unit
+  /// finer than this is indistinguishable from "scale unknown": the geometry
+  /// would have to clamp it, silently inflating every limb so that no reach can
+  /// ever be exceeded. Reporting such a value as unknown keeps the read honest.
+  public static let minimumUsableMetersPerSceneUnit = 0.000_1
+
   public let id: RouteSceneID
   public let name: String
   public let size: SceneSize
@@ -109,8 +137,33 @@ public struct RouteScene: Equatable, Codable, Sendable {
     self.id = id
     self.name = name
     self.size = size
-    self.metersPerSceneUnit = metersPerSceneUnit.flatMap { $0 > 0 ? $0 : nil }
+    self.metersPerSceneUnit = metersPerSceneUnit.flatMap {
+      $0.isFinite && $0 >= Self.minimumUsableMetersPerSceneUnit ? $0 : nil
+    }
     self.holds = holds
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case name
+    case size
+    case metersPerSceneUnit
+    case holds
+  }
+
+  /// A decoded scene is untrusted input — a remote model adapter or an older
+  /// writer supplies it. Decoding funnels through the initializer so an
+  /// unusable `metersPerSceneUnit` is reported as an honest unknown scale
+  /// instead of silently suppressing the solver's scale uncertainty.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try container.decode(RouteSceneID.self, forKey: .id),
+      name: try container.decode(String.self, forKey: .name),
+      size: try container.decode(SceneSize.self, forKey: .size),
+      metersPerSceneUnit: try container.decodeIfPresent(Double.self, forKey: .metersPerSceneUnit),
+      holds: try container.decode([Hold].self, forKey: .holds)
+    )
   }
 
   public func hold(id: HoldID) -> Hold? {
