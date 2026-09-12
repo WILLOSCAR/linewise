@@ -1,3 +1,4 @@
+import Foundation
 import LineWiseApplication
 import LineWiseDomain
 
@@ -27,7 +28,70 @@ func rehearsalCoordinatorSpecifications() -> [(String, () throws -> Void)] {
       "qualitative analysis request pins only this route's confirmed history",
       qualitativeAnalysisRequestPinsOnlyThisRoutesConfirmedHistory
     ),
+    (
+      "a StickFigureCue pinned before a save still matches its timeline after reopening",
+      aPinnedCueStillMatchesItsTimelineAfterReopening
+    ),
   ]
+}
+
+/// A StickFigureCue is pinned to a timeline version so a later replay can prove
+/// it still describes the same movement. Saving and reopening the rehearsal does
+/// not change that movement, so the pin must still match.
+private func aPinnedCueStillMatchesItsTimelineAfterReopening() throws {
+  var coordinator = try makeRehearsalCoordinator()
+  let cue = try coordinator.makeCurrentStickFigureCue(
+    id: StickFigureCueID("pinned-across-reload"),
+    stepCount: 2
+  )
+  let versionBeforeSave = coordinator.timelineVersion(for: .plan)
+  try expect(
+    cue.timelineVersion == versionBeforeSave,
+    "a freshly cut cue should be pinned to the current timeline version"
+  )
+
+  let reloadedRehearsal = try JSONDecoder().decode(
+    RouteRehearsal.self,
+    from: JSONEncoder().encode(coordinator.engine.rehearsal)
+  )
+  try expect(
+    reloadedRehearsal == coordinator.engine.rehearsal,
+    "the saved rehearsal should reload as the same value"
+  )
+  let reopened = LineWiseRehearsalCoordinator(
+    routeCardID: coordinator.routeCardID,
+    engine: try RouteRehearsalEngine(reopening: reloadedRehearsal),
+    actualAttemptID: coordinator.actualAttemptID
+  )
+
+  try expect(
+    reopened.timelineVersion(for: .plan) == versionBeforeSave,
+    "reopening an unchanged rehearsal must report the same timeline version"
+  )
+
+  let comparison = RehearsalCompare.align(
+    rehearsal: reopened.engine.rehearsal,
+    planTimelineVersion: reopened.timelineVersion(for: .plan),
+    actualTimelineVersion: reopened.timelineVersion(for: .actual)
+  )
+  _ = try RehearsalCompare.makeStickFigureCue(
+    id: cue.id,
+    comparison: comparison,
+    alignedStepRange: 0...1,
+    preferredTrack: .plan,
+    pin: StickFigureCuePin(
+      scene: cue.sceneSnapshot,
+      bodyProfile: cue.bodyProfileSnapshot,
+      timelineVersion: cue.timelineVersion
+    )
+  )
+
+  let edited = coordinator.handle(.assignHold(holdID: HoldID("hold-top")))
+  try expect(edited.isSuccess, "the spec should be able to make a real timeline edit")
+  try expect(
+    coordinator.timelineVersion(for: .plan) != versionBeforeSave,
+    "a real timeline edit must change the version so an old pin stops matching"
+  )
 }
 
 private func qualitativeAnalysisRequestPinsOnlyThisRoutesConfirmedHistory() throws {
@@ -230,6 +294,7 @@ private func rehearsalCoordinatorPreservesProviderProvenance() throws {
     "expected deterministic route reader order"
   )
 
+  let seedCount = coordinator.projection.keyframes.count
   let generated = coordinator.handle(
     .importTimeline(
       track: .plan,
@@ -249,10 +314,16 @@ private func rehearsalCoordinatorPreservesProviderProvenance() throws {
     "expected movement provider version"
   )
   try expect(
-    generated.projection.keyframes.allSatisfy {
-      $0.provenance.automation == .deterministicLocal
+    generated.projection.keyframes.prefix(seedCount).allSatisfy {
+      $0.provenance == .manual
     },
-    "expected every generated frame to retain source provenance"
+    "expected the user-authored frames the suggester extended to stay user authored"
+  )
+  try expect(
+    generated.projection.keyframes.dropFirst(seedCount).allSatisfy {
+      $0.provenance.isSuggested && $0.provenance.automation == .deterministicLocal
+    },
+    "expected the frames the suggester generated to be labelled as its suggestion"
   )
 
   let copiedToActual = coordinator.handle(

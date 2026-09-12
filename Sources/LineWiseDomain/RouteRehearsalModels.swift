@@ -38,7 +38,9 @@ public struct Point2D: Hashable, Codable, Sendable {
   }
 
   public func interpolated(to other: Point2D, progress: Double) -> Point2D {
-    let progress = min(max(progress, 0), 1)
+    // NaN survives `min`/`max`, so clamping alone would let it reach a drawn
+    // joint position. An unusable progress value falls back to this endpoint.
+    let progress = progress.isFinite ? min(max(progress, 0), 1) : (progress > 0 ? 1 : 0)
     return Point2D(
       x: x + ((other.x - x) * progress),
       y: y + ((other.y - y) * progress)
@@ -248,7 +250,7 @@ public struct LimbContact: Hashable, Codable, Sendable {
   }
 }
 
-public enum AvatarJoint: String, Hashable, Codable, Sendable {
+public enum AvatarJoint: String, CaseIterable, Hashable, Codable, Sendable {
   case torso
   case pelvis
   case leftShoulder
@@ -278,6 +280,66 @@ public struct ClimberAvatar: Equatable, Codable, Sendable {
     self.bodyProfileID = bodyProfileID
     self.joints = joints
     self.contacts = contacts.sorted { $0.limb.rawValue < $1.limb.rawValue }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case bodyProfileID
+    case joints
+    case contacts
+  }
+
+  /// A joint map entry, persisted as an ordered array rather than letting Swift
+  /// emit an enum-keyed Dictionary.
+  ///
+  /// Swift encodes a Dictionary whose key is neither String nor Int as a flat
+  /// unkeyed array in iteration order, which per-process `Hashable` seeding
+  /// randomizes; `.sortedKeys` cannot reorder it. Because callers fingerprint an
+  /// encoded timeline to pin a StickFigureCue to the state it was cut from, that
+  /// randomness would make byte-identical state hash differently on every
+  /// launch. Writing the joints in a fixed order keeps the fingerprint stable.
+  private struct JointEntry: Codable {
+    let joint: AvatarJoint
+    let position: Point2D
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      bodyProfileID: try container.decode(BodyProfileID.self, forKey: .bodyProfileID),
+      joints: try Self.decodeJoints(from: container),
+      contacts: try container.decode([LimbContact].self, forKey: .contacts)
+    )
+  }
+
+  /// Reads the joint map in the current form, falling back to the form earlier
+  /// builds wrote.
+  ///
+  /// Reopening a rehearsal trusts the persisted pose rather than re-solving it,
+  /// so an avatar already on disk has to keep loading: refusing it would report
+  /// the user's whole saved history as corrupt. The older layout is what Swift
+  /// emits for an enum-keyed Dictionary — a flat array alternating joint name and
+  /// position — and it is rewritten in the current form on the next save.
+  private static func decodeJoints(
+    from container: KeyedDecodingContainer<CodingKeys>
+  ) throws -> [AvatarJoint: Point2D] {
+    if let entries = try? container.decode([JointEntry].self, forKey: .joints) {
+      return entries.reduce(into: [AvatarJoint: Point2D]()) { result, entry in
+        result[entry.joint] = entry.position
+      }
+    }
+    return try container.decode([AvatarJoint: Point2D].self, forKey: .joints)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(bodyProfileID, forKey: .bodyProfileID)
+    try container.encode(
+      AvatarJoint.allCases.compactMap { joint in
+        joints[joint].map { JointEntry(joint: joint, position: $0) }
+      },
+      forKey: .joints
+    )
+    try container.encode(contacts, forKey: .contacts)
   }
 }
 

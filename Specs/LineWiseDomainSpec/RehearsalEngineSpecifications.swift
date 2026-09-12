@@ -646,6 +646,423 @@ private func practiceSegmentPlaybackStopsAndLoopsInsideOneToThreeSteps() throws 
   }
 }
 
+private func aKeyframeEditThatResplitsAStepKeepsItsIntentVisibleForReview() throws {
+  let cue = "Keep the right foot loaded, bring hips up."
+  func authoredIntent() -> MovementIntent {
+    MovementIntent(
+      purpose: .progress,
+      family: .staticMove,
+      expectedDurationSeconds: 1.6,
+      cue: cue,
+      uncertainty: "Wall angle is still estimated.",
+      provenance: .manual
+    )
+  }
+  func planWithIntentOnFirstStep() throws -> RouteRehearsalEngine {
+    var engine = try RouteRehearsalEngine(
+      rehearsalID: RouteRehearsalID("resplit-intent"),
+      scene: rehearsalScene(),
+      bodyProfile: .generic(id: BodyProfileID("body")),
+      planKeyframes: [
+        rehearsalFrame(id: "k1"),
+        rehearsalFrame(id: "k2"),
+        rehearsalFrame(id: "k3"),
+      ]
+    )
+    try engine.setMovementIntent(
+      authoredIntent(),
+      from: PoseKeyframeID("k1"),
+      to: PoseKeyframeID("k2")
+    )
+    return engine
+  }
+  func survivingIntents(_ engine: RouteRehearsalEngine) -> [MovementIntent] {
+    engine.rehearsal.plan.steps.compactMap(\.intent)
+  }
+
+  var inserted = try planWithIntentOnFirstStep()
+  try inserted.addKeyframe(rehearsalFrame(id: "kX"), after: PoseKeyframeID("k1"))
+  let afterInsert = survivingIntents(inserted)
+  try rehearsalExpect(
+    afterInsert.contains { $0.cue == cue },
+    "inserting a keyframe inside an annotated step must not destroy the authored cue"
+  )
+  try rehearsalExpect(
+    afterInsert.allSatisfy { $0.validity == .needsReview },
+    "an intent whose step boundaries moved must ask for explicit review"
+  )
+
+  var deleted = try planWithIntentOnFirstStep()
+  try deleted.deleteKeyframe(PoseKeyframeID("k2"))
+  try rehearsalExpect(
+    survivingIntents(deleted).contains { $0.cue == cue && $0.validity == .needsReview },
+    "deleting a keyframe must leave the authored cue visible and needing review"
+  )
+
+  var reordered = try planWithIntentOnFirstStep()
+  try reordered.moveKeyframe(PoseKeyframeID("k3"), to: 1)
+  try rehearsalExpect(
+    survivingIntents(reordered).contains { $0.cue == cue && $0.validity == .needsReview },
+    "reordering keyframes must leave the authored cue visible and needing review"
+  )
+
+  var untouchedStep = try planWithIntentOnFirstStep()
+  try untouchedStep.addKeyframe(rehearsalFrame(id: "kY"), after: PoseKeyframeID("k2"))
+  let stillCurrent = try rehearsalRequired(
+    untouchedStep.rehearsal.plan.steps.first?.intent,
+    "intent on the untouched first step"
+  )
+  try rehearsalExpect(
+    stillCurrent.validity == .current && stillCurrent.cue == cue,
+    "an insertion after the annotated step must leave that step's intent current"
+  )
+}
+
+private func anUnresolvedLimbIsNeverPresentedAsAConfidentlySolvedPose() throws {
+  let honestlyUnresolved = [
+    LimbContact(limb: .leftHand, target: .unknown),
+    LimbContact(limb: .rightHand, target: .hold(HoldID("rh"))),
+    LimbContact(limb: .leftFoot, target: .hold(HoldID("lf"))),
+    LimbContact(limb: .rightFoot, target: .hold(HoldID("rf"))),
+  ]
+  var engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("unresolved-limb"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [rehearsalFrame(id: "k1", contacts: honestlyUnresolved)]
+  )
+  var frame = try rehearsalRequired(engine.rehearsal.plan.keyframes.first, "solved keyframe")
+
+  try rehearsalExpect(
+    frame.findings.contains { $0.limb == .leftHand && $0.severity == .unresolved },
+    "a limb the user left unknown must surface as an unresolved finding"
+  )
+  try rehearsalExpect(
+    frame.confidence != .high,
+    "a pose with an unresolved limb must not claim high confidence"
+  )
+  try rehearsalExpect(
+    frame.findings.allSatisfy { finding in
+      finding.limb == nil || finding.limb == .leftHand || finding.severity != .unresolved
+    },
+    "the three limbs the user did resolve must not be reported as unresolved"
+  )
+
+  try engine.setContact(
+    limb: .leftHand,
+    target: .hold(HoldID("lh")),
+    in: PoseKeyframeID("k1")
+  )
+  frame = try rehearsalRequired(
+    engine.rehearsal.plan.keyframes.first,
+    "keyframe after the user resolved the limb"
+  )
+  try rehearsalExpect(
+    !frame.findings.contains { $0.limb == .leftHand && $0.severity == .unresolved },
+    "resolving the limb must clear its unresolved finding"
+  )
+  try rehearsalExpect(
+    frame.confidence == .high,
+    "a fully resolved four-contact pose should regain high confidence"
+  )
+}
+
+private func anUnchangedRehearsalAlwaysEncodesToTheSameBytes() throws {
+  let secondContacts = replacingContact(
+    rehearsalContacts(),
+    limb: .rightHand,
+    target: .hold(HoldID("next"))
+  )
+  let engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("stable-fingerprint"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [
+      rehearsalFrame(id: "k1"),
+      rehearsalFrame(id: "k2", contacts: secondContacts),
+    ]
+  )
+  func encoded<Value: Encodable>(_ value: Value) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try encoder.encode(value)
+  }
+
+  let original = try encoded(engine.rehearsal)
+  let encodedAgain = try encoded(engine.rehearsal)
+  try rehearsalExpect(
+    encodedAgain == original,
+    "encoding the same rehearsal twice must produce the same bytes"
+  )
+
+  // Callers fingerprint the encoded timeline to pin a StickFigureCue to the
+  // exact state it was cut from, so value-equal state must stay byte-equal
+  // across a save-and-reload cycle.
+  let reloaded = try JSONDecoder().decode(RouteRehearsal.self, from: original)
+  let reloadedBytes = try encoded(reloaded)
+  try rehearsalExpect(
+    reloaded == engine.rehearsal,
+    "a saved rehearsal should reload value-equal"
+  )
+  try rehearsalExpect(
+    reloadedBytes == original,
+    "a reloaded rehearsal must fingerprint identically to the one that was saved"
+  )
+
+  // Two avatars holding exactly the same joints are the same pose, so how each
+  // one happened to be assembled must not change its persisted form.
+  let solved = try rehearsalRequired(
+    engine.rehearsal.plan.keyframes.first?.avatar,
+    "solved avatar"
+  )
+  let pairs = solved.joints.map { ($0.key, $0.value) }
+  try rehearsalExpect(pairs.count > 1, "a solved pose should place several joints")
+  let rebuilt = ClimberAvatar(
+    bodyProfileID: solved.bodyProfileID,
+    joints: Dictionary(uniqueKeysWithValues: pairs.reversed()),
+    contacts: solved.contacts.reversed()
+  )
+  let rebuiltBytes = try encoded(rebuilt)
+  let solvedBytes = try encoded(solved)
+  try rehearsalExpect(rebuilt == solved, "the rebuilt avatar should be the same pose")
+  try rehearsalExpect(
+    rebuiltBytes == solvedBytes,
+    "the same pose must encode identically regardless of how it was assembled"
+  )
+}
+
+private func aNonFinitePlaybackPositionIsRejectedRatherThanStored() throws {
+  let secondContacts = replacingContact(
+    rehearsalContacts(),
+    limb: .rightHand,
+    target: .hold(HoldID("next"))
+  )
+  var engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("nan-scrub"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [
+      rehearsalFrame(id: "k1"),
+      rehearsalFrame(id: "k2", contacts: secondContacts),
+    ]
+  )
+  try engine.scrub(transitionIndex: 0, progress: 0.25)
+  let before = engine.playback
+
+  for rejected in [Double.nan, .signalingNaN] {
+    do {
+      try engine.scrub(transitionIndex: 0, progress: rejected)
+      throw RehearsalSpecFailure.expected("a non-finite scrub position should be rejected")
+    } catch let error as RouteRehearsalError {
+      try rehearsalExpect(
+        error == .invalidPlaybackProgress,
+        "the rejection should name the invalid playback position"
+      )
+    }
+    try rehearsalExpect(
+      engine.playback == before,
+      "a rejected scrub must leave the playback cursor untouched"
+    )
+  }
+
+  // Infinities are a position past the end of the step, so they clamp rather
+  // than being rejected; the cursor still has to end up finite.
+  try engine.scrub(transitionIndex: 0, progress: .infinity)
+  try rehearsalExpect(
+    engine.playback.cursor.progress == 1,
+    "a position past the end of the step should clamp to the end"
+  )
+  try engine.scrub(transitionIndex: 0, progress: -.infinity)
+  try rehearsalExpect(
+    engine.playback.cursor.progress == 0,
+    "a position before the start of the step should clamp to the start"
+  )
+
+  // The cursor drives interpolation, animation, and the durable archive, so a
+  // finite cursor has to produce a drawable figure that can also be saved.
+  try engine.scrub(transitionIndex: 0, progress: 0.5)
+  let avatar = try engine.currentAvatar()
+  try rehearsalExpect(
+    avatar.joints.values.allSatisfy { $0.x.isFinite && $0.y.isFinite },
+    "an interpolated stick figure must never contain a non-finite joint"
+  )
+
+  try engine.scrub(transitionIndex: 0, progress: 0)
+  try engine.playCurrentStep(loop: false)
+  for _ in 0..<4 {
+    try engine.advancePlayback(by: 10)
+  }
+  try rehearsalExpect(
+    !engine.playback.isPlaying && engine.playback.cursor.progress == 1,
+    "finite playback must reach the paused end state instead of running forever"
+  )
+  _ = try JSONEncoder().encode(engine.playback)
+}
+
+private func reopeningAPartiallyWrittenTimelineFailsInsteadOfCrashingLater() throws {
+  let engine = try RouteRehearsalEngine(
+    rehearsalID: RouteRehearsalID("truncated"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    planKeyframes: [
+      rehearsalFrame(id: "k1"),
+      rehearsalFrame(id: "k2"),
+      rehearsalFrame(id: "k3"),
+    ]
+  )
+  let sound = engine.rehearsal
+  try rehearsalExpect(
+    sound.plan.steps.count == sound.plan.keyframes.count - 1,
+    "a well-formed timeline should have one step per adjacent keyframe pair"
+  )
+  _ = try RouteRehearsalEngine(reopening: sound)
+
+  // Reproduce a partially-written archive: the last keyframe never reached
+  // disk, so the persisted keyframe and step arrays disagree about how long the
+  // timeline is.
+  guard
+    var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(sound))
+      as? [String: Any],
+    var plan = object["plan"] as? [String: Any],
+    var keyframes = plan["keyframes"] as? [Any],
+    keyframes.count == 3
+  else {
+    throw RehearsalSpecFailure.expected("expected an encodable three-keyframe plan")
+  }
+  keyframes.removeLast()
+  plan["keyframes"] = keyframes
+  object["plan"] = plan
+  let truncated = try JSONDecoder().decode(
+    RouteRehearsal.self,
+    from: try JSONSerialization.data(withJSONObject: object)
+  )
+  try rehearsalExpect(
+    truncated.plan.keyframes.count == 2 && truncated.plan.steps.count == 2,
+    "the fixture should represent a timeline whose two arrays disagree"
+  )
+
+  do {
+    _ = try RouteRehearsalEngine(reopening: truncated)
+    throw RehearsalSpecFailure.expected(
+      "a timeline whose keyframes and steps disagree should not reopen"
+    )
+  } catch let error as RouteRehearsalError {
+    try rehearsalExpect(
+      error == .inconsistentTimeline(.plan),
+      "reopening should report which track's keyframes and steps disagree"
+    )
+  }
+}
+
+private func providersNeverRelabelTheAuthorshipOfSeedFramesTheyDidNotAuthor() throws {
+  let observed = RehearsalProvenance(
+    authorship: .observed,
+    automation: .manual,
+    providerIdentifier: "user-video-review",
+    version: "1"
+  )
+  let modelSuggested = RehearsalProvenance(
+    authorship: .suggested,
+    automation: .modelAdapter,
+    providerIdentifier: "acme-vision",
+    version: "3"
+  )
+  let request = RehearsalSuggestionRequest(
+    rehearsalID: RouteRehearsalID("provenance-laundering"),
+    scene: rehearsalScene(),
+    bodyProfile: .generic(id: BodyProfileID("body")),
+    seedKeyframes: [
+      rehearsalFrame(id: "seed-observed", provenance: observed),
+      rehearsalFrame(id: "seed-model", provenance: modelSuggested),
+    ],
+    maximumKeyframeCount: 2
+  )
+
+  let manual = try ManualRehearsalSuggestionProvider().suggestLocally(request)
+  try rehearsalExpect(
+    manual.keyframes.map(\.provenance) == [observed, modelSuggested],
+    "the manual provider must not relabel frames it did not author"
+  )
+  try rehearsalExpect(
+    manual.keyframes.contains { $0.provenance.isAIGenerated },
+    "a model-generated seed must keep saying it came from a model"
+  )
+
+  let deterministic = try DeterministicLocalRehearsalSuggestionProvider(
+    algorithmVersion: "x0"
+  ).suggestLocally(request)
+  try rehearsalExpect(
+    deterministic.keyframes.map(\.provenance) == [observed, modelSuggested],
+    "the deterministic provider must not downgrade seed frames to its own suggestion"
+  )
+
+  // Extending a user-authored seed is still a suggestion, but only the frames
+  // the suggester actually invented may say so.
+  let extended = try DeterministicLocalRehearsalSuggestionProvider(
+    algorithmVersion: "x0"
+  ).suggestLocally(
+    RehearsalSuggestionRequest(
+      rehearsalID: RouteRehearsalID("provenance-extension"),
+      scene: rehearsalScene(),
+      bodyProfile: .generic(id: BodyProfileID("body")),
+      seedKeyframes: [rehearsalFrame(id: "seed-manual")],
+      maximumKeyframeCount: 3
+    )
+  )
+  try rehearsalExpect(
+    extended.keyframes.first?.provenance == .manual,
+    "a user-authored seed must remain user authored after a suggested extension"
+  )
+  try rehearsalExpect(
+    extended.keyframes.dropFirst().allSatisfy {
+      $0.provenance.isSuggested && $0.provenance.automation == .deterministicLocal
+    },
+    "the frames the suggester actually generated must be labelled suggested"
+  )
+  try rehearsalExpect(
+    extended.provenance.isSuggested,
+    "the suggestion as a whole still reports the provider that produced it"
+  )
+}
+
+/// Reopening never re-solves a persisted pose, so an avatar already on disk has
+/// to keep loading. Older archives stored the joint map the way Swift encodes an
+/// enum-keyed Dictionary: a flat array alternating joint name and position.
+private func aPoseSavedByAnEarlierBuildStillLoads() throws {
+  let legacy = Data(
+    """
+    {
+      "bodyProfileID": "body",
+      "joints": ["leftHand", {"x": 1.0, "y": 2.3}, "torso", {"x": 1.3, "y": 1.7}],
+      "contacts": [{"limb": "lh", "target": {"unknown": {}}, "mode": "hand", "isLocked": false}]
+    }
+    """.utf8
+  )
+  let decoded = try JSONDecoder().decode(ClimberAvatar.self, from: legacy)
+
+  try rehearsalExpect(
+    decoded.joints[.leftHand] == Point2D(x: 1.0, y: 2.3)
+      && decoded.joints[.torso] == Point2D(x: 1.3, y: 1.7),
+    "every joint saved by an earlier build must survive the load"
+  )
+  try rehearsalExpect(
+    decoded.joints.count == 2,
+    "loading must not invent joints the archive never recorded"
+  )
+  try rehearsalExpect(
+    decoded.contacts.map(\.limb) == [.leftHand],
+    "the saved contacts must survive alongside the joints"
+  )
+
+  // Once loaded, the pose is rewritten in the current stable form.
+  let reencoded = try JSONEncoder().encode(decoded)
+  let roundTripped = try JSONDecoder().decode(ClimberAvatar.self, from: reencoded)
+  try rehearsalExpect(
+    roundTripped == decoded,
+    "a migrated pose should round-trip through the current form unchanged"
+  )
+}
+
 private func rehearsalRequired<Value>(_ value: Value?, _ label: String) throws -> Value {
   guard let value else {
     throw RehearsalSpecFailure.expected("missing \(label)")
@@ -694,6 +1111,34 @@ public func rehearsalEngineSpecifications() -> [(String, () throws -> Void)] {
     (
       "practice segment playback stops and loops inside one to three steps",
       practiceSegmentPlaybackStopsAndLoopsInsideOneToThreeSteps
+    ),
+    (
+      "a keyframe edit that resplits a step keeps its intent visible for review",
+      aKeyframeEditThatResplitsAStepKeepsItsIntentVisibleForReview
+    ),
+    (
+      "an unresolved limb is never presented as a confidently solved pose",
+      anUnresolvedLimbIsNeverPresentedAsAConfidentlySolvedPose
+    ),
+    (
+      "an unchanged rehearsal always encodes to the same bytes",
+      anUnchangedRehearsalAlwaysEncodesToTheSameBytes
+    ),
+    (
+      "a non-finite playback position is rejected rather than stored",
+      aNonFinitePlaybackPositionIsRejectedRatherThanStored
+    ),
+    (
+      "reopening a partially-written timeline fails instead of crashing later",
+      reopeningAPartiallyWrittenTimelineFailsInsteadOfCrashingLater
+    ),
+    (
+      "providers never relabel the authorship of seed frames they did not author",
+      providersNeverRelabelTheAuthorshipOfSeedFramesTheyDidNotAuthor
+    ),
+    (
+      "a pose saved by an earlier build still loads",
+      aPoseSavedByAnEarlierBuildStillLoads
     ),
   ]
 }
