@@ -37,7 +37,9 @@ enum DemoSeed {
         // 墙 3：直壁，一条已上的线 + 一条新线
         let wall3 = makeWall(store: store, gym: gym, area: "直壁", angle: .vertical, seed: 37)
         let lineD = makeLine(store: store, wall: wall3, color: 1, grade: "V2", name: "直壁 · 绿")
-        _ = makeLine(store: store, wall: wall3, color: 3, grade: "V6", name: "直壁 · 黄")
+        let lineE = makeLine(store: store, wall: wall3, color: 3, grade: "V6", name: "直壁 · 黄")
+        lineE.createdAt = daysAgo(4)
+        lineE.updatedAt = daysAgo(4)
 
         // 记录：lineA 三次馆访，掉在不同点
         let holdsA = HoldNumbering.ordered(lineA.holds)
@@ -67,6 +69,84 @@ enum DemoSeed {
                 SequenceStep(limb: .rightHand, holdID: holdsA[2].id),
                 SequenceStep(limb: .leftHand, holdID: holdsA[3].id),
             ])
+        }
+        store.save()
+
+        // 真实墙照片（只在开发机上，通过 `-demoPhotosDir <路径>` 传入；不进仓库）。
+        // 放最后，让真实照片的线排在首页最前。
+        if let dir = demoPhotosDirectory {
+            seedRealWalls(store: store, gym: gym, dir: dir, daysAgo: daysAgo)
+        }
+    }
+
+    // MARK: 真实照片
+
+    static var demoPhotosDirectory: URL? {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "-demoPhotosDir"), i + 1 < args.count else { return nil }
+        let url = URL(fileURLWithPath: args[i + 1], isDirectory: true)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// 已知照片的点位（归一化坐标，按文件名匹配）。
+    private static let knownLines: [String: [(area: String, angle: WallAngle, lines: [(name: String, grade: String, holds: [(Double, Double, Double)])])]] = [
+        "wall-yellow": [(area: "直壁·黄", angle: .vertical, lines: [
+            (name: "直壁 · 黄", grade: "V3", holds: [
+                (0.340, 0.680, 0.028), (0.416, 0.667, 0.028), (0.582, 0.672, 0.036),
+                (0.618, 0.594, 0.024), (0.507, 0.557, 0.030), (0.615, 0.545, 0.026),
+                (0.465, 0.496, 0.044), (0.371, 0.500, 0.028), (0.625, 0.390, 0.040),
+            ]),
+        ])],
+        "wall-white": [(area: "大斜板", angle: .slab, lines: [
+            (name: "大斜板 · 白", grade: "V4", holds: [
+                (0.700, 0.790, 0.034), (0.575, 0.735, 0.040), (0.455, 0.600, 0.052),
+                (0.555, 0.530, 0.028), (0.565, 0.480, 0.040), (0.505, 0.415, 0.050),
+                (0.455, 0.370, 0.045), (0.585, 0.262, 0.045),
+            ]),
+            (name: "大斜板 · 紫", grade: "V2", holds: [
+                (0.165, 0.775, 0.035), (0.245, 0.765, 0.025), (0.255, 0.670, 0.028),
+                (0.155, 0.600, 0.036), (0.245, 0.495, 0.036), (0.215, 0.405, 0.045), (0.125, 0.325, 0.045),
+            ]),
+        ])],
+    ]
+
+    @MainActor
+    private static func seedRealWalls(store: Store, gym: Gym, dir: URL, daysAgo: (Int) -> Date) {
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { ["jpg", "jpeg", "png", "heic"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for file in files {
+            guard let data = try? Data(contentsOf: file), let image = UIImage(data: data) else { continue }
+            let key = file.deletingPathExtension().lastPathComponent
+            let spec = knownLines[key]?.first
+            let wall = try! store.createWall(gym: gym, image: image, areaName: spec?.area ?? key, angle: spec?.angle ?? .unknown)
+            guard let spec else { continue }
+            for (idx, l) in spec.lines.enumerated() {
+                let holds = l.holds.map { Hold(x: $0.0, y: $0.1, r: $0.2) }
+                let sf = HoldNumbering.defaultStartAndFinish(holds)
+                let line = store.createLine(wall: wall, holds: holds, startHoldIDs: sf.start, finishHoldID: sf.finish,
+                                            gradeText: l.grade, gradeSource: .manual, name: l.name)
+                let ordered = HoldNumbering.ordered(holds)
+                if idx == 0 {
+                    seedSession(store: store, line: line, date: daysAgo(6), attempts: 5, fall: ordered[min(3, ordered.count - 1)].id, reason: .feet, note: "右脚先踩高再出手")
+                    seedSession(store: store, line: line, date: daysAgo(2), attempts: 3, fall: ordered[min(4, ordered.count - 1)].id, reason: .body, note: "贴墙再翻")
+                    // 今天已经在馆内点过 +1，线路页会出现“上次这句有用吗？”
+                    let today = store.todaySession(for: line, source: .inGym)
+                    today.attemptCount = 2
+                    if ordered.count >= 5 {
+                        line.planSequence = ClimbSequence(steps: [
+                            SequenceStep(limb: .rightFoot, holdID: ordered[0].id),
+                            SequenceStep(limb: .leftHand, holdID: ordered[2].id),
+                            SequenceStep(limb: .leftFoot, holdID: ordered[1].id),
+                            SequenceStep(limb: .rightHand, holdID: ordered[3].id),
+                            SequenceStep(limb: .leftHand, holdID: ordered[4].id),
+                        ])
+                    }
+                } else {
+                    seedSession(store: store, line: line, date: daysAgo(2), attempts: 2, fall: nil, reason: nil, note: "脚要踩准", sent: true)
+                    line.status = .sent
+                }
+            }
         }
         store.save()
     }
@@ -110,12 +190,12 @@ enum DemoSeed {
         // 每种颜色一条线：从下到上 7–9 个点，横向随机漂移
         for color in 0..<palette.count {
             let count = 7 + Int(rng.next() % 3)
-            var x = 0.15 + Double(color) * 0.13 + Double(rng.next() % 100) / 1000
+            var x = 0.2 + Double(color) * 0.12 + Double(rng.next() % 80) / 1000
             for i in 0..<count {
                 let t = Double(i) / Double(count - 1)
-                let y = 0.92 - t * 0.82 + (Double(rng.next() % 60) - 30) / 1000
-                x += (Double(rng.next() % 200) - 100) / 1000
-                x = min(max(x, 0.06), 0.94)
+                let y = 0.9 - t * 0.78 + (Double(rng.next() % 60) - 30) / 1000
+                x += (Double(rng.next() % 140) - 70) / 1000
+                x = min(max(x, 0.12), 0.88)
                 let r = 0.018 + Double(rng.next() % 14) / 1000
                 drawn.append(DrawnHold(color: color, x: x, y: y, r: r))
             }

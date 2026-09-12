@@ -22,14 +22,12 @@ struct RootView: View {
                 LineDetailView(line: line, onOpenLine: { other in path.append(other) })
             }
         }
-        .overlay(alignment: .bottom) {
-            UndoToast().padding(.bottom, 8)
-        }
+        // 撤销条由 UndoToastWindow 挂在窗口级（见 LineWiseApp），这里不再叠一层。
         .fullScreenCover(isPresented: $showBuilder) {
             LineBuilderFlow { created in
                 showBuilder = false
                 if let created {
-                    Task {
+                    Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(350))
                         path.append(created)
                     }
@@ -67,6 +65,35 @@ struct RootView: View {
         if !appState.hasSeenIntro {
             showIntro = true
         }
+        applyDebugRoute(store: store)
+    }
+
+    /// 仅 DEBUG：用启动参数直达某个页面，方便模拟器截图。
+    /// `-openFirstLine`（首页第一张卡对应的线）/ `-openLine <名字包含>` / `-openBuilder` / `-openSettings` / `-demoUndo`
+    private func applyDebugRoute(store: Store) {
+        #if DEBUG
+        let args = CommandLine.arguments
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            let d = FetchDescriptor<Line>(predicate: #Predicate { $0.deletedAt == nil && $0.mergedIntoLineID == nil })
+            let all = (try? context.fetch(d)) ?? []
+            let homeOrder = all.sorted { ($0.latestSession?.date ?? $0.createdAt) > ($1.latestSession?.date ?? $1.createdAt) }
+            if args.contains("-openFirstLine") {
+                if let line = homeOrder.first { path = [line] }
+            } else if let i = args.firstIndex(of: "-openLine"), i + 1 < args.count {
+                let needle = args[i + 1]
+                if let line = homeOrder.first(where: { $0.name.contains(needle) }) { path = [line] }
+            } else if args.contains("-openBuilder") {
+                showBuilder = true
+            } else if args.contains("-openSettings") {
+                showSettings = true
+            }
+            if args.contains("-demoUndo") {
+                try? await Task.sleep(for: .milliseconds(800))
+                undoCenter.offer("已删除 9 月 12 日的记录", seconds: 30) {}
+            }
+        }
+        #endif
     }
 }
 

@@ -26,6 +26,7 @@ struct LineWiseApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .background(UndoToastWindowInstaller(undoCenter: undoCenter))
                 .environment(undoCenter)
                 .environment(appState)
                 .preferredColorScheme(.dark)

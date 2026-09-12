@@ -78,6 +78,11 @@ struct HomeView: View {
                         .containerRelativeFrame(.horizontal)
                         .contentShape(Rectangle())
                         .onTapGesture { onOpen(line) }
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            content
+                                .scaleEffect(1 - abs(phase.value) * 0.06)
+                                .opacity(1 - abs(phase.value) * 0.45)
+                        }
                         .id(line.id)
                 }
             }
@@ -173,7 +178,8 @@ struct HomeView: View {
                     .foregroundStyle(Color.ink)
                     .frame(width: 58, height: 58)
                     .background(Color.accent, in: Circle())
-                    .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                    .shadow(color: Color.accent.opacity(0.35), radius: 16, y: 2)
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
             }
             .accessibilityLabel("建一条线")
         }
@@ -242,10 +248,15 @@ struct LineCard: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // 整条线必须完整可见：按宽度适配，略微上移，给底部文字留位置。
-            LineSpotlight(line: line, fill: false, maxPixel: 1400, showNumbers: false)
+            // 自动取景：把这条线的包围盒（留 35% 余量）放大到卡片里，整条线完整可见；
+            // 顶栏与底部文字区留白。随横滑做 15% 视差，让卡片有层次。
+            LineSpotlight(line: line, fill: false, maxPixel: 1400, showNumbers: false,
+                          focus: SpotlightGeometry.focusRect(for: line.holds, padding: 0.35, minSize: 0.45))
                 .padding(.top, 96)
                 .padding(.bottom, 150)
+                .visualEffect { content, proxy in
+                    content.offset(x: proxy.frame(in: .scrollView(axis: .horizontal)).minX * -0.15)
+                }
             BottomScrim(height: 320)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {

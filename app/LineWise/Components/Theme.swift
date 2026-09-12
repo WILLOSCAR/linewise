@@ -15,17 +15,19 @@ struct Chip: View {
     var title: String
     var selected: Bool
     var systemImage: String?
+    /// 紧凑尺寸：用于列表行内、筛选条等次级位置。
+    var compact: Bool = false
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if let systemImage { Image(systemName: systemImage).font(.caption.weight(.semibold)) }
+                if let systemImage { Image(systemName: systemImage).font((compact ? Font.caption2 : Font.caption).weight(.semibold)) }
                 Text(title)
             }
-            .font(.subheadline.weight(selected ? .semibold : .regular))
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
+            .font((compact ? Font.footnote : Font.subheadline).weight(selected ? .semibold : .regular))
+            .padding(.horizontal, compact ? 10 : 13)
+            .padding(.vertical, compact ? 6 : 8)
             .background(selected ? Color.accent : Color.white.opacity(0.08), in: Capsule())
             .foregroundStyle(selected ? Color.ink : Color.white.opacity(0.85))
             .contentShape(Capsule())
@@ -74,6 +76,7 @@ struct Panel<Content: View>: View {
 /// 大按钮（馆内用）。
 struct BigButtonStyle: ButtonStyle {
     var prominent: Bool = true
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -83,8 +86,10 @@ struct BigButtonStyle: ButtonStyle {
             .background(prominent ? Color.accent : Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .foregroundStyle(prominent ? Color.ink : .white)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.9 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.9 : 1) : 0.4)
+            .saturation(isEnabled ? 1 : 0.6)
             .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+            .animation(.snappy(duration: 0.2), value: isEnabled)
     }
 }
 

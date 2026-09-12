@@ -11,6 +11,9 @@ struct LineSpotlight: View {
     var pose: StickFigurePose?
     var reveal: Double = 1
     var dim: Double = 0.66
+    /// 归一化关注区域（放大局部）；nil 为整图。
+    var focus: CGRect? = nil
+    var ringWidth: CGFloat = 2
 
     @State private var image: UIImage?
 
@@ -29,7 +32,9 @@ struct LineSpotlight: View {
             fill: fill,
             showNumbers: showNumbers,
             dim: dim,
-            reveal: reveal
+            reveal: reveal,
+            ringWidth: ringWidth,
+            focus: focus
         )
         .task(id: "\(line.wall?.photoFileName ?? "")#\(maxPixel)") {
             guard let name = line.wall?.photoFileName else { image = nil; return }

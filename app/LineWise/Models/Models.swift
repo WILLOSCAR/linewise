@@ -177,10 +177,11 @@ final class Line {
 
     /// 最新一次“掉在哪 · 原因”的短句。
     var lastFallLine: String? {
-        guard let s = orderedSessions.last(where: { $0.fallHoldID != nil || $0.reason != nil || $0.sent }) else { return nil }
-        if s.sent, s.fallHoldID == nil { return "上次上了" }
+        guard let s = orderedSessions.last(where: { $0.fallHoldID != nil || $0.fallText?.isEmpty == false || $0.reason != nil || $0.sent }) else { return nil }
+        if s.sent, s.fallHoldID == nil, s.fallText?.isEmpty != false { return "上次上了" }
         var parts: [String] = []
         if let l = label(for: s.fallHoldID) { parts.append("上次掉在 \(l)") }
+        else if let t = s.fallText, !t.isEmpty { parts.append("上次掉在 \(t)") }
         if let r = s.reason { parts.append(r.title) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -228,6 +229,8 @@ final class Session {
     var sent: Bool
     var fallHoldID: UUID?
     var fallStepIndex: Int?
+    /// 无照片线的“掉在哪”文字版（有照片时为 nil，用 fallHoldID）。
+    var fallText: String?
     var reasonRaw: String?
     var note: String?
     var checkRaw: String?
@@ -271,7 +274,7 @@ final class Session {
     }
 
     var hasContent: Bool {
-        fallHoldID != nil || reason != nil || (note?.isEmpty == false)
+        fallHoldID != nil || (fallText?.isEmpty == false) || reason != nil || (note?.isEmpty == false)
     }
 
     var isToday: Bool { Calendar.current.isDateInToday(date) }

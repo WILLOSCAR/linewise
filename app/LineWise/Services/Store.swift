@@ -189,13 +189,21 @@ struct Store {
     }
 
     func deleteSession(_ session: Session, from line: Line) -> () -> Void {
-        // 软删除做法：先从关系里摘掉，撤销时放回；真正删除在确认后。
+        // 先快照，撤销时原样放回（包括提醒三个字段）。
         let snapshot = SessionSnapshot(session)
+        let previousReminder = (line.reminderText, line.reminderSessionID, line.reminderVerified)
         line.sessions.removeAll { $0.id == session.id }
         context.delete(session)
         if line.reminderSessionID == snapshot.id {
-            line.reminderText = nil
-            line.reminderSessionID = nil
+            // 提醒回退到上一条有内容的记录
+            if let prev = line.orderedSessions.last(where: { $0.hasContent }),
+               let text = ReminderComposer.compose(fallLabel: line.label(for: prev.fallHoldID) ?? prev.fallText, reason: prev.reason, note: prev.note) {
+                line.reminderText = text
+                line.reminderSessionID = prev.id
+            } else {
+                line.reminderText = nil
+                line.reminderSessionID = nil
+            }
             line.reminderVerified = false
         }
         line.updatedAt = .now
@@ -204,12 +212,9 @@ struct Store {
             let restored = snapshot.restore(into: line)
             context.insert(restored)
             line.sessions.append(restored)
-            if let label = line.label(for: restored.fallHoldID), restored.hasContent,
-               line.reminderText == nil,
-               let text = ReminderComposer.compose(fallLabel: label, reason: restored.reason, note: restored.note) {
-                line.reminderText = text
-                line.reminderSessionID = restored.id
-            }
+            line.reminderText = previousReminder.0
+            line.reminderSessionID = previousReminder.1
+            line.reminderVerified = previousReminder.2
             save()
         }
     }
@@ -218,6 +223,8 @@ struct Store {
     func answerCheck(_ session: Session, line: Line, check: ReminderCheck) -> () -> Void {
         let previous = session.check
         let previousVerified = line.reminderVerified
+        let previousReminder = line.reminderText
+        let previousReminderSession = line.reminderSessionID
         session.check = check
         session.updatedAt = .now
         switch check {
@@ -237,6 +244,8 @@ struct Store {
         return { [self] in
             session.check = previous
             line.reminderVerified = previousVerified
+            line.reminderText = previousReminder
+            line.reminderSessionID = previousReminderSession
             save()
         }
     }
@@ -299,7 +308,10 @@ struct Store {
     /// 清理超过一天的软删除线（启动时调用）。
     func purgeDeleted() {
         let cutoff = Date.now.addingTimeInterval(-24 * 3600)
-        let d = FetchDescriptor<Line>(predicate: #Predicate { $0.deletedAt != nil && $0.deletedAt! < cutoff })
+        // 注意：#Predicate 不支持强制解包，用 if let 展开。
+        let d = FetchDescriptor<Line>(predicate: #Predicate { line in
+            if let deletedAt = line.deletedAt { return deletedAt < cutoff } else { return false }
+        })
         for line in (try? context.fetch(d)) ?? [] {
             context.delete(line)
         }
@@ -358,6 +370,7 @@ private struct SessionSnapshot {
     let sent: Bool
     let fallHoldID: UUID?
     let fallStepIndex: Int?
+    let fallText: String?
     let reasonRaw: String?
     let note: String?
     let checkRaw: String?
@@ -369,7 +382,7 @@ private struct SessionSnapshot {
 
     init(_ s: Session) {
         id = s.id; date = s.date; attemptCount = s.attemptCount; sent = s.sent
-        fallHoldID = s.fallHoldID; fallStepIndex = s.fallStepIndex; reasonRaw = s.reasonRaw
+        fallHoldID = s.fallHoldID; fallStepIndex = s.fallStepIndex; fallText = s.fallText; reasonRaw = s.reasonRaw
         note = s.note; checkRaw = s.checkRaw; reminderSnapshot = s.reminderSnapshot
         sourceRaw = s.sourceRaw; cycle = s.cycle; createdAt = s.createdAt; attemptsData = s.attemptsData
     }
@@ -380,6 +393,7 @@ private struct SessionSnapshot {
         s.sent = sent
         s.fallHoldID = fallHoldID
         s.fallStepIndex = fallStepIndex
+        s.fallText = fallText
         s.reasonRaw = reasonRaw
         s.note = note
         s.checkRaw = checkRaw

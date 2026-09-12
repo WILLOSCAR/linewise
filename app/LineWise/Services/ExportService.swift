@@ -60,6 +60,7 @@ enum ExportService {
         var sent: Bool
         var fallHoldID: UUID?
         var fallStepIndex: Int?
+        var fallText: String?
         var reason: String?
         var note: String?
         var check: String?
@@ -93,7 +94,7 @@ enum ExportService {
                                 sessions: line.orderedSessions.map { s in
                                     SessionDTO(
                                         id: s.id, date: s.date, attemptCount: s.attemptCount, sent: s.sent,
-                                        fallHoldID: s.fallHoldID, fallStepIndex: s.fallStepIndex, reason: s.reasonRaw,
+                                        fallHoldID: s.fallHoldID, fallStepIndex: s.fallStepIndex, fallText: s.fallText, reason: s.reasonRaw,
                                         note: s.note, check: s.checkRaw, source: s.sourceRaw, cycle: s.cycle,
                                         createdAt: s.createdAt, updatedAt: s.updatedAt, attempts: s.attempts
                                     )
