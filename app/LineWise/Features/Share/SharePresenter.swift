@@ -33,6 +33,26 @@ enum SharePresenter {
         top.present(vc, animated: true)
     }
 
+    /// 分享预览：把 SwiftUI 面板作为底部 sheet 盖在最上层（按钮在 `Menu` 里时 `.sheet` 不会出现，所以走 UIKit）。
+    /// `content` 收到一个关闭闭包。
+    @discardableResult
+    static func presentSheet<V: View>(_ content: (@escaping () -> Void) -> V) -> UIViewController? {
+        guard let top = topViewController() else { return nil }
+        let host = UIHostingController(rootView: AnyView(EmptyView()))
+        let close: () -> Void = { [weak host] in host?.dismiss(animated: true) }
+        host.rootView = AnyView(content(close))
+        host.overrideUserInterfaceStyle = .dark
+        host.view.backgroundColor = UIColor(Color.ink)
+        host.modalPresentationStyle = .pageSheet
+        if let sheet = host.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 28
+        }
+        top.present(host, animated: true)
+        return host
+    }
+
     /// 二选一确认框。
     static func confirm(title: String, message: String, confirmTitle: String, cancelTitle: String = "取消", onConfirm: @escaping () -> Void) {
         guard let top = topViewController() else { onConfirm(); return }

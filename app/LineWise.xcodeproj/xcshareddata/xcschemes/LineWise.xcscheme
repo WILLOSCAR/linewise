@@ -35,6 +35,20 @@
                ReferencedContainer = "container:LineWise.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E054A7E08FCF4F6643613500"
+               BuildableName = "LineWiseUITests.xctest"
+               BlueprintName = "LineWiseUITests"
+               ReferencedContainer = "container:LineWise.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -61,6 +75,17 @@
                BlueprintIdentifier = "E71787DDFD02F0A3985CD7E4"
                BuildableName = "LineWiseTests.xctest"
                BlueprintName = "LineWiseTests"
+               ReferencedContainer = "container:LineWise.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E054A7E08FCF4F6643613500"
+               BuildableName = "LineWiseUITests.xctest"
+               BlueprintName = "LineWiseUITests"
                ReferencedContainer = "container:LineWise.xcodeproj">
             </BuildableReference>
          </TestableReference>

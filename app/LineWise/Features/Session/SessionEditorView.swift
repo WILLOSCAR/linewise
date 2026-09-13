@@ -16,9 +16,12 @@ struct SessionEditorView: View {
     @State private var trackEach: Bool
     @State private var fallMode: FallMode
     @State private var selectedStep: Int?
-    @State private var fallText: String
     /// 新建时从“今天已有的记录”预填；只在日期仍是今天时视为编辑它。
     private let prefillID: UUID?
+
+    /// 上半图取景到这条线（与线路页头图同参数）。
+    private static let focusPadding = 0.3
+    private static let focusMinSize = 0.5
 
     @State private var dictation = SpeechDictation()
     @State private var noteBeforeDictation = ""
@@ -43,20 +46,19 @@ struct SessionEditorView: View {
         self.session = session
         let today = Calendar.current.startOfDay(for: .now)
         let base = session ?? line.sessions.first { $0.date == today && $0.cycle == line.cycle }
-        var draft = base.map(SessionDraft.init(session:)) ?? SessionDraft()
-        var fallText = ""
-        if !line.hasPhoto {
-            let decoded = NoPhotoFall.decode(base?.note)
-            fallText = decoded.fall
-            draft.note = decoded.note
-        }
+        // 无照片线：老数据把“掉在 …”写在一句话开头，读的时候拆回 fallText。
+        let draft = base.map { SessionDraft(session: $0, decodeLegacyFall: !line.hasPhoto) } ?? SessionDraft()
         _draft = State(initialValue: draft)
         _date = State(initialValue: base?.date ?? today)
         _trackEach = State(initialValue: !draft.attempts.isEmpty)
         _fallMode = State(initialValue: draft.fallStepIndex != nil ? .step : .tap)
         _selectedStep = State(initialValue: draft.fallStepIndex)
-        _fallText = State(initialValue: fallText)
         prefillID = session == nil ? base?.id : nil
+    }
+
+    private var focus: CGRect? {
+        guard line.hasPhoto else { return nil }
+        return SpotlightGeometry.focusRect(for: line.holds, padding: Self.focusPadding, minSize: Self.focusMinSize)
     }
 
     private var plan: ClimbSequence? {
@@ -89,19 +91,29 @@ struct SessionEditorView: View {
                     } else {
                         noPhotoFallSection
                     }
-                    ScrollView {
-                        VStack(spacing: 12) {
-                            dateRow
-                            countRow
-                            sentRow
-                            reasonRow
-                            noteRow
-                            attemptsSection
+                    ScrollViewReader { scroll in
+                        ScrollView {
+                            VStack(spacing: 12) {
+                                dateRow
+                                countRow
+                                sentRow
+                                reasonRow
+                                noteRow.id("note")
+                                attemptsSection
+                            }
+                            .padding(16)
                         }
-                        .padding(16)
+                        .scrollDismissesKeyboard(.interactively)
+                        .scrollIndicators(.hidden)
+                        .onChange(of: noteFocused) { _, focused in
+                            guard focused else { return }
+                            // 等键盘把可视区顶上去再滚，不然滚早了还会被盖住。
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(80))
+                                withAnimation(reduceMotion ? nil : .snappy) { scroll.scrollTo("note", anchor: .bottom) }
+                            }
+                        }
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .scrollIndicators(.hidden)
                 }
                 .animation(reduceMotion ? nil : .snappy, value: fallMode)
             }
@@ -116,12 +128,11 @@ struct SessionEditorView: View {
                     Button("取消", action: cancel)
                 }
             }
-            .overlay {
-                if let saved { savedOverlay(saved) }
-            }
+            .overlay { savedLayer }
         }
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(saved != nil || dictation.isRecording)
+        .onAppear(perform: debugShowSavedIfRequested)
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
             let base = noteBeforeDictation.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,7 +153,9 @@ struct SessionEditorView: View {
     private func fallPicker(height: CGFloat) -> some View {
         VStack(spacing: 8) {
             GeometryReader { geo in
-                LineSpotlight(line: line, fill: false, maxPixel: 1400, showNumbers: true, highlightedHoldID: draft.fallHoldID)
+                LineSpotlight(line: line, fill: false, maxPixel: 1400, showNumbers: true,
+                              fallMarks: draft.fallHoldID.map { [FallMark(holdID: $0, count: 1, recency: 1)] } ?? [],
+                              highlightedHoldID: draft.fallHoldID, focus: focus)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .contentShape(Rectangle())
                     .onTapGesture { location in tapImage(at: location, size: geo.size) }
@@ -190,7 +203,7 @@ struct SessionEditorView: View {
     }
 
     private func tapImage(at point: CGPoint, size: CGSize) {
-        let geo = SpotlightGeometry(size: size, aspect: line.wall?.aspectRatio ?? 0.75, fill: false)
+        let geo = SpotlightGeometry(size: size, aspect: line.wall?.aspectRatio ?? 0.75, fill: false, focus: focus)
         guard let hold = geo.hold(at: point, in: line.holds, slop: 18) else { return }
         Haptics.selection()
         if draft.fallHoldID == hold.id {
@@ -231,13 +244,30 @@ struct SessionEditorView: View {
             Text(line.name)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(.white)
-            Text("这条线没有照片，掉在哪用文字写一下。")
+            Text("这条线没有照片，掉在哪用文字写一下，可跳过。")
                 .font(.footnote)
                 .foregroundStyle(Color.subtle)
-            TextField("掉在哪（例如：大球、第三个点）", text: $fallText)
-                .font(.body)
-                .padding(12)
-                .background(Color.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            HStack(spacing: 10) {
+                Image(systemName: "hand.point.down.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(draft.trimmedFallText.isEmpty ? Color.subtle : Color.coral)
+                TextField("掉在哪（例如：大球、第三个点）", text: $draft.fallText)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .submitLabel(.done)
+                if !draft.fallText.isEmpty {
+                    Button {
+                        Haptics.light()
+                        draft.fallText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").font(.subheadline).foregroundStyle(Color.subtle)
+                    }
+                    .accessibilityLabel("清除掉在哪")
+                }
+            }
+            .padding(12)
+            .background(Color.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .animation(reduceMotion ? nil : .snappy, value: draft.fallText.isEmpty)
         }
         .padding(16)
         .padding(.top, 4)
@@ -325,7 +355,7 @@ struct SessionEditorView: View {
     }
 
     @ViewBuilder private var reasonRow: some View {
-        let skipReason = draft.sent && draft.fallHoldID == nil && draft.reason == nil && fallText.isEmpty
+        let skipReason = draft.sent && draft.fallHoldID == nil && draft.reason == nil && draft.trimmedFallText.isEmpty
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("为什么掉")
@@ -345,7 +375,7 @@ struct SessionEditorView: View {
             } else {
                 ChipFlow {
                     ForEach(FailReason.allCases, id: \.self) { reason in
-                        Chip(title: reason.title, selected: draft.reason == reason) {
+                        Chip(title: reason.title, selected: draft.reason == reason, compact: true) {
                             Haptics.selection()
                             draft.reason = draft.reason == reason ? nil : reason
                         }
@@ -397,9 +427,13 @@ struct SessionEditorView: View {
                 .foregroundStyle(dictation.isRecording ? .white : Color.accent)
                 .frame(width: 36, height: 36)
                 .background(dictation.isRecording ? Color.coral : Color.white.opacity(0.08), in: Circle())
-                .symbolEffect(.pulse, options: .repeating, isActive: dictation.isRecording)
+                .contentTransition(.symbolEffect(.replace))
+                .overlay(alignment: .topTrailing) {
+                    if dictation.isRecording { RecordingDot() .offset(x: 2, y: -2) }
+                }
         }
         .buttonStyle(.plain)
+        .animation(reduceMotion ? nil : .snappy, value: dictation.isRecording)
         .accessibilityLabel(dictation.isRecording ? "停止录音" : "语音输入")
     }
 
@@ -472,8 +506,8 @@ struct SessionEditorView: View {
                 .foregroundStyle(Color.subtle)
                 .frame(width: 30, alignment: .leading)
             HStack(spacing: 6) {
-                Chip(title: "掉", selected: !attempt.sent) { updateAttempt(index) { $0.sent = false } }
-                Chip(title: "上了", selected: attempt.sent) {
+                Chip(title: "掉", selected: !attempt.sent, compact: true) { updateAttempt(index) { $0.sent = false } }
+                Chip(title: "上了", selected: attempt.sent, compact: true) {
                     updateAttempt(index) { a in
                         a.sent = true
                         a.fallHoldID = nil
@@ -545,11 +579,12 @@ struct SessionEditorView: View {
         let day = Calendar.current.startOfDay(for: date)
         var final = draft
         if !trackEach { final.attempts = [] }
-        let pureFallText = fallText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !line.hasPhoto {
+        if line.hasPhoto {
+            // 有照片：掉在哪只认点
+            final.fallText = ""
+        } else {
             final.fallHoldID = nil
             final.fallStepIndex = nil
-            final.note = NoPhotoFall.encode(fall: pureFallText, note: draft.note)
         }
 
         let target: Session
@@ -560,7 +595,7 @@ struct SessionEditorView: View {
             target = existing
         case .mergeInto(let id, let removing):
             guard let other = line.sessions.first(where: { $0.id == id }) else { return }
-            final = final.merged(into: SessionDraft(session: other))
+            final = final.merged(into: SessionDraft(session: other, decodeLegacyFall: !line.hasPhoto))
             if let removing, let old = line.sessions.first(where: { $0.id == removing }) {
                 store.removeSession(old, from: line)
             }
@@ -570,13 +605,8 @@ struct SessionEditorView: View {
             target = store.newSession(for: line, date: day)
         }
 
-        store.write(final, to: target, date: day)
-        store.commitSession(target, line: line, fallLabel: line.hasPhoto ? line.label(for: target.fallHoldID) : nil)
-        if !line.hasPhoto, !pureFallText.isEmpty, target.hasContent,
-           let text = ReminderComposer.compose(fallLabel: pureFallText, reason: target.reason, note: draft.trimmedNote) {
-            // 无照片线：提醒里把文字版“掉在哪”放到最前面
-            store.updateReminder(line, text: text)
-        }
+        // 写入 + 提醒：点的编号优先，无照片线用 fallText。
+        store.commit(final, to: target, line: line, date: day)
         Haptics.success()
 
         let reminder = target.hasContent ? line.reminderText : nil
@@ -584,7 +614,7 @@ struct SessionEditorView: View {
             dismiss()
             return
         }
-        withAnimation(reduceMotion ? nil : .snappy) {
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15)) {
             saved = SavedState(reminder: reminder, notice: notice)
         }
         autoDismiss = Task { @MainActor in
@@ -594,11 +624,38 @@ struct SessionEditorView: View {
         }
     }
 
-    private func savedOverlay(_ state: SavedState) -> some View {
+    /// 截图用：`-sessionDemoSaved` 启动后直接停在“已保存 + 提醒卡”这一帧。只在 DEBUG 生效。
+    private func debugShowSavedIfRequested() {
+        #if DEBUG
+        guard CommandLine.arguments.contains("-sessionDemoSaved") else { return }
+        let reminder = line.reminderText ?? ReminderComposer.compose(fallLabel: line.label(for: draft.fallHoldID) ?? draft.trimmedFallText,
+                                                                   reason: draft.reason, note: draft.trimmedNote)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                saved = SavedState(reminder: reminder ?? "掉在 ⑤ · 身体 · 贴墙再翻", notice: nil)
+            }
+        }
+        #endif
+    }
+
+    /// 保存后的遮罩 + 提醒卡。两层各自带转场：遮罩淡入，卡片按 §2 的 spring 弹出。
+    @ViewBuilder private var savedLayer: some View {
         ZStack {
-            Color.black.opacity(0.45)
-                .ignoresSafeArea()
-                .onTapGesture { if !editingReminder { finish() } }
+            if saved != nil {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { if !editingReminder { finish() } }
+                    .transition(.opacity)
+            }
+            if let saved {
+                savedCard(saved)
+                    .transition(.scale(scale: 0.88).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func savedCard(_ state: SavedState) -> some View {
             VStack(alignment: .leading, spacing: 12) {
                 Label(state.notice ?? "已保存", systemImage: "checkmark.circle.fill")
                     .font(.headline)
@@ -648,9 +705,8 @@ struct SessionEditorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.08)))
+            .shadow(color: .black.opacity(0.45), radius: 30, y: 12)
             .padding(24)
-        }
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
     private func finish() {
@@ -677,6 +733,26 @@ struct SessionEditorView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Color.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// 录音中的红点：脉动是在解释“正在听”这个状态；减少动态时只静止显示。
+private struct RecordingDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.coral)
+            .frame(width: 8, height: 8)
+            .overlay(Circle().strokeBorder(Color.ink, lineWidth: 1.5))
+            .scaleEffect(pulsing ? 1.35 : 1)
+            .opacity(pulsing ? 0.65 : 1)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulsing = true }
+            }
+            .accessibilityHidden(true)
     }
 }
 

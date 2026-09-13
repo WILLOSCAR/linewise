@@ -6,7 +6,6 @@ struct MergeTargetPicker: View {
     var onPick: (Line) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var pending: Line?
 
     private var candidates: [Line] {
         let walls = line.wall?.gym?.walls ?? (line.wall.map { [$0] } ?? [])
@@ -48,8 +47,12 @@ struct MergeTargetPicker: View {
                                 .foregroundStyle(Color.subtle)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.bottom, 4)
+                            // 选中即合并：这一步可撤销，不再弹确认框。
                             ForEach(candidates) { candidate in
-                                Button { pending = candidate } label: { row(candidate) }
+                                Button {
+                                    Haptics.selection()
+                                    onPick(candidate)
+                                } label: { row(candidate) }
                                     .buttonStyle(.plain)
                             }
                         }
@@ -62,17 +65,6 @@ struct MergeTargetPicker: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-            }
-            .confirmationDialog(
-                "合并到「\(pending?.name ?? "")」？",
-                isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("合并", role: .destructive) {
-                    if let target = pending { onPick(target) }
-                }
-            } message: {
-                Text("本条线的记录全部挪过去；这张聚光灯图会保留作为备选。")
             }
         }
         .preferredColorScheme(.dark)

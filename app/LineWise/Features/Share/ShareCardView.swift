@@ -10,8 +10,6 @@ struct ShareCardModel: Hashable {
     var gradeText: String?
     var status: LineStatus
     var cycle: Int
-    var visitCount: Int
-    var totalAttempts: Int
     var reminderText: String?
     var reminderVerified: Bool
     var holds: [Hold]
@@ -19,11 +17,27 @@ struct ShareCardModel: Hashable {
     var finishHoldID: UUID?
     /// 墙照片宽高比（宽/高）。
     var aspect: Double
-    var actualSequence: ClimbSequence?
+    /// 全部有效记录，按日期升序。
+    var visits: [ShareVisit]
     var createdAt: Date
-    var lastVisit: Date?
+    var actualSequence: ClimbSequence? = nil
+    var profile: BodyProfile = .default
 
-    /// 第一行：墙区 · 难度；两者都没有时退回线名。
+    var visitCount: Int { visits.count }
+    var totalAttempts: Int { visits.reduce(0) { $0 + $1.attemptCount } }
+    var lastVisit: Date? { visits.map(\.date).max() }
+    var hasReminder: Bool { reminderText?.isEmpty == false }
+    var hasHolds: Bool { !holds.isEmpty }
+
+    /// 大字右侧的小字：墙区 · 难度。线名里已经包含墙区时不再重复。
+    var subtitleText: String {
+        var parts: [String] = []
+        if let areaName, !areaName.isEmpty, !nameContains(areaName) { parts.append(areaName) }
+        if let gradeText, !gradeText.isEmpty, !nameContains(gradeText) { parts.append(gradeText) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 兼容旧文案：墙区 · 难度；两者都没有时退回线名。
     var titleText: String {
         var parts: [String] = []
         if let areaName, !areaName.isEmpty { parts.append(areaName) }
@@ -31,344 +45,381 @@ struct ShareCardModel: Hashable {
         return parts.isEmpty ? name : parts.joined(separator: " · ")
     }
 
-    /// 第二行：来了 N 次 · 共 M 次尝试。
+    /// 第二行：来了 N 次 · 共 M 次尝试（状态另外拼在后面）。
     var visitText: String {
         visitCount == 0 ? "还没有记录" : "来了 \(visitCount) 次 · 共 \(totalAttempts) 次尝试"
+    }
+
+    /// 底部小字：建于 / 最近。
+    var dateText: String {
+        var parts = ["建于 " + DateText.short(createdAt)]
+        if let last = lastVisit, !Calendar.current.isDate(last, inSameDayAs: createdAt) {
+            parts.append("最近 " + DateText.short(last))
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// 分享面板里的标题。
     var shareTitle: String { "\(titleText) · \(status.title) · 线感" }
 
-    var hasReminder: Bool { reminderText?.isEmpty == false }
+    var fallMarks: [FallMark] { ShareSnapshotBuilder.fallMarks(visits: visits) }
+
+    func label(for holdID: UUID?) -> String? {
+        guard let holdID, let n = HoldNumbering.numbers(for: holds)[holdID] else { return nil }
+        return HoldLabel.circled(n)
+    }
+
+    private func nameContains(_ s: String) -> Bool {
+        let strip: (String) -> String = { $0.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "·", with: "") }
+        return strip(name).contains(strip(s))
+    }
 }
 
 extension ShareCardModel {
-    init(line: Line) {
+    init(line: Line, profile: BodyProfile = .default) {
         self.init(
             name: line.name,
             areaName: line.wall?.areaName,
             gradeText: line.gradeText,
             status: line.status,
             cycle: line.cycle,
-            visitCount: line.visitCount,
-            totalAttempts: line.totalAttempts,
             reminderText: line.reminderText,
             reminderVerified: line.reminderVerified,
             holds: line.holds,
             startHoldIDs: line.startHoldIDs,
             finishHoldID: line.finishHoldID,
             aspect: line.wall?.aspectRatio ?? 0.75,
-            actualSequence: line.actualSequence,
+            visits: line.orderedSessions.map(ShareVisit.init(session:)),
             createdAt: line.createdAt,
-            lastVisit: line.latestSession?.date
+            actualSequence: line.actualSequence,
+            profile: profile
         )
+    }
+}
+
+// MARK: - 版式
+
+/// 分享图的尺寸计算：图占多高、快照带每格多大。纯逻辑，可测。
+struct ShareCardLayout: Equatable {
+    static let size = CGSize(width: 540, height: 960)
+    static let margin: CGFloat = 32
+    static let cellSpacing: CGFloat = 6
+    static let maxCellWidth: CGFloat = 72
+    /// 图最矮/最高（pt）。默认内容下约 62%。
+    static let minArtworkHeight: CGFloat = 520
+    static let maxArtworkHeight: CGFloat = 700
+    /// 一行提醒能放下的字数（22pt 半粗、476pt 宽）。
+    static let reminderCharsPerLine = 21
+
+    static var contentWidth: CGFloat { size.width - margin * 2 }
+
+    let snapshotCount: Int
+    let reminderLines: Int
+    let cellSize: CGSize
+    let textBlockHeight: CGFloat
+    let artworkHeight: CGFloat
+
+    init(snapshotCount: Int, reminder: String?) {
+        self.snapshotCount = snapshotCount
+        let trimmed = reminder?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        reminderLines = trimmed.isEmpty ? 0 : (trimmed.count > Self.reminderCharsPerLine ? 2 : 1)
+        cellSize = Self.cellSize(count: snapshotCount)
+
+        var h: CGFloat = 22 // 顶部留白
+        h += 40 // 大字
+        h += 8 + 26 // 次数行
+        if reminderLines > 0 { h += 10 + 28 * CGFloat(reminderLines) }
+        if snapshotCount > 0 { h += 18 + cellSize.height + 6 + 30 }
+        h += 18 + 18 // 底部小字
+        h += 28 // 底部留白
+        textBlockHeight = h
+        artworkHeight = min(Self.maxArtworkHeight, max(Self.minArtworkHeight, Self.size.height - h))
+    }
+
+    var artworkSize: CGSize { CGSize(width: Self.size.width, height: artworkHeight) }
+
+    static func cellSize(count: Int) -> CGSize {
+        guard count > 0 else { return .zero }
+        let n = CGFloat(count)
+        let w = min(maxCellWidth, floor((contentWidth - cellSpacing * (n - 1)) / n))
+        return CGSize(width: w, height: floor(w * 4 / 3))
     }
 }
 
 // MARK: - 分享图
 
-/// 分享图：固定 9:16 竖图。以 540×960 pt 布局、2x 渲染，输出 1080×1920 px，
-/// 这样 `SpotlightImage` 里按 pt 设计的编号字号、描边宽度在图里仍然清晰。
+/// 分享图：固定 9:16 竖图。以 540×960 pt 布局、2x 渲染，输出 1080×1920 px。
+/// 上 62% 左右是自动取景到这条线的聚光灯图（描边/编号按 `scale: 2` 放大），下面是文字与快照带。
 struct ShareCardView: View {
     /// 布局尺寸（pt）。
-    static let size = CGSize(width: 540, height: 960)
+    static let size = ShareCardLayout.size
     /// 输出尺寸（px）。
     static let pixelSize = CGSize(width: 1080, height: 1920)
+    /// 大画布上描边/编号/掉落点的放大倍数。
+    static let markerScale: CGFloat = 2
 
     let model: ShareCardModel
     let image: UIImage?
-    let profile: BodyProfile
+    var includesSnapshots = true
 
-    init(model: ShareCardModel, image: UIImage?, profile: BodyProfile) {
+    init(model: ShareCardModel, image: UIImage?) {
         self.model = model
         self.image = image
-        self.profile = profile
     }
 
-    init(line: Line, image: UIImage?, profile: BodyProfile) {
-        self.init(model: ShareCardModel(line: line), image: image, profile: profile)
+    init(line: Line, image: UIImage?) {
+        self.init(model: ShareCardModel(line: line), image: image)
     }
 
-    // 版式常量
-    private let margin: CGFloat = 32
-    private let cellSpacing: CGFloat = 6
-    private let maxCellWidth: CGFloat = 84
-    private let maxCellHeight: CGFloat = 112
-
-    private var contentWidth: CGFloat { Self.size.width - margin * 2 }
-    private var hasPhotoArtwork: Bool { !model.holds.isEmpty }
-
-    private var snapshots: [ShareSnapshot] {
-        guard hasPhotoArtwork else { return [] }
-        return ShareSnapshotBuilder.snapshots(
-            holds: model.holds, startHoldIDs: model.startHoldIDs, sequence: model.actualSequence,
-            aspect: model.aspect, profile: profile
-        )
+    private var snapshots: [ShareSnapshot] { ShareSnapshotBuilder.snapshots(visits: model.visits) }
+    private var sequenceSnapshots: [ShareSequenceSnapshot] {
+        ShareSnapshotBuilder.sequenceSnapshots(holds: model.holds, startHoldIDs: model.startHoldIDs,
+                                              sequence: model.actualSequence, aspect: model.aspect, profile: model.profile)
     }
+    private var layout: ShareCardLayout { ShareCardLayout(snapshotCount: snapshots.count, reminder: model.reminderText) }
 
     var body: some View {
-        let snaps = snapshots
-        VStack(alignment: .leading, spacing: 0) {
-            // 内容偏上：上方留白最多 140，其余给下方。
-            Spacer(minLength: 0).frame(maxHeight: 140)
-            kicker
-            artwork(snapCount: snaps.count)
-                .padding(.top, 14)
-            textBlock
-                .padding(.top, 26)
-            if !snaps.isEmpty {
-                strip(snaps)
-                    .padding(.top, 26)
+        let sequenceSnaps = includesSnapshots ? sequenceSnapshots : []
+        let snaps = includesSnapshots && sequenceSnaps.isEmpty ? snapshots : []
+        let layout = ShareCardLayout(snapshotCount: sequenceSnaps.count + snaps.count, reminder: model.reminderText)
+        VStack(spacing: 0) {
+            artwork(layout)
+            VStack(alignment: .leading, spacing: 0) {
+                headline
+                visitLine
+                    .padding(.top, 8)
+                if let reminder = model.reminderText, !reminder.isEmpty {
+                    reminderRow(reminder)
+                        .padding(.top, 10)
+                }
+                if !sequenceSnaps.isEmpty {
+                    sequenceStrip(sequenceSnaps, cell: layout.cellSize)
+                        .padding(.top, 18)
+                } else if !snaps.isEmpty {
+                    strip(snaps, cell: layout.cellSize)
+                        .padding(.top, 18)
+                }
+                Spacer(minLength: 18)
+                footer
             }
-            Spacer(minLength: 0)
-            brandRow
+            .padding(.horizontal, ShareCardLayout.margin)
+            .padding(.top, 22)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(margin)
         .frame(width: Self.size.width, height: Self.size.height)
-        .background { backdrop }
+        .background(Color.ink)
         .environment(\.colorScheme, .dark)
-    }
-
-    // MARK: 背景
-
-    private var backdrop: some View {
-        ZStack {
-            Color.ink
-            RadialGradient(
-                colors: [Color.accent.opacity(0.11), Color.accent.opacity(0)],
-                center: UnitPoint(x: 0.5, y: 0.22), startRadius: 0, endRadius: 460
-            )
-        }
-    }
-
-    // MARK: 顶部小字：线名 · 日期
-
-    private var kicker: some View {
-        HStack(alignment: .firstTextBaseline) {
-            if model.titleText != model.name {
-                Text(model.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 12)
-            Text(dateText)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(Color.subtle)
-                .monospacedDigit()
-        }
-    }
-
-    private var dateText: String {
-        if let last = model.lastVisit { return "最近 " + DateText.short(last) }
-        return "建于 " + DateText.short(model.createdAt)
     }
 
     // MARK: 图区
 
-    /// 文字与快照带之外留给图的最大高度。
-    private func artworkMaxHeight(snapCount: Int) -> CGFloat {
-        let brand: CGFloat = 20 + 12
-        let kickerH: CGFloat = 20 + 14
-        var text: CGFloat = 26 + 42 + 8 + 26
-        if model.hasReminder { text += 10 + 56 }
-        var strip: CGFloat = 0
-        if snapCount > 0 { strip = 26 + 20 + 8 + cellSize(count: snapCount).height + 6 + 16 }
-        return Self.size.height - margin * 2 - brand - kickerH - text - strip
-    }
-
-    private func artworkSize(snapCount: Int) -> CGSize {
-        let maxH = max(200, artworkMaxHeight(snapCount: snapCount))
-        guard hasPhotoArtwork else {
-            return CGSize(width: contentWidth, height: min(maxH, 400))
-        }
-        let a = max(model.aspect, 0.2)
-        let naturalH = contentWidth / a
-        if naturalH <= maxH { return CGSize(width: contentWidth, height: naturalH) }
-        return CGSize(width: maxH * a, height: maxH)
-    }
-
-    private func artwork(snapCount: Int) -> some View {
-        let size = artworkSize(snapCount: snapCount)
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        return HStack {
-            Spacer(minLength: 0)
-            Group {
-                if hasPhotoArtwork {
-                    SpotlightImage(
-                        image: image,
-                        aspect: model.aspect,
-                        holds: model.holds,
-                        startHoldIDs: model.startHoldIDs,
-                        finishHoldID: model.finishHoldID,
-                        fill: false,
-                        showNumbers: true,
-                        dim: 0.66
-                    )
-                } else {
-                    noPhotoArtwork
-                }
+    private func artwork(_ layout: ShareCardLayout) -> some View {
+        let size = layout.artworkSize
+        return ZStack {
+            if model.hasHolds {
+                SpotlightImage(
+                    image: image,
+                    aspect: model.aspect,
+                    holds: model.holds,
+                    startHoldIDs: model.startHoldIDs,
+                    finishHoldID: model.finishHoldID,
+                    fallMarks: model.fallMarks,
+                    fill: true,
+                    showNumbers: true,
+                    dim: 0.66,
+                    focus: SpotlightGeometry.fillingFocusRect(for: model.holds, aspect: model.aspect, viewSize: size, padding: 0.3, minSize: 0.5),
+                    scale: Self.markerScale
+                )
+            } else {
+                noHoldsArtwork
             }
-            .frame(width: size.width, height: size.height)
-            .clipShape(shape)
-            .overlay(shape.strokeBorder(.white.opacity(0.10), lineWidth: 1))
-            .shadow(color: .black.opacity(0.45), radius: 22, y: 10)
-            Spacer(minLength: 0)
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .overlay(alignment: .bottom) {
+            // 图的下沿融进底色，文字不压图
+            LinearGradient(colors: [Color.ink.opacity(0), Color.ink.opacity(0.85), Color.ink], startPoint: .top, endPoint: .bottom)
+                .frame(height: 64)
         }
     }
 
-    /// 无照片的线：暗底 + 线名大字 + 一束光。
-    private var noPhotoArtwork: some View {
+    /// 不拍照、也没点位的线：同款底板 + 一束光 + 难度。
+    private var noHoldsArtwork: some View {
         ZStack {
-            LinearGradient(colors: [Color.panelElevated, Color.ink], startPoint: .top, endPoint: .bottom)
+            SpotlightImage(image: nil, aspect: model.aspect, holds: [], fill: true, showNumbers: false, dim: 0)
             Circle()
-                .fill(RadialGradient(colors: [Color.accent.opacity(0.42), Color.accent.opacity(0)], center: .center, startRadius: 0, endRadius: 150))
-                .frame(width: 300, height: 300)
-                .offset(y: -30)
-            VStack(spacing: 12) {
-                Text(model.name)
-                    .font(.system(size: 40, weight: .bold))
+                .fill(RadialGradient(colors: [Color.accent.opacity(0.38), Color.accent.opacity(0)], center: .center, startRadius: 0, endRadius: 190))
+                .frame(width: 380, height: 380)
+                .offset(y: -40)
+            VStack(spacing: 14) {
+                Text(model.gradeText?.isEmpty == false ? model.gradeText! : "?")
+                    .font(.system(size: 96, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.5)
-                if let grade = model.gradeText, !grade.isEmpty {
-                    Text(grade)
-                        .font(.system(size: 22, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.ink)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 5)
-                        .background(Color.accent, in: Capsule())
-                }
-            }
-            .padding(.horizontal, 32)
-        }
-    }
-
-    // MARK: 三行字
-
-    private var textBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(model.titleText)
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(.white)
+                    .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                statusChip
-                if model.cycle > 1 {
-                    chip("第 \(model.cycle) 轮", prominent: false)
-                }
+                    .minimumScaleFactor(0.5)
+                Text("没拍照的线")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Color.subtle)
             }
-            Text(model.visitText)
-                .font(.system(size: 19, weight: .medium))
+            .offset(y: -30)
+        }
+    }
+
+    // MARK: 文字
+
+    /// 线名 + 墙区 · 难度，一行大字。
+    private var headline: some View {
+        let sub = model.subtitleText
+        var text = Text(model.name)
+            .font(.system(size: 34, weight: .bold))
+            .foregroundStyle(.white)
+        if !sub.isEmpty {
+            text = text + Text("  " + sub)
+                .font(.system(size: 20, weight: .medium, design: .rounded))
                 .foregroundStyle(Color.subtle)
-                .monospacedDigit()
-            if let reminder = model.reminderText, !reminder.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: model.reminderVerified ? "checkmark.seal.fill" : "lightbulb.fill")
-                        .font(.system(size: 19, weight: .semibold))
-                        .padding(.top, 3)
-                    Text(reminder)
-                        .font(.system(size: 21, weight: .semibold))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundStyle(Color.accent)
-                .padding(.top, 4)
-            }
         }
+        return text
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .frame(height: 40, alignment: .leading)
     }
 
-    private var statusChip: some View {
-        chip(model.status.title, systemImage: model.status.symbol, prominent: model.status == .sent)
+    /// 来了 N 次 · 共 M 次尝试 · 上了/进行中。
+    private var visitLine: some View {
+        let base = Text(model.visitText + " · ")
+            .foregroundStyle(Color.subtle)
+        let statusColor: Color = model.status == .sent ? .white : Color.subtle
+        var status = Text("\(Image(systemName: model.status.symbol)) \(model.status.title)")
+            .foregroundStyle(statusColor)
+        if model.status == .sent { status = status.fontWeight(.semibold) }
+        var text = base + status
+        if model.cycle > 1 {
+            text = text + Text(" · 第 \(model.cycle) 轮").foregroundStyle(Color.subtle)
+        }
+        return text
+            .font(.system(size: 20, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(height: 26, alignment: .leading)
     }
 
-    private func chip(_ title: String, systemImage: String? = nil, prominent: Bool) -> some View {
-        HStack(spacing: 4) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 12, weight: .bold)) }
-            Text(title)
+    private func reminderRow(_ reminder: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: model.reminderVerified ? "checkmark.seal.fill" : "lightbulb.fill")
+                .font(.system(size: 20, weight: .semibold))
+            Text(reminder)
+                .font(.system(size: 22, weight: .semibold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 14, weight: .semibold))
-        .padding(.horizontal, 11)
-        .padding(.vertical, 6)
-        .background(prominent ? Color.accent : Color.white.opacity(0.12), in: Capsule())
-        .foregroundStyle(prominent ? Color.ink : Color.white.opacity(0.9))
-        .lineLimit(1)
-        .fixedSize()
+        .foregroundStyle(Color.accent)
+        .accessibilityLabel(model.reminderVerified ? "验证过的提醒：\(reminder)" : "提醒：\(reminder)")
     }
 
     // MARK: 快照带
 
-    private func cellSize(count: Int) -> CGSize {
-        let n = CGFloat(max(count, 1))
-        let w = min(maxCellWidth, floor((contentWidth - cellSpacing * (n - 1)) / n))
-        let h = min(maxCellHeight, floor(w / max(model.aspect, 0.2)))
-        return CGSize(width: w, height: h)
+    private func sequenceStrip(_ snaps: [ShareSequenceSnapshot], cell: CGSize) -> some View {
+        HStack(alignment: .top, spacing: ShareCardLayout.cellSpacing) {
+            ForEach(snaps) { snap in
+                VStack(spacing: 6) {
+                    SpotlightImage(image: image, aspect: model.aspect, holds: model.holds,
+                                   startHoldIDs: model.startHoldIDs, finishHoldID: model.finishHoldID,
+                                   pose: snap.pose, poseIsoAspect: model.aspect, showNumbers: false,
+                                   dim: 0.7, ringWidth: 1, focus: SequenceScene.focusRect(for: model.holds))
+                        .frame(width: cell.width, height: cell.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    VStack(spacing: 2) {
+                        Text("第 \(snap.stepIndex + 1) 步")
+                        Text(snap.step.limb.title + "→" + (model.label(for: snap.step.holdID) ?? "地面"))
+                            .foregroundStyle(Color.subtle)
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: cell.width)
+                }
+            }
+        }
+        .accessibilityLabel("实际顺序，\(snaps.count) 个快照")
     }
 
-    private func strip(_ snaps: [ShareSnapshot]) -> some View {
-        let total = model.actualSequence?.steps.count ?? snaps.count
-        let cell = cellSize(count: snaps.count)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "figure.climbing")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("实际顺序")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(total > snaps.count ? "共 \(total) 步 · 抽 \(snaps.count) 步" : "\(total) 步")
-                    .font(.system(size: 14, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .opacity(0.75)
-            }
-            .foregroundStyle(Color.subtle)
-            HStack(alignment: .top, spacing: cellSpacing) {
-                ForEach(snaps) { snap in
-                    snapshotCell(snap, size: cell)
-                }
+    private func strip(_ snaps: [ShareSnapshot], cell: CGSize) -> some View {
+        HStack(alignment: .top, spacing: ShareCardLayout.cellSpacing) {
+            ForEach(snaps) { snap in
+                snapshotCell(snap, size: cell)
             }
         }
     }
 
     private func snapshotCell(_ snap: ShareSnapshot, size: CGSize) -> some View {
         let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let numbers = HoldNumbering.numbers(for: model.holds)
-        let holdLabel = numbers[snap.step.holdID].map(HoldLabel.circled) ?? ""
-        return VStack(spacing: 4) {
-            SpotlightImage(
-                image: image,
-                aspect: model.aspect,
-                holds: model.holds,
-                highlightedHoldID: snap.step.holdID,
-                pose: snap.pose,
-                poseIsoAspect: model.aspect,
-                fill: false,
-                showNumbers: false,
-                dim: 0.72,
-                ringWidth: 1.5
-            )
+        let visit = snap.visit
+        let caption = ShareSnapshotBuilder.caption(for: visit, label: model.label(for:))
+        return VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                if model.hasHolds {
+                    SpotlightImage(
+                        image: image,
+                        aspect: model.aspect,
+                        holds: model.holds,
+                        fallMarks: visit.fallHoldID.map { [FallMark(holdID: $0, count: 1, recency: 1)] } ?? [],
+                        highlightedHoldID: visit.fallHoldID,
+                        fill: true,
+                        showNumbers: false,
+                        dim: visit.fallHoldID == nil ? 0.6 : 0.74,
+                        ringWidth: 1.2,
+                        focus: SpotlightGeometry.fillingFocusRect(for: model.holds, aspect: model.aspect, viewSize: size, padding: 0.22, minSize: 0.4)
+                    )
+                } else {
+                    ZStack {
+                        SpotlightImage(image: nil, aspect: 0.75, holds: [], fill: true, showNumbers: false, dim: 0)
+                        Text(visit.attemptCount > 0 ? "\(visit.attemptCount)" : "·")
+                            .font(.system(size: size.width * 0.42, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .monospacedDigit()
+                    }
+                }
+                if visit.sent {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.ink)
+                        .padding(4)
+                        .background(Color.white, in: Circle())
+                        .padding(4)
+                }
+            }
             .frame(width: size.width, height: size.height)
             .clipShape(shape)
-            .overlay(shape.strokeBorder(.white.opacity(0.18), lineWidth: 1))
-            HStack(spacing: 2) {
-                Text("\(snap.stepNumber)")
-                    .foregroundStyle(Color.accent)
-                Text(snap.step.limb.shortTitle + holdLabel)
-                    .foregroundStyle(Color.subtle)
+            .overlay(shape.strokeBorder(.white.opacity(0.14), lineWidth: 1))
+            VStack(spacing: 2) {
+                Text(DateText.short(visit.date))
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text(caption.isEmpty ? " " : caption)
+                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(visit.sent ? .white : Color.subtle)
             }
-            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .frame(width: size.width)
         }
     }
 
-    // MARK: 品牌
+    // MARK: 底部
 
-    private var brandRow: some View {
-        HStack {
-            Spacer()
+    private var footer: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(model.dateText)
+                .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.subtle.opacity(0.8))
+                .monospacedDigit()
+                .lineLimit(1)
+            Spacer(minLength: 12)
             HStack(spacing: 7) {
                 Circle()
                     .fill(Color.accent)
@@ -376,9 +427,10 @@ struct ShareCardView: View {
                     .shadow(color: Color.accent.opacity(0.9), radius: 5)
                 Text("线感 LineWise")
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(0.6))
             }
         }
+        .frame(height: 18)
     }
 }
 
@@ -395,12 +447,14 @@ enum ShareCardRenderer {
         return renderer.uiImage
     }
 
-    static func render(line: Line, image: UIImage?, profile: BodyProfile) -> UIImage? {
-        render(ShareCardView(line: line, image: image, profile: profile))
+    static func render(line: Line, image: UIImage?) -> UIImage? {
+        render(ShareCardView(line: line, image: image))
     }
 
-    static func render(model: ShareCardModel, image: UIImage?, profile: BodyProfile) -> UIImage? {
-        render(ShareCardView(model: model, image: image, profile: profile))
+    static func render(model: ShareCardModel, image: UIImage?, includesSnapshots: Bool = true) -> UIImage? {
+        var card = ShareCardView(model: model, image: image)
+        card.includesSnapshots = includesSnapshots
+        return render(card)
     }
 }
 
@@ -408,28 +462,25 @@ enum ShareCardRenderer {
 
 #if DEBUG
 extension ShareCardModel {
-    /// 预览/测试用的演示数据：一面 3:4 的墙、7 个点、3 次记录、一个 10 步的实际顺序。
-    static func demo(withPhoto: Bool = true, withSequence: Bool = true, reminder: String? = "掉在 ⑤ · 脚 · 左手抓到就要顶髌") -> ShareCardModel {
+    /// 预览/测试用的演示数据：一面 3:4 的墙、7 个点、3 次记录。
+    static func demo(withPhoto: Bool = true, visitCount: Int = 3, reminder: String? = "掉在 ⑤ · 脚 · 左手抓到就要顶髌") -> ShareCardModel {
         let holds = [
             Hold(x: 0.30, y: 0.90, r: 0.04), Hold(x: 0.42, y: 0.76, r: 0.038), Hold(x: 0.36, y: 0.63, r: 0.045),
             Hold(x: 0.55, y: 0.52, r: 0.04), Hold(x: 0.48, y: 0.40, r: 0.036), Hold(x: 0.62, y: 0.27, r: 0.04),
             Hold(x: 0.56, y: 0.12, r: 0.042),
         ]
         let ordered = HoldNumbering.ordered(holds)
-        var seq: ClimbSequence?
-        if withSequence {
-            seq = ClimbSequence(steps: [
-                SequenceStep(limb: .rightFoot, holdID: ordered[0].id),
-                SequenceStep(limb: .leftHand, holdID: ordered[1].id),
-                SequenceStep(limb: .leftFoot, holdID: ordered[0].id),
-                SequenceStep(limb: .rightHand, holdID: ordered[2].id),
-                SequenceStep(limb: .rightFoot, holdID: ordered[1].id),
-                SequenceStep(limb: .leftHand, holdID: ordered[3].id),
-                SequenceStep(limb: .leftFoot, holdID: ordered[2].id),
-                SequenceStep(limb: .rightHand, holdID: ordered[4].id),
-                SequenceStep(limb: .leftHand, holdID: ordered[5].id),
-                SequenceStep(limb: .rightHand, holdID: ordered[6].id),
-            ])
+        let cal = Calendar.current
+        let visits: [ShareVisit] = (0..<visitCount).map { i in
+            let date = cal.startOfDay(for: cal.date(byAdding: .day, value: -(visitCount - i) * 3, to: .now)!)
+            let isLast = i == visitCount - 1
+            return ShareVisit(
+                date: date,
+                attemptCount: 6 - min(i, 4),
+                sent: false,
+                fallHoldID: withPhoto ? ordered[min(2 + i / 2, ordered.count - 1)].id : nil,
+                fallText: withPhoto ? nil : (isLast ? "第三个点" : nil)
+            )
         }
         return ShareCardModel(
             name: withPhoto ? "斜板墙 · 蓝" : "角落那条黄的",
@@ -437,17 +488,14 @@ extension ShareCardModel {
             gradeText: "V3",
             status: .projecting,
             cycle: 1,
-            visitCount: 3,
-            totalAttempts: 13,
             reminderText: reminder,
             reminderVerified: false,
             holds: withPhoto ? holds : [],
             startHoldIDs: [ordered[0].id],
             finishHoldID: ordered[6].id,
             aspect: 0.75,
-            actualSequence: seq,
-            createdAt: Calendar.current.date(byAdding: .day, value: -12, to: .now)!,
-            lastVisit: Calendar.current.date(byAdding: .day, value: -1, to: .now)!
+            visits: visits,
+            createdAt: cal.date(byAdding: .day, value: -(visitCount * 3 + 2), to: .now)!
         )
     }
 
@@ -493,19 +541,30 @@ extension ShareCardModel {
     }
 }
 
-#Preview("分享图 · 有照片 + 顺序") {
+#Preview("分享图 · 有照片 + 3 次") {
     let model = ShareCardModel.demo()
     ScrollView {
-        ShareCardView(model: model, image: ShareCardModel.demoWallImage(holds: model.holds), profile: .default)
+        ShareCardView(model: model, image: ShareCardModel.demoWallImage(holds: model.holds))
             .scaleEffect(0.7, anchor: .top)
             .frame(width: 540 * 0.7, height: 960 * 0.7)
     }
     .background(Color.black)
 }
 
+#Preview("分享图 · 12 次 → 8 格") {
+    var model = ShareCardModel.demo(visitCount: 12)
+    model.status = .sent
+    model.visits[model.visits.count - 1].sent = true
+    model.visits[model.visits.count - 1].fallHoldID = nil
+    return ShareCardView(model: model, image: ShareCardModel.demoWallImage(holds: model.holds))
+        .scaleEffect(0.7, anchor: .top)
+        .frame(width: 540 * 0.7, height: 960 * 0.7)
+        .background(Color.black)
+}
+
 #Preview("分享图 · 无照片") {
-    let model = ShareCardModel.demo(withPhoto: false, withSequence: false, reminder: nil)
-    ShareCardView(model: model, image: nil, profile: .default)
+    let model = ShareCardModel.demo(withPhoto: false, visitCount: 2, reminder: "掉在第三个点 · 没力")
+    ShareCardView(model: model, image: nil)
         .scaleEffect(0.7, anchor: .top)
         .frame(width: 540 * 0.7, height: 960 * 0.7)
         .background(Color.black)

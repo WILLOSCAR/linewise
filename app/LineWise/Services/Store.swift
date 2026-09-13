@@ -232,7 +232,7 @@ struct Store {
             line.reminderVerified = true
         case .differentProblem:
             // 提醒由这条记录的内容替换（若有）；没有内容时保留旧提醒但不再标记验证
-            if session.hasContent, let text = ReminderComposer.compose(fallLabel: line.label(for: session.fallHoldID), reason: session.reason, note: session.note) {
+            if session.hasContent, let text = ReminderComposer.compose(fallLabel: line.label(for: session.fallHoldID) ?? session.reviewText.fall, reason: session.reason, note: session.reviewText.note) {
                 line.reminderText = text
                 line.reminderSessionID = session.id
             }

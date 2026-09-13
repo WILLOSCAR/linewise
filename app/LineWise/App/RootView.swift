@@ -10,16 +10,25 @@ struct RootView: View {
     @State private var showBuilder = false
     @State private var showSettings = false
     @State private var showIntro = false
+    /// 从首页卡片点进去的那条线：线路页用缩放转场从卡片放大进来（iOS 18+）；其他入口普通 push。
+    @State private var zoomSourceLineID: UUID?
+    @Namespace private var homeZoom
 
     var body: some View {
         NavigationStack(path: $path) {
             HomeView(
-                onOpen: { line in path.append(line) },
+                onOpen: { line in
+                    zoomSourceLineID = line.id
+                    path.append(line)
+                },
                 onAdd: { showBuilder = true },
-                onSettings: { showSettings = true }
+                onSettings: { showSettings = true },
+                zoomNamespace: homeZoom
             )
             .navigationDestination(for: Line.self) { line in
                 LineDetailView(line: line, onOpenLine: { other in path.append(other) })
+                    // 只有从卡片点进来的那条线做缩放；条件只看 id 是否相等，进了线路页之后不再变。
+                    .homeZoomDestination(id: zoomSourceLineID == line.id ? line.id : nil, in: homeZoom)
             }
         }
         // 撤销条由 UndoToastWindow 挂在窗口级（见 LineWiseApp），这里不再叠一层。
@@ -97,46 +106,4 @@ struct RootView: View {
     }
 }
 
-/// 首次引导：三句话，一个按钮。
-struct IntroView: View {
-    var onStart: () -> Void
-    var onSkip: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            VStack(alignment: .leading, spacing: 28) {
-                Text("线感")
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                step(n: 1, title: "拍一面墙", detail: "一张照片就是一面墙，上面可以有好几条线。")
-                step(n: 2, title: "点亮你的线", detail: "墙暗下去，只有你要爬的点亮着。")
-                step(n: 3, title: "记下掉在哪", detail: "下次进馆先看这一眼：掉在哪、为什么、试什么。")
-            }
-            .padding(.horizontal, 28)
-            Spacer()
-            VStack(spacing: 12) {
-                Button("拍第一面墙", action: onStart).buttonStyle(BigButtonStyle())
-                Button("先看看", action: onSkip).font(.subheadline).foregroundStyle(Color.subtle)
-            }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 24)
-        }
-        .inkBackground()
-        .presentationDragIndicator(.hidden)
-    }
-
-    private func step(n: Int, title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            ZStack {
-                Circle().fill(Color.accent.opacity(0.15)).frame(width: 40, height: 40)
-                Circle().strokeBorder(Color.accent, lineWidth: 2).frame(width: 40, height: 40)
-                Text("\(n)").font(.headline.weight(.bold)).foregroundStyle(Color.accent)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.white)
-                Text(detail).font(.subheadline).foregroundStyle(Color.subtle)
-            }
-        }
-    }
-}
+// `IntroView`（首次引导）在 Features/Home/IntroView.swift。

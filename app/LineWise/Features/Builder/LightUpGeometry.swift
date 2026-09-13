@@ -95,11 +95,37 @@ enum LightUpGeometry {
         return SpotlightGeometry(size: size, aspect: aspect, fill: false).normalized(local)
     }
 
-    /// 容器上的触点命中了哪个点。`slop` 是屏幕上的容差（点），会按缩放折算到内容坐标。
+    /// 屏幕上的最小命中半径（点）：再小的圆、再怎么缩放，指头落在这个范围内都算点到。
+    static let minHitRadius: CGFloat = 22
+
+    /// 容器上的触点命中了哪个点：取屏幕距离最近的那个，所以挨得很近的点也能分开点到。
+    /// `slop` 是屏幕上的容差（点）；命中范围 = max(minHitRadius, 屏幕半径 + slop)。
     static func hold(at touch: CGPoint, holds: [Hold], size: CGSize, aspect: Double, transform: ZoomTransform, slop: CGFloat = 14) -> Hold? {
         let local = transform.contentPoint(from: touch, in: size)
         let geo = SpotlightGeometry(size: size, aspect: aspect, fill: false)
-        return geo.hold(at: local, in: holds, slop: slop / max(transform.scale, 0.01))
+        let s = max(transform.scale, 0.01)
+        var best: (Hold, CGFloat)?
+        for h in holds {
+            let c = geo.point(h)
+            let onScreen = hypot(c.x - local.x, c.y - local.y) * s
+            let reach = max(minHitRadius, geo.radius(h) * s + slop)
+            if onScreen <= reach, best == nil || onScreen < best!.1 { best = (h, onScreen) }
+        }
+        return best?.0
+    }
+
+    /// 屏幕上的位移 → 归一化坐标位移（拖点用）。
+    static func normalizedDelta(_ delta: CGSize, size: CGSize, aspect: Double, transform: ZoomTransform) -> CGSize {
+        let rect = photoRect(size: size, aspect: aspect)
+        let s = max(transform.scale, 0.01)
+        guard rect.width > 0, rect.height > 0 else { return .zero }
+        return CGSize(width: delta.width / s / rect.width, height: delta.height / s / rect.height)
+    }
+
+    /// 照片此刻在屏幕上的尺寸（fit 矩形 × 缩放）。放大镜按它算倍率。
+    static func photoOnScreen(size: CGSize, aspect: Double, transform: ZoomTransform) -> CGSize {
+        let rect = photoRect(size: size, aspect: aspect)
+        return CGSize(width: rect.width * transform.scale, height: rect.height * transform.scale)
     }
 
     /// 点一下的结果：点在已有点上 → 熄灭它；点在照片空白处 → 新增；点在照片外 → 无事。
@@ -120,9 +146,16 @@ enum LightUpGeometry {
     }
 }
 
-/// 单指触摸的分类器：把一串 DragGesture(minimumDistance: 0) 事件判定为 轻点 / 长按 / 拖动，
+/// 单指触摸的分类器：把一串 DragGesture(minimumDistance: 0) 事件判定为 轻点 / 长按 / 拖动（平移或拖点），
 /// 并和双指缩放协调（捏合期间和刚结束时不算轻点）。纯状态机，方便测试。
 struct TouchClassifier: Equatable {
+    /// 这根手指要是动起来会做什么：落下那一刻由调用方根据落点决定（在点上 → 拖点；放大了 → 平移；否则啥也不做）。
+    enum DragIntent: Equatable {
+        case none
+        case pan
+        case moveHold(UUID)
+    }
+
     struct Track: Equatable {
         var start: CGPoint
         var startedAt: Date
@@ -131,6 +164,9 @@ struct TouchClassifier: Equatable {
         var moved = false
         var pinched = false
         var longPressFired = false
+        var intent: DragIntent = .none
+        /// 已经发出过拖点动作（抬起时要补一个 endMoveHold）
+        var movingHold = false
     }
 
     enum Event: Equatable {
@@ -144,6 +180,9 @@ struct TouchClassifier: Equatable {
         case startLongPressTimer(at: CGPoint)
         case cancelLongPressTimer
         case pan(CGSize)
+        /// 拖点：屏幕坐标增量。第一次越过容差时把从落点到现在的整段位移一次补上。
+        case moveHold(UUID, by: CGSize)
+        case endMoveHold(UUID)
         case tap(CGPoint)
     }
 
@@ -156,15 +195,21 @@ struct TouchClassifier: Equatable {
     private(set) var isPinching = false
     private(set) var pinchEndedAt: Date?
 
-    /// `canPan`：当前是否放大了（1× 时不平移）。
+    /// `canPan`：当前是否放大了（1× 时不平移）。等价于 `intent: canPan ? .pan : .none`。
     mutating func handle(_ event: Event, canPan: Bool) -> [Action] {
+        handle(event, intent: canPan ? .pan : .none)
+    }
+
+    /// `intent` 只在手指落下的第一个事件里生效，之后沿用。
+    mutating func handle(_ event: Event, intent: DragIntent) -> [Action] {
         switch event {
         case .changed(let location, let start, let time):
             guard var t = track else {
-                var fresh = Track(start: start, startedAt: time, last: location)
+                var fresh = Track(start: start, startedAt: time, last: location, intent: intent)
                 let justPinched = pinchEndedAt.map { time.timeIntervalSince($0) < pinchCooldown } ?? false
                 if isPinching || justPinched {
                     fresh.pinched = true
+                    fresh.intent = .none
                     track = fresh
                     return []
                 }
@@ -173,14 +218,28 @@ struct TouchClassifier: Equatable {
             }
             var actions: [Action] = []
             let dist = hypot(location.x - t.start.x, location.y - t.start.y)
+            var justStartedMoving = false
             if dist > tapSlop, !t.moved {
                 t.moved = true
+                justStartedMoving = true
                 actions.append(.cancelLongPressTimer)
             }
             if isPinching {
                 t.pinched = true
-            } else if canPan, t.moved, !t.longPressFired, let last = t.last {
-                actions.append(.pan(CGSize(width: location.x - last.x, height: location.y - last.y)))
+            } else if t.moved, !t.longPressFired {
+                switch t.intent {
+                case .pan:
+                    if let last = t.last {
+                        actions.append(.pan(CGSize(width: location.x - last.x, height: location.y - last.y)))
+                    }
+                case .moveHold(let id):
+                    // 越过容差的那一帧把整段位移补上，之后按增量走，点不会“跳一下再跟上”
+                    let from = justStartedMoving ? t.start : (t.last ?? location)
+                    actions.append(.moveHold(id, by: CGSize(width: location.x - from.x, height: location.y - from.y)))
+                    t.movingHold = true
+                case .none:
+                    break
+                }
             }
             t.last = location
             track = t
@@ -190,6 +249,10 @@ struct TouchClassifier: Equatable {
             var actions: [Action] = [.cancelLongPressTimer]
             guard let t = track else { return actions }
             track = nil
+            if t.movingHold, case .moveHold(let id) = t.intent {
+                actions.append(.endMoveHold(id))
+                return actions
+            }
             let dist = hypot(location.x - t.start.x, location.y - t.start.y)
             let duration = time.timeIntervalSince(t.startedAt)
             if !t.pinched, !t.longPressFired, !t.moved, dist <= tapSlop, duration < tapMaxDuration {
@@ -200,6 +263,8 @@ struct TouchClassifier: Equatable {
         case .pinchChanged:
             isPinching = true
             track?.pinched = true
+            // 第二根手指下来：正在拖的点就停在原地，不再跟着单指走
+            if case .moveHold = track?.intent { track?.intent = .none }
             return [.cancelLongPressTimer]
 
         case .pinchEnded(let time):
@@ -272,6 +337,38 @@ struct LightUpDraft: Equatable {
         holds[i].r = min(max(r, Hold.minRadius), Hold.maxRadius)
     }
 
+    /// 调大 / 调小一档（×1.25 / ÷1.25），夹在允许范围内。
+    static let radiusStep: Double = 1.25
+
+    mutating func grow(id: UUID) {
+        guard let h = hold(id: id) else { return }
+        setRadius(id: id, r: h.r * Self.radiusStep)
+    }
+
+    mutating func shrink(id: UUID) {
+        guard let h = hold(id: id) else { return }
+        setRadius(id: id, r: h.r / Self.radiusStep)
+    }
+
+    func canGrow(id: UUID) -> Bool { (hold(id: id)?.r ?? Hold.maxRadius) < Hold.maxRadius - 0.0001 }
+    func canShrink(id: UUID) -> Bool { (hold(id: id)?.r ?? Hold.minRadius) > Hold.minRadius + 0.0001 }
+
+    // MARK: 拖动
+
+    /// 把某个点挪到新的归一化位置（夹在 0…1）。位置变了编号会变，起步 / 结束的自动值随之重算。
+    mutating func move(id: UUID, to x: Double, y: Double) {
+        guard let i = holds.firstIndex(where: { $0.id == id }) else { return }
+        holds[i].x = min(max(x, 0), 1)
+        holds[i].y = min(max(y, 0), 1)
+        recomputeDefaults()
+    }
+
+    /// 按归一化增量挪动。
+    mutating func nudge(id: UUID, dx: Double, dy: Double) {
+        guard let h = hold(id: id) else { return }
+        move(id: id, to: h.x + dx, y: h.y + dy)
+    }
+
     // MARK: 起步 / 结束（手动）
 
     /// 设为起步 / 取消起步。
@@ -319,7 +416,7 @@ struct LightUpDraft: Equatable {
         let ordered = HoldNumbering.ordered(holds)
         if !startIsManual {
             // 最低的、且不是（手动）结束点的那个
-            startHoldIDs = ordered.first(where: { $0.id != finishHoldID }).map { [$0.id] } ?? []
+            startHoldIDs = ordered.first(where: { !finishIsManual || $0.id != finishHoldID }).map { [$0.id] } ?? []
         }
         if !finishIsManual {
             // 最高的、且不是起步的那个；只有一个点时没有结束

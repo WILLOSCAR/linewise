@@ -235,11 +235,19 @@ struct LightUpView: View {
     private func touchGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                perform(touches.handle(.changed(location: value.location, start: value.startLocation, time: .now), canPan: transform.isZoomed), size: size)
+                perform(touches.handle(.changed(location: value.location, start: value.startLocation, time: .now), intent: dragIntent(at: value.startLocation, size: size)), size: size)
             }
             .onEnded { value in
-                perform(touches.handle(.ended(location: value.location, time: .now), canPan: transform.isZoomed), size: size)
+                perform(touches.handle(.ended(location: value.location, time: .now), intent: dragIntent(at: value.startLocation, size: size)), size: size)
             }
+    }
+
+    /// 手指落在点上 → 拖点；放大了 → 平移；否则不动。
+    private func dragIntent(at start: CGPoint, size: CGSize) -> TouchClassifier.DragIntent {
+        if menuHoldID == nil, let hit = LightUpGeometry.hold(at: start, holds: model.draft.holds, size: size, aspect: model.aspect, transform: transform) {
+            return .moveHold(hit.id)
+        }
+        return transform.isZoomed ? .pan : .none
     }
 
     private func magnifyGesture(size: CGSize) -> some Gesture {
@@ -277,6 +285,12 @@ struct LightUpView: View {
                     .clamped(contentRect: LightUpGeometry.photoRect(size: size, aspect: model.aspect), in: size)
             case .tap(let point):
                 handleTap(at: point, size: size)
+            case .moveHold(let id, let delta):
+                // 拖点微调：屏幕增量 → 归一化增量（同帧生效）
+                let d = LightUpGeometry.normalizedDelta(delta, size: size, aspect: model.aspect, transform: transform)
+                model.draft.nudge(id: id, dx: d.width, dy: d.height)
+            case .endMoveHold:
+                Haptics.light()
             }
         }
     }

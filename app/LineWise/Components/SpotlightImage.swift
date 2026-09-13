@@ -122,6 +122,8 @@ struct SpotlightImage: View {
     /// 点单位缩放：描边、编号、掉落点、旗子等以 pt 计的元素统一乘这个系数。
     /// 分享图等大画布（1080pt）用 2…3，屏幕上保持 1。
     var scale: CGFloat = 1
+    /// 拖动肢体时突出吸附目标，其余点略暗；集中在同一个 Canvas 绘制。
+    var dragEmphasis: CGFloat = 0
 
     private static let coral = Color(red: 1.0, green: 0.45, blue: 0.38)
 
@@ -164,6 +166,19 @@ struct SpotlightImage: View {
                 ])
                 ctx.fill(Path(ellipseIn: circleRect(c, r * 2.2)),
                          with: .radialGradient(glow, center: c, startRadius: r * 0.95, endRadius: r * 2.2))
+            }
+
+            if dragEmphasis > 0 {
+                for h in revealed {
+                    let c = geo.point(h)
+                    if h.id == highlightedHoldID {
+                        ctx.stroke(Path(ellipseIn: circleRect(c, geo.radius(h) + ringWidth + 12)),
+                                   with: .color(.white.opacity(0.35 * dragEmphasis)), lineWidth: 6)
+                    } else {
+                        ctx.fill(Path(ellipseIn: circleRect(c, geo.radius(h) + ringWidth * 3)),
+                                 with: .color(.black.opacity(0.30 * dragEmphasis)))
+                    }
+                }
             }
 
             // 扫描光带

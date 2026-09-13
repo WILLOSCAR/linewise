@@ -23,7 +23,7 @@ enum HomeFilter: String, CaseIterable, Identifiable {
 /// 轻量全局状态：当前岩馆、筛选、体型。持久化到 UserDefaults。
 @Observable
 final class AppState {
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     var currentGymID: UUID? {
         didSet { defaults.set(currentGymID?.uuidString, forKey: "currentGymID") }
@@ -51,7 +51,8 @@ final class AppState {
         didSet { defaults.set(hasSeenSharePrivacyHint, forKey: "hasSeenSharePrivacyHint") }
     }
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         currentGymID = defaults.string(forKey: "currentGymID").flatMap(UUID.init(uuidString:))
         filter = defaults.string(forKey: "homeFilter").flatMap(HomeFilter.init(rawValue:)) ?? .projecting
         bodyProfile = defaults.data(forKey: "bodyProfile").flatMap { try? JSONDecoder().decode(BodyProfile.self, from: $0) } ?? .default

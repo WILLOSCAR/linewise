@@ -7,6 +7,7 @@ struct SequencePanel: View {
 
     @Environment(\.modelContext) private var context
     @Environment(AppState.self) private var appState
+    @Environment(UndoCenter.self) private var undoCenter
     @State private var editing: SequenceKind?
     @State private var thumbImage: UIImage?
 
@@ -26,8 +27,9 @@ struct SequencePanel: View {
 
     @ViewBuilder
     private var content: some View {
-        if !line.hasPhoto {
-            Text("没有照片的线不能规划顺序")
+        if scene.holds.isEmpty {
+            // 没有点位就没法拖手脚；没照片但有点位的线用底板 + 点位示意，一样能规划。
+            Text("没有点位的线不能规划顺序")
                 .font(.subheadline)
                 .foregroundStyle(Color.subtle)
         } else if line.planSequence == nil && line.actualSequence == nil {
@@ -36,6 +38,8 @@ struct SequencePanel: View {
             cards
         }
     }
+
+    private var scene: SequenceScene { SequenceScene(line: line) }
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -53,29 +57,29 @@ struct SequencePanel: View {
     }
 
     private var cards: some View {
-        let aspect = line.wall?.aspectRatio ?? 0.75
-        let thumbSize = SequenceThumbnail.size(height: 132, aspect: aspect, maxWidth: 150)
-        // 两张卡等高：小图 + 标题行 (+ 差异徽标)。
-        let showsBadge = line.sequenceDifferenceCount != nil
-        let cardHeight = thumbSize.height + 20 + 8 + 20 + (showsBadge ? 26 : 0)
+        let scene = scene
+        // 缩略图取景到这条线（与编辑器同一套 focus），形状跟着取景区域走。
+        let thumbSize = SequenceThumbnail.size(height: 132, aspect: scene.focusAspect, maxWidth: 150)
+        // 两张卡等高：小图 + 标题行 (+ 差异小字)。
+        let showsDifference = line.sequenceDifferenceCount != nil
+        let cardHeight = thumbSize.height + 20 + 8 + 20 + (showsDifference ? 20 : 0)
         return HStack(alignment: .top, spacing: 12) {
-            card(kind: .plan, thumbSize: thumbSize, height: cardHeight)
-            card(kind: .actual, thumbSize: thumbSize, height: cardHeight)
+            card(kind: .plan, scene: scene, thumbSize: thumbSize, height: cardHeight)
+            card(kind: .actual, scene: scene, thumbSize: thumbSize, height: cardHeight)
         }
     }
 
     @ViewBuilder
-    private func card(kind: SequenceKind, thumbSize: CGSize, height: CGFloat) -> some View {
+    private func card(kind: SequenceKind, scene: SequenceScene, thumbSize: CGSize, height: CGFloat) -> some View {
         if let seq = line.sequence(for: kind), !seq.isEmpty {
-            filledCard(kind: kind, sequence: seq, thumbSize: thumbSize, height: height)
+            filledCard(kind: kind, scene: scene, sequence: seq, thumbSize: thumbSize, height: height)
         } else {
             emptyCard(kind: kind, height: height)
         }
     }
 
-    private func filledCard(kind: SequenceKind, sequence: ClimbSequence, thumbSize: CGSize, height: CGFloat) -> some View {
-        let initial = SequenceReplay.initialState(startHoldIDs: line.startHoldIDs, holds: line.holds)
-        let complete = SequenceReplay.isComplete(SequenceReplay.state(of: sequence, after: sequence.steps.count, initial: initial), finishHoldID: line.finishHoldID)
+    private func filledCard(kind: SequenceKind, scene: SequenceScene, sequence: ClimbSequence, thumbSize: CGSize, height: CGFloat) -> some View {
+        let complete = SequenceReplay.isComplete(SequenceReplay.state(of: sequence, after: sequence.steps.count, initial: scene.initial), finishHoldID: scene.finishHoldID)
         let difference = kind == .actual ? line.sequenceDifferenceCount : nil
         return Button {
             Haptics.light()
@@ -83,7 +87,7 @@ struct SequencePanel: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 SequenceThumbnail(line: line, image: thumbImage, sequence: sequence, stepIndex: sequence.steps.count,
-                                  size: thumbSize, profile: appState.bodyProfile, cornerRadius: 12)
+                                  size: thumbSize, profile: appState.bodyProfile, cornerRadius: 12, scene: scene)
                     .frame(maxWidth: .infinity)
                 HStack(spacing: 6) {
                     Text(kind.title)
@@ -102,7 +106,7 @@ struct SequencePanel: View {
                     }
                 }
                 if let difference {
-                    differenceBadge(difference)
+                    differenceText(difference)
                 }
             }
             .padding(10)
@@ -111,18 +115,16 @@ struct SequencePanel: View {
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(kind.title)顺序，\(sequence.steps.count) 步")
+        .accessibilityLabel("\(kind.title)顺序，\(sequence.steps.count) 步" + (difference.map { $0 > 0 ? "，与计划不同 \($0) 步" : "，与计划一致" } ?? ""))
     }
 
-    private func differenceBadge(_ count: Int) -> some View {
+    /// 差异步数：coral 小字（Coral 只用于“不一样/掉了”这一类信息）。
+    private func differenceText(_ count: Int) -> some View {
         let differs = count > 0
         return Text(differs ? "与计划不同 \(count) 步" : "与计划一致")
-            .font(.caption2.weight(.semibold))
+            .font(.caption2.weight(differs ? .semibold : .regular))
             .monospacedDigit()
             .foregroundStyle(differs ? Color.coral : Color.subtle)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(differs ? Color.coral.opacity(0.16) : Color.white.opacity(0.08), in: Capsule())
     }
 
     private func emptyCard(kind: SequenceKind, height: CGFloat) -> some View {
@@ -130,7 +132,8 @@ struct SequencePanel: View {
         return Button {
             Haptics.light()
             if canCopy {
-                Store(context).copyPlanToActual(line)
+                let undo = Store(context).copyPlanToActual(line)
+                undoCenter.offer("已从计划复制", undo: undo)
             }
             editing = kind
         } label: {

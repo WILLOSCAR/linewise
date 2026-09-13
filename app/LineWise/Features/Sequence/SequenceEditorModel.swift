@@ -56,6 +56,11 @@ struct SequenceEditorModel: Equatable {
     /// 是否停在中间某一步：此时再拖会替换后面的步骤。
     var isRewound: Bool { currentIndex < stepCount - 1 }
 
+    /// 停在中间时，再拖一步会被替换掉的格（胶片条把它们画成半透明）。不回退时为空。
+    var pendingReplacementCells: Range<Int> { (currentCell + 1)..<max(currentCell + 1, stepCount + 1) }
+
+    func willBeReplaced(cell: Int) -> Bool { pendingReplacementCells.contains(cell) }
+
     // MARK: 写
 
     /// 把某只手/脚放到某个点。拖到它当前所在的点视为无操作（返回 nil）。
@@ -86,4 +91,36 @@ struct SequenceEditorModel: Equatable {
         self.sequence = sequence ?? ClimbSequence()
         currentIndex = stepCount - 1
     }
+}
+
+/// 回放状态机（纯逻辑）：从某一格开始，每隔 `stepInterval` 前进一格，到最后一格自动停。
+/// 视图层只负责按它返回的格调用 `model.rewind(toCell:)` 并计时。
+struct SequencePlayback: Equatable {
+    /// 每步间隔。
+    static let stepInterval: Duration = .milliseconds(600)
+
+    private(set) var isPlaying = false
+
+    /// 开始播放，返回要先显示的格：停在最后一格时从起步重播，停在中间则从当前格接着播。
+    /// 没有步骤时不播（返回 nil）。
+    mutating func start(currentCell: Int, stepCount: Int) -> Int? {
+        guard stepCount > 0 else { return nil }
+        isPlaying = true
+        return currentCell >= stepCount ? 0 : currentCell
+    }
+
+    /// 前进一格，返回要显示的格；显示到最后一格时自动停止（`isPlaying` 变 false）。
+    /// 未在播放或已越界时返回 nil。
+    mutating func advance(from cell: Int, stepCount: Int) -> Int? {
+        guard isPlaying else { return nil }
+        let next = cell + 1
+        guard next <= stepCount else {
+            isPlaying = false
+            return nil
+        }
+        if next == stepCount { isPlaying = false }
+        return next
+    }
+
+    mutating func stop() { isPlaying = false }
 }

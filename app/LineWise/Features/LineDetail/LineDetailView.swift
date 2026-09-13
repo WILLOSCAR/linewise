@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// 线路页（PRD §6.3）：上半屏聚光灯图，下半屏依次是状态、提醒、记录、教练几句、顺序、历史。
+/// 线路页（PRD §6.3）：上半屏聚光灯头图（自动取景、随滚动呼吸），下半屏依次是状态、提醒、记录、教练几句、顺序、历史、更多。
 /// `onOpenLine` 用于跳到另一条线（合并后的目标线、同墙新建的线）。
 struct LineDetailView: View {
     let line: Line
@@ -10,6 +10,7 @@ struct LineDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(UndoCenter.self) private var undoCenter
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var filter = HistoryFilter()
     @State private var showViewer = false
@@ -19,7 +20,16 @@ struct LineDetailView: View {
     @State private var showInfoEditor = false
     @State private var showMergePicker = false
     @State private var showBuilder = false
-    @State private var confirmResetWall = false
+    /// 头图滚出屏幕后，标题缩进顶栏一行。
+    @State private var titleCollapsed = false
+    /// +1 / 今天 N 次 的跳动触发器。
+    @State private var plusBump = 0
+
+    private static let scrollSpace = "lineDetailScroll"
+    /// 取景：线的包围盒向外扩 30%，最小占图 50%；底部再留一段给叠在图上的标题。
+    private static let heroFocusPadding = 0.3
+    private static let heroFocusMinSize = 0.5
+    private static let heroFocusExtraBottom = 0.14
 
     private var store: Store { Store(context) }
 
@@ -34,13 +44,34 @@ struct LineDetailView: View {
         return line.sessions.first { $0.date == today && $0.cycle == line.cycle }
     }
 
+    private var heroFocus: CGRect? {
+        guard line.hasPhoto else { return nil }
+        return SpotlightGeometry.focusRect(for: line.holds, padding: Self.heroFocusPadding,
+                                           minSize: Self.heroFocusMinSize, extraBottom: Self.heroFocusExtraBottom)
+    }
+
+    private var subtitle: String {
+        LineHeroSubtitle.make(
+            name: line.name,
+            area: line.wall?.areaName,
+            grade: line.gradeText,
+            felt: line.feltGrade.map { "感觉\($0.title)" },
+            angle: line.wall?.angle == .unknown ? nil : line.wall?.angle.title,
+            hasPhoto: line.hasPhoto
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
+            let heroHeight = max(300, proxy.size.height * 0.48)
+            let topInset = proxy.safeAreaInsets.top
             ScrollViewReader { scroll in
                 ScrollView {
-                    VStack(spacing: 14) {
-                        hero(height: max(300, proxy.size.height * 0.5))
-                        VStack(spacing: 14) {
+                    VStack(spacing: 12) {
+                        StretchyHero(height: heroHeight) { stretch, collapse in
+                            hero(height: heroHeight + stretch, collapse: collapse)
+                        }
+                        VStack(spacing: 12) {
                             if line.mergedIntoLineID != nil { mergedBanner }
                             statusRow.id("status")
                             reminderPanel.id("reminder")
@@ -48,13 +79,17 @@ struct LineDetailView: View {
                             coachPanel.id("coach")
                             SequencePanel(line: line).id("sequence")
                             historyPanel.id("history")
+                            morePanel.id("more")
                         }
                         .padding(.horizontal, 16)
                     }
                 }
+                .coordinateSpace(name: Self.scrollSpace)
                 .scrollIndicators(.hidden)
                 .ignoresSafeArea(edges: .top)
                 .safeAreaPadding(.bottom, 72)
+                .modifier(HeroCollapseObserver(threshold: heroHeight - topInset - 24, collapsed: $titleCollapsed))
+                .overlay(alignment: .top) { compactTitleBar(height: topInset) }
                 .onAppear { debugScrollIfRequested(scroll) }
             }
         }
@@ -71,7 +106,8 @@ struct LineDetailView: View {
         }
         .swipeBackEnabled()
         .fullScreenCover(isPresented: $showViewer) {
-            FullscreenSpotlightViewer(line: line, fallMarks: fallMarks)
+            FullscreenSpotlightViewer(line: line, fallMarks: fallMarks, onClose: closeViewer)
+                .presentationBackground(.clear)
         }
         .sheet(isPresented: $showNewSession) {
             SessionEditorView(line: line)
@@ -105,11 +141,6 @@ struct LineDetailView: View {
                 }
             }
         }
-        .confirmationDialog("这面墙换线了？", isPresented: $confirmResetWall, titleVisibility: .visible) {
-            Button("把这面墙上的 \(wallActiveCount) 条线都标为没了", role: .destructive, action: resetWall)
-        } message: {
-            Text("历史记录会保留，5 秒内可以撤销。")
-        }
     }
 
     /// 截图用：`-detailScrollTo history` 启动后自动滚到某个区块。只在 DEBUG 生效。
@@ -125,54 +156,115 @@ struct LineDetailView: View {
         #endif
     }
 
-    // MARK: 图
+    // MARK: 头图
 
-    private func hero(height: CGFloat) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            LineSpotlight(line: line, fill: false, maxPixel: 1600, showNumbers: true, fallMarks: fallMarks)
+    /// - stretch: 下拉时的额外高度（已加进 `height`）
+    /// - collapse: 上滑时已经滚出去的距离
+    private func hero(height: CGFloat, collapse: CGFloat) -> some View {
+        let progress = min(1, max(0, collapse / max(1, height * 0.75)))
+        return ZStack(alignment: .bottomLeading) {
+            LineSpotlight(line: line, fill: false, maxPixel: 1600, showNumbers: true, fallMarks: fallMarks, focus: heroFocus)
                 .saturation(line.status == .gone ? 0.6 : 1)
                 .overlay {
-                    if !line.hasPhoto {
-                        VStack(spacing: 8) {
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .font(.system(size: 34, weight: .light))
-                            Text("这条线没有照片")
-                                .font(.footnote)
-                        }
-                        .foregroundStyle(.white.opacity(0.35))
-                        .padding(.bottom, 20)
-                    }
+                    if !line.hasPhoto { noPhotoPlaceholder }
                 }
-                .padding(.top, 58)
-                .padding(.bottom, 40)
-            BottomScrim(height: 170)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(line.name)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    if !line.subtitle.isEmpty { Text(line.subtitle) }
-                    if let felt = line.feltGrade { Text("· \(felt.title)") }
-                    if let angle = line.wall?.angle, angle != .unknown { Text("· \(angle.title)") }
-                    if !line.hasPhoto {
-                        Text("· 无照片")
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.75))
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 14)
+                // 上滑：收缩并淡出；文字层单独淡出得更快，让顶栏标题接上
+                .scaleEffect(1 - progress * 0.08, anchor: .bottom)
+                .opacity(1 - progress * 0.9)
+            BottomScrim(height: min(height, 220))
+                .opacity(1 - progress)
+            heroCaption
+                .opacity(1 - min(1, progress * 1.6))
         }
         .frame(height: height)
         .frame(maxWidth: .infinity)
         .background(Color.ink)
+        .clipped()
         .contentShape(Rectangle())
-        .onTapGesture { if line.hasPhoto { showViewer = true } }
+        .onTapGesture { if line.hasPhoto { openViewer() } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(line.name) 的聚光灯图")
         .accessibilityHint(line.hasPhoto ? "点一下全屏查看" : "")
+    }
+
+    private var noPhotoPlaceholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 34, weight: .light))
+            Text("这条线没有照片")
+                .font(.footnote)
+        }
+        .foregroundStyle(.white.opacity(0.35))
+        .padding(.bottom, 40)
+    }
+
+    /// 叠在头图底部的标题、副标题、状态胶囊。
+    private var heroCaption: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(line.name)
+                    .font(.title.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                statusPill
+            }
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+    }
+
+    private var statusPill: some View {
+        HStack(spacing: 4) {
+            Image(systemName: line.status.symbol).font(.caption2.weight(.bold))
+            Text(line.status.title).font(.caption.weight(.semibold))
+        }
+        .foregroundStyle(line.status == .sent ? Color.accent : .white.opacity(0.9))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
+        .accessibilityLabel("状态：\(line.status.title)")
+    }
+
+    /// 上滑后接管标题的顶栏：材质底 + 一行线名。返回 / 更多两颗玻璃钮由系统栏画在它上面。
+    @ViewBuilder private func compactTitleBar(height: CGFloat) -> some View {
+        if titleCollapsed {
+            ZStack(alignment: .bottom) {
+                Rectangle().fill(.ultraThinMaterial)
+                Text(line.name)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 70)
+                    .padding(.bottom, 12)
+            }
+            .frame(height: height)
+            .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.08)).frame(height: 0.5) }
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+    private func openViewer() {
+        Haptics.light()
+        // 查看器自己做淡入淡出；这里关掉系统的上滑转场。
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { showViewer = true }
+    }
+
+    private func closeViewer() {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { showViewer = false }
     }
 
     // MARK: 状态行
@@ -214,10 +306,12 @@ struct LineDetailView: View {
             }
         }
         .padding(.horizontal, 4)
+        .padding(.top, 2)
     }
 
+    /// 状态词已经在头图胶囊上，这里只说次数与轮次。
     private var statusText: String {
-        var parts = [line.status.title]
+        var parts: [String] = []
         parts.append(line.visitCount == 0 ? "还没来过" : "来了 \(line.visitCount) 次")
         if line.totalAttempts > 0 { parts.append("共 \(line.totalAttempts) 次尝试") }
         if line.cycle > 1 { parts.append("第 \(line.cycle) 轮") }
@@ -227,7 +321,7 @@ struct LineDetailView: View {
     private func perform(_ action: LineAction) {
         let previousCycle = line.cycle
         guard let undo = store.apply(action, to: line) else { return }
-        Haptics.medium()
+        if action == .markSent { Haptics.success() } else { Haptics.medium() }
         let title: String
         switch action {
         case .markSent: title = "已标为上了"
@@ -249,6 +343,7 @@ struct LineDetailView: View {
                             .font(.body)
                             .foregroundStyle(Color.accent)
                             .padding(.top, 2)
+                            .contentTransition(.symbolEffect(.replace))
                         VStack(alignment: .leading, spacing: 4) {
                             Text(text)
                                 .font(.body)
@@ -270,15 +365,18 @@ struct LineDetailView: View {
                 .accessibilityHint("点一下修改提醒")
 
                 if let pending = line.pendingCheckSession {
-                    Divider().overlay(Color.white.opacity(0.08))
-                    Text("上次这句有用吗？")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white)
-                    ChipFlow {
-                        ForEach(ReminderCheck.allCases, id: \.self) { check in
-                            Chip(title: check.title, selected: false) { answer(pending, check) }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Divider().overlay(Color.white.opacity(0.08))
+                        Text("上次这句有用吗？")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                        ChipFlow {
+                            ForEach(ReminderCheck.allCases, id: \.self) { check in
+                                Chip(title: check.title, selected: false, compact: true) { answer(pending, check) }
+                            }
                         }
                     }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             } else {
                 Text("记一次之后这里会出现提醒")
@@ -286,12 +384,19 @@ struct LineDetailView: View {
                     .foregroundStyle(Color.subtle)
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: line.pendingCheckSession?.id)
+        .animation(reduceMotion ? nil : .snappy, value: line.reminderVerified)
     }
 
     private func answer(_ session: Session, _ check: ReminderCheck) {
-        Haptics.selection()
-        let undo = store.answerCheck(session, line: line, check: check)
-        undoCenter.offer("已回答：\(check.title)", undo: undo)
+        if check == .worked { Haptics.success() } else { Haptics.selection() }
+        let undo: () -> Void
+        if reduceMotion {
+            undo = store.answerCheck(session, line: line, check: check)
+        } else {
+            undo = withAnimation(.snappy) { store.answerCheck(session, line: line, check: check) }
+        }
+        undoCenter.offer("已记为\(check.title)", undo: undo)
     }
 
     // MARK: 记录
@@ -304,6 +409,9 @@ struct LineDetailView: View {
                 Button(action: plusOne) {
                     Text("+1")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .phaseAnimator([false, true], trigger: plusBump) { content, bumped in
+                            content.scaleEffect(bumped && !reduceMotion ? 1.12 : 1)
+                        } animation: { _ in .spring(duration: 0.25, bounce: 0.45) }
                 }
                 .buttonStyle(BigButtonStyle())
                 .overlay(alignment: .topTrailing) {
@@ -315,8 +423,11 @@ struct LineDetailView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.ink, in: Capsule())
+                            .contentTransition(.numericText(value: Double(todayCount)))
+                            .phaseAnimator([false, true], trigger: plusBump) { content, bumped in
+                                content.scaleEffect(bumped && !reduceMotion ? 1.18 : 1, anchor: .center)
+                            } animation: { _ in .spring(duration: 0.3, bounce: 0.5) }
                             .offset(x: -8, y: -8)
-                            .contentTransition(.numericText())
                             .transition(.scale.combined(with: .opacity))
                     }
                 }
@@ -326,14 +437,15 @@ struct LineDetailView: View {
                     Label(sentToday ? "上了" : "上了？", systemImage: sentToday ? "checkmark.circle.fill" : "circle")
                         .labelStyle(.titleAndIcon)
                         .font(.body.weight(.semibold))
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(BigButtonStyle(prominent: sentToday))
                 .frame(width: 128)
                 .accessibilityAddTraits(.isToggle)
                 .accessibilityValue(sentToday ? "开" : "关")
             }
-            .animation(.snappy, value: todayCount)
-            .animation(.snappy, value: sentToday)
+            .animation(reduceMotion ? nil : .snappy, value: todayCount)
+            .animation(reduceMotion ? nil : .snappy, value: sentToday)
 
             SecondaryActionButton(title: "记这一次", systemImage: "arrow.right") { showNewSession = true }
         }
@@ -341,6 +453,7 @@ struct LineDetailView: View {
 
     private func plusOne() {
         Haptics.medium()
+        plusBump += 1
         let undo = store.incrementAttempt(line)
         undoCenter.offer("+1 已记录", undo: undo)
     }
@@ -410,7 +523,7 @@ struct LineDetailView: View {
                         }
                     }
                 }
-                .animation(.snappy, value: listedSessions.map(\.id))
+                .animation(reduceMotion ? nil : .snappy, value: listedSessions.map(\.id))
             }
         }
     }
@@ -427,16 +540,16 @@ struct LineDetailView: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
                     ForEach(Array(cycles.enumerated()), id: \.offset) { _, option in
-                        Chip(title: option.map { "第 \($0) 轮" } ?? "全部轮", selected: filter.cycle == option) {
+                        Chip(title: option.map { "第 \($0) 轮" } ?? "全部轮", selected: filter.cycle == option, compact: true) {
                             Haptics.selection()
                             withAnimation(.snappy) { filter.cycle = option }
                         }
                     }
                     if !cycles.isEmpty {
-                        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 18)
+                        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 16)
                     }
                     ForEach(HistoryRange.allCases) { range in
-                        Chip(title: range.title, selected: filter.range == range) {
+                        Chip(title: range.title, selected: filter.range == range, compact: true) {
                             Haptics.selection()
                             withAnimation(.snappy) { filter.range = range }
                         }
@@ -449,11 +562,11 @@ struct LineDetailView: View {
 
     private func delete(_ session: Session) {
         let title = "已删除 \(DateText.short(session.date)) 的记录"
-        withAnimation(.snappy) {
+        withAnimation(reduceMotion ? nil : .snappy) {
             let undo = store.deleteSession(session, from: line)
             undoCenter.offer(title, undo: undo)
         }
-        Haptics.light()
+        Haptics.warning()
     }
 
     // MARK: 合并提示
@@ -475,16 +588,57 @@ struct LineDetailView: View {
         }
     }
 
-    // MARK: 更多菜单
+    // MARK: 更多
 
     private var wallActiveCount: Int { line.wall?.activeLines.filter { $0.status != .gone }.count ?? 0 }
+
+    /// 页底的“更多”：与右上角菜单同一组动作，滚到底也能找到。破坏性动作走撤销条，不弹确认。
+    private var morePanel: some View {
+        Panel("更多") {
+            VStack(spacing: 0) {
+                moreRow("改名、难度、墙区…", systemImage: "pencil") { showInfoEditor = true }
+                if line.wall != nil {
+                    moreRow("这面墙上再建一条", systemImage: "plus.viewfinder") { showBuilder = true }
+                }
+                if line.isVisible {
+                    moreRow("合并到另一条…", systemImage: "arrow.triangle.merge") { showMergePicker = true }
+                }
+                if line.wall != nil, wallActiveCount > 0 {
+                    moreRow("这面墙拆了（\(wallActiveCount) 条线标为没了）", systemImage: "arrow.triangle.2.circlepath", action: resetWall)
+                }
+                moreRow("删除这条线", systemImage: "trash", destructive: true, action: deleteLine)
+            }
+        }
+    }
+
+    private func moreRow(_ title: String, systemImage: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 22)
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .foregroundStyle(destructive ? Color.coral : .white.opacity(0.9))
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     private var moreMenu: some View {
         Menu {
             Button { showInfoEditor = true } label: { Label("改名、难度、墙区…", systemImage: "pencil") }
             if line.wall != nil {
                 Button { showBuilder = true } label: { Label("这面墙上再建一条", systemImage: "plus.viewfinder") }
-                Button { confirmResetWall = true } label: { Label("这面墙换线了", systemImage: "arrow.triangle.2.circlepath") }
+                Button(action: resetWall) { Label("这面墙拆了", systemImage: "arrow.triangle.2.circlepath") }
             }
             if line.isVisible {
                 Button { showMergePicker = true } label: { Label("合并到另一条…", systemImage: "arrow.triangle.merge") }
@@ -501,6 +655,7 @@ struct LineDetailView: View {
     private func resetWall() {
         guard let wall = line.wall else { return }
         let count = wallActiveCount
+        guard count > 0 else { return }
         let undo = store.resetWall(wall)
         Haptics.warning()
         undoCenter.offer("这面墙的 \(count) 条线已标为没了", undo: undo)
@@ -524,6 +679,59 @@ struct LineDetailView: View {
     }
 }
 
+// MARK: - 头图随滚动呼吸
+
+/// 放在 ScrollView 顶部：下拉时按比例拉长（stretchy），上滑时把滚出去的距离交给内容自己收缩淡出。
+/// 用 GeometryReader 读命名坐标系里的位置，iOS 17 / 18 通用；顶栏标题的切换另由 `HeroCollapseObserver` 负责。
+private struct StretchyHero<Content: View>: View {
+    var height: CGFloat
+    @ViewBuilder var content: (_ stretch: CGFloat, _ collapse: CGFloat) -> Content
+
+    var body: some View {
+        GeometryReader { geo in
+            let minY = geo.frame(in: .named("lineDetailScroll")).minY
+            let stretch = max(0, minY)
+            let collapse = max(0, -minY)
+            content(stretch, collapse)
+                .frame(width: geo.size.width, height: height + stretch)
+                .offset(y: -stretch)
+                .preference(key: HeroOffsetKey.self, value: minY)
+        }
+        .frame(height: height)
+    }
+}
+
+private struct HeroOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// 头图滚过阈值 → 顶栏标题接管。iOS 18 用 `onScrollGeometryChange`，17 退回头图上报的 preference。
+private struct HeroCollapseObserver: ViewModifier {
+    var threshold: CGFloat
+    @Binding var collapsed: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > threshold
+            } action: { _, now in
+                update(now)
+            }
+        } else {
+            content.onPreferenceChange(HeroOffsetKey.self) { minY in
+                update(-minY > threshold)
+            }
+        }
+    }
+
+    private func update(_ now: Bool) {
+        guard now != collapsed else { return }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { collapsed = now }
+    }
+}
+
 /// 材质圆形按钮的外观（返回、更多）。作为 Button / Menu 的 label 使用。
 struct GlassCircleLabel: View {
     var systemImage: String
@@ -541,6 +749,18 @@ struct GlassCircleLabel: View {
 #if DEBUG
 #Preview("线路页") {
     let sample = LineDetailPreviewData.make()
+    return NavigationStack {
+        LineDetailView(line: sample.line, onOpenLine: { _ in })
+    }
+    .modelContainer(sample.container)
+    .environment(UndoCenter())
+    .environment(AppState())
+    .preferredColorScheme(.dark)
+    .tint(.accent)
+}
+
+#Preview("线路页 · 无照片") {
+    let sample = LineDetailPreviewData.make(withPhoto: false)
     return NavigationStack {
         LineDetailView(line: sample.line, onOpenLine: { _ in })
     }

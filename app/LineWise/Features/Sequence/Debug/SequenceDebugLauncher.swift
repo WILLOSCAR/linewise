@@ -9,6 +9,7 @@ import UIKit
 ///   xcrun simctl launch <udid> com.linewise.app -seedDemo -openSequenceEditor actual   # 编辑器（实际）
 ///   xcrun simctl launch <udid> com.linewise.app -seedDemo -openSequencePanel           # 线路页区块 + 掉落步选择
 ///   xcrun simctl launch <udid> com.linewise.app -seedDemo -openSequencePanel empty     # 区块空态
+///   附加 -sequenceLine <名字包含，如 黄 / 白 / 蓝>：指定用哪条线（默认：第一条有照片且有计划的线）
 ///   附加 -seedActual：给演示线造一份与计划差两步的实际顺序
 ///   附加 -sequenceScript "rewind:3,rf:3,lh:7,rh:7,miss,undo"：在编辑器里回放一段拖拽（见 SequenceEditorView）
 ///
@@ -54,12 +55,20 @@ final class SequenceDebugLauncher: NSObject {
         guard let container = try? ModelContainer(for: schema, configurations: [config]) else { return false }
         let context = container.mainContext
         let lines = (try? context.fetch(FetchDescriptor<Line>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
+        let args = CommandLine.arguments
+        // `-sequenceLine 黄`：按名字选线（真实照片的线就用这个）。
+        let named: Line? = {
+            guard let i = args.firstIndex(of: "-sequenceLine"), i + 1 < args.count else { return nil }
+            // 合成墙与真实照片可能同名（“直壁 · 黄”）：优先有计划顺序的那条（真实照片线）。
+            let matches = lines.filter { $0.name.contains(args[i + 1]) }
+            return matches.first(where: { $0.planSequence != nil }) ?? matches.first
+        }()
         // `-openSequencePanel empty` 看没有任何顺序的线的空态。
-        let wantsEmpty = CommandLine.arguments.contains("empty")
-        let picked = wantsEmpty
+        let wantsEmpty = args.contains("empty")
+        let picked = named ?? (wantsEmpty
             ? lines.first(where: { $0.hasPhoto && $0.planSequence == nil && $0.actualSequence == nil })
-            : lines.first(where: { $0.hasPhoto && $0.planSequence != nil })
-        guard let line = picked ?? lines.first(where: \.hasPhoto) else { return false }
+            : lines.first(where: { $0.hasPhoto && $0.planSequence != nil }))
+        guard let line = picked ?? lines.first(where: \.hasPhoto) ?? lines.first else { return false }
 
         // `-seedActual`：给演示线造一份和计划差两步的“实际”，方便看差异标注。
         if CommandLine.arguments.contains("-seedActual"), line.actualSequence == nil, let plan = line.planSequence, plan.steps.count >= 3 {

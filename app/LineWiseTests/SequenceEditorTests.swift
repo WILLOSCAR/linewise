@@ -264,7 +264,7 @@ struct SequencePoseTests {
         let pose = SequencePoseBuilder.pose(state: state, holds: [h1, h2], aspect: 0.75, profile: .default)
         #expect(pose.leftHand == CGPoint(x: 0.4 * 0.75, y: 0.8))
         #expect(pose.rightHand == CGPoint(x: 0.6 * 0.75, y: 0.5))
-        #expect(pose.leftFoot.y <= SequencePoseBuilder.groundY)
+        #expect(pose.leftFoot.y <= SequencePoseBuilder.groundY(holds: [h1, h2]))
     }
 
     @Test("按下命中最近末端；叠在同点的两只手按手指左右侧区分；太远不命中")

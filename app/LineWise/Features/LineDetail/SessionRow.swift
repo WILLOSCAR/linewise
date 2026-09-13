@@ -48,11 +48,13 @@ struct SessionRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var headline: String {
+    var headline: String {
         var parts = [DateText.short(session.date)]
         parts.append(session.attemptCount == 1 ? "1 次" : "\(session.attemptCount) 次")
         if let label = line.label(for: session.fallHoldID) {
             parts.append("掉在 \(label)")
+        } else if !session.reviewText.fall.isEmpty {
+            parts.append("掉在 \(session.reviewText.fall)")
         } else if session.sent, session.fallHoldID == nil {
             parts.append("没掉")
         }
@@ -61,7 +63,8 @@ struct SessionRow: View {
     }
 
     private var displayNote: String? {
-        guard let note = session.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty else { return nil }
+        let note = session.reviewText.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty else { return nil }
         return note
     }
 }

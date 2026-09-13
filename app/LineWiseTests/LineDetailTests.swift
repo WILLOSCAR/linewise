@@ -171,21 +171,71 @@ struct SessionDraftMergeTests {
     }
 }
 
-@Suite("无照片线的“掉在哪”")
+@Suite("无照片线的“掉在哪”：旧编码只读，新数据走 fallText")
 struct NoPhotoFallTests {
-    @Test func roundTrip() {
-        let encoded = NoPhotoFall.encode(fall: " 大球 ", note: "右脚踩高")
-        #expect(encoded == "掉在 大球 · 右脚踩高")
-        let decoded = NoPhotoFall.decode(encoded)
-        #expect(decoded.fall == "大球")
-        #expect(decoded.note == "右脚踩高")
+    @Test("新旧无照片掉落位置贯穿历史、分享、问题变更和撤销")
+    @MainActor
+    func noPhotoReviewSurfaces() throws {
+        let f = try StoreFixture()
+        let (_, wall, line) = try f.makeLine(holdCount: 0)
+        wall.photoFileName = nil
+        let session = f.store.newSession(for: line, date: f.daysAgo(0))
+        session.note = "掉在 大球 · 右脚踩高"
+        #expect(SessionRow(line: line, session: session).headline.contains("掉在 大球"))
+        #expect(ShareVisit(session: session).fallText == "大球")
+        session.fallText = "第三个点"
+        session.note = nil
+        session.sent = true
+        let headline = SessionRow(line: line, session: session).headline
+        #expect(headline.contains("掉在 第三个点"))
+        #expect(!headline.contains("没掉"))
+        line.reminderText = "上次的提醒"
+        let undo = f.store.answerCheck(session, line: line, check: .differentProblem)
+        #expect(line.reminderText == "掉在 第三个点")
+        undo()
+        #expect(line.reminderText == "上次的提醒")
+        #expect(session.check == nil)
     }
 
-    @Test func partial() {
-        #expect(NoPhotoFall.encode(fall: "", note: "只有一句话") == "只有一句话")
-        #expect(NoPhotoFall.encode(fall: "第三个点", note: "") == "掉在 第三个点")
+    @Test("旧编码解码")
+    func decodeLegacy() {
+        let decoded = NoPhotoFall.decode("掉在 大球 · 右脚踩高")
+        #expect(decoded.fall == "大球")
+        #expect(decoded.note == "右脚踩高")
         #expect(NoPhotoFall.decode("掉在 第三个点").fall == "第三个点")
         #expect(NoPhotoFall.decode("普通备注").note == "普通备注")
         #expect(NoPhotoFall.decode(nil).note == "")
+    }
+
+    @Test("新字段优先；没有新字段时才拆旧前缀")
+    func resolve() {
+        let fresh = NoPhotoFall.resolve(fallText: "第三个点", note: "掉在 大球 · 别拆我")
+        #expect(fresh.fall == "第三个点")
+        #expect(fresh.note == "掉在 大球 · 别拆我")
+        let legacy = NoPhotoFall.resolve(fallText: nil, note: "掉在 大球 · 出手前先休息")
+        #expect(legacy.fall == "大球")
+        #expect(legacy.note == "出手前先休息")
+    }
+
+    @Test("草稿合并时文字版掉在哪以草稿为先，空则保留")
+    func mergeFallText() {
+        let existing = SessionDraft(attemptCount: 1, fallText: "大球")
+        #expect(SessionDraft(attemptCount: 1, fallText: " 小球 ").merged(into: existing).fallText == "小球")
+        #expect(SessionDraft(attemptCount: 1).merged(into: existing).fallText == "大球")
+    }
+}
+
+@Suite("头图副标题去重")
+struct LineHeroSubtitleTests {
+    @Test("线名已含墙区与角度时不再重复")
+    func dedupe() {
+        #expect(LineHeroSubtitle.make(name: "直壁 · 黄", area: "直壁·黄", grade: "V3", felt: nil, angle: "直壁") == "V3")
+        #expect(LineHeroSubtitle.make(name: "大斜板 · 白", area: "大斜板", grade: "V4", felt: nil, angle: "斜板") == "V4")
+    }
+
+    @Test("不重复的部分按 墙区 · 难度 · 感觉 · 角度 排列；无照片补一句")
+    func order() {
+        #expect(LineHeroSubtitle.make(name: "小红", area: "仰角墙", grade: "V5", felt: "感觉偏硬", angle: "仰角") == "仰角墙 · V5 · 感觉偏硬")
+        #expect(LineHeroSubtitle.make(name: "训练区 · 无照片", area: "训练区", grade: nil, felt: nil, angle: nil, hasPhoto: false) == "无照片")
     }
 }

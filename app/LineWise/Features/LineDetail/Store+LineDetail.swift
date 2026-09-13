@@ -70,7 +70,16 @@ extension Store {
         session.reason = draft.reason
         let note = draft.trimmedNote
         session.note = note.isEmpty ? nil : note
+        // 有点就不存文字版；没点（无照片线）才写 fallText。
+        let fallText = draft.trimmedFallText
+        session.fallText = (draft.fallHoldID == nil && !fallText.isEmpty) ? fallText : nil
         session.attempts = AttemptSync.resized(draft.attempts, to: draft.attempts.isEmpty ? 0 : session.attemptCount)
+    }
+
+    /// 写入并更新提醒：`fallLabel` 优先用点的编号，无照片线退回文字版。
+    func commit(_ draft: SessionDraft, to session: Session, line: Line, date: Date) {
+        write(draft, to: session, date: date)
+        commitSession(session, line: line, fallLabel: line.label(for: session.fallHoldID) ?? session.fallText)
     }
 
     /// 合并进另一条记录后，把原记录彻底移除（不提供撤销：这一步是用户改日期的直接结果）。
@@ -85,14 +94,19 @@ extension Store {
 }
 
 extension SessionDraft {
-    init(session: Session) {
+    /// 从记录建草稿。旧数据把“掉在 …”编码在一句话开头，这里拆回 `fallText`（仅无照片线需要）。
+    init(session: Session, decodeLegacyFall: Bool = false) {
+        let resolved = decodeLegacyFall
+            ? NoPhotoFall.resolve(fallText: session.fallText, note: session.note)
+            : (fall: session.fallText ?? "", note: session.note ?? "")
         self.init(
             attemptCount: session.attemptCount,
             sent: session.sent,
             fallHoldID: session.fallHoldID,
             fallStepIndex: session.fallStepIndex,
             reason: session.reason,
-            note: session.note ?? "",
+            note: resolved.note,
+            fallText: resolved.fall,
             attempts: session.attempts
         )
     }

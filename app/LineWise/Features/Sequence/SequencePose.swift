@@ -3,8 +3,17 @@ import SwiftUI
 
 /// 把“四肢在哪个点”翻译成火柴人姿态：接触状态 → 等比空间坐标 → 求解。
 enum SequencePoseBuilder {
-    /// 地面在等比空间里的 y。
-    static let groundY: CGFloat = 0.985
+    /// 地面最低不低于图底（留一点边）。
+    static let maxGroundY: CGFloat = 0.985
+    /// 最低点下沿之下多远算地面（等比空间）。
+    static let groundMargin: CGFloat = 0.08
+
+    /// 地面在等比空间里的 y：取“最低点的下沿 + 一点余量”而不是图底部，
+    /// 让起步的脚站在垫子上而不是照片底边。没有点时取图底。
+    static func groundY(holds: [Hold]) -> CGFloat {
+        guard let lowest = holds.map({ $0.y + $0.r }).max() else { return maxGroundY }
+        return min(maxGroundY, CGFloat(lowest) + groundMargin)
+    }
 
     /// 火柴人高度（等比空间单位）：由整条线的点在竖直方向的跨度推导，
     /// 让人和线的尺度大致匹配；夹在 0.22…0.38。
@@ -43,7 +52,7 @@ enum SequencePoseBuilder {
         return StickFigureSolver.solve(
             contacts: contacts(state: state, holds: holds, aspect: aspect, override: override),
             proportions: proportions,
-            groundY: groundY,
+            groundY: groundY(holds: holds),
             bounds: CGRect(x: 0, y: 0, width: aspect, height: 1)
         )
     }
@@ -168,37 +177,92 @@ struct PoseVector: VectorArithmetic {
     }
 }
 
-/// 带火柴人的聚光灯画布；姿态变化时由 SwiftUI 逐帧插值（`withAnimation` 驱动）。
+/// 带火柴人的聚光灯画布：`SpotlightImage`（取景到这条线）+ 一层可拖的手脚把手。
+/// 姿态与把手缩放一起由 SwiftUI 逐帧插值（`withAnimation` 驱动）。
 struct SequenceCanvas: View, Animatable {
     var image: UIImage?
-    var aspect: Double
-    var holds: [Hold]
-    var startHoldIDs: [UUID] = []
-    var finishHoldID: UUID?
+    var scene: SequenceScene
     var highlightedHoldID: UUID?
     var pose: PoseVector
+    /// 正在被拖的肢体：它的把手放大、其它点略暗。
+    var draggingLimb: Limb?
+    /// 把手缩放：拖动中 `Self.dragHandleScale`，松手回 1。与姿态一起插值。
+    var handleScale: CGFloat = 1
     var showNumbers: Bool = true
     var dim: Double = 0.66
     var ringWidth: CGFloat = 2
 
-    var animatableData: PoseVector {
-        get { pose }
-        set { pose = newValue }
+    /// 把手半径（pt）与拖动中的放大倍数。
+    static let handleRadius: CGFloat = 7
+    static let dragHandleScale: CGFloat = 1.3
+
+    var animatableData: AnimatablePair<PoseVector, CGFloat> {
+        get { AnimatablePair(pose, handleScale) }
+        set { pose = newValue.first; handleScale = newValue.second }
     }
 
     var body: some View {
-        SpotlightImage(
-            image: image,
-            aspect: aspect,
-            holds: holds,
-            startHoldIDs: startHoldIDs,
-            finishHoldID: finishHoldID,
-            highlightedHoldID: highlightedHoldID,
-            pose: pose.pose,
-            poseIsoAspect: aspect,
-            showNumbers: showNumbers,
-            dim: dim,
-            ringWidth: ringWidth
-        )
+        ZStack {
+            SpotlightImage(
+                image: image,
+                aspect: scene.aspect,
+                holds: scene.holds,
+                startHoldIDs: scene.startHoldIDs,
+                finishHoldID: scene.finishHoldID,
+                highlightedHoldID: highlightedHoldID,
+                pose: pose.pose,
+                poseIsoAspect: scene.aspect,
+                showNumbers: showNumbers,
+                dim: dim,
+                ringWidth: ringWidth,
+                focus: scene.focus,
+                dragEmphasis: dragProgress
+            )
+            handleLayer
+        }
+    }
+
+    /// 拖动进度 0…1（由把手缩放反推，这样松手时的变暗也跟着弹回）。
+    private var dragProgress: CGFloat {
+        min(max((handleScale - 1) / (Self.dragHandleScale - 1), 0), 1)
+    }
+
+    private var handleLayer: some View {
+        Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { ctx, size in
+            let geo = scene.geometry(for: size)
+            let t = dragProgress
+
+            for (limb, view) in Self.handlePositions(pose: pose.pose, geo: geo, aspect: scene.aspect) {
+                let active = limb == draggingLimb
+                let r = Self.handleRadius * (active ? handleScale : 1)
+                let fill: Color = limb.isLeft ? .white : .accent
+                ctx.drawLayer { layer in
+                    layer.addFilter(.shadow(color: .black.opacity(0.55), radius: 3, y: 1))
+                    if active {
+                        layer.fill(Path(ellipseIn: Self.circle(view, r + 8 * t)), with: .color(fill.opacity(0.28 * t)))
+                    }
+                    layer.fill(Path(ellipseIn: Self.circle(view, r)), with: .color(fill))
+                    layer.stroke(Path(ellipseIn: Self.circle(view, r)), with: .color(Color.ink.opacity(0.85)), lineWidth: 1.5)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// 四个把手的视图坐标。叠在同一点上的把手按“左 −x / 右 +x、手 −y / 脚 +y”错开一点，
+    /// 与 `SequenceHitTesting.nearestEndpoint` 的消歧规则一致：看到的在哪，按哪就拿到哪只。
+    static func handlePositions(pose: StickFigurePose, geo: SpotlightGeometry, aspect: Double) -> [(limb: Limb, view: CGPoint)] {
+        let ends = SequencePoseBuilder.endpoints(of: pose).map { (limb: $0.limb, view: geo.fromIso($0.point, aspect: aspect)) }
+        return ends.map { end in
+            let overlapping = ends.contains { $0.limb != end.limb && hypot($0.view.x - end.view.x, $0.view.y - end.view.y) < 2 }
+            guard overlapping else { return end }
+            let dx: CGFloat = end.limb.isLeft ? -5 : 5
+            let dy: CGFloat = end.limb.isHand ? -4 : 4
+            return (end.limb, CGPoint(x: end.view.x + dx, y: end.view.y + dy))
+        }
+    }
+
+    private static func circle(_ c: CGPoint, _ r: CGFloat) -> CGRect {
+        CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
     }
 }
