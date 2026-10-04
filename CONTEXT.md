@@ -1,72 +1,53 @@
 # Climb Context
 
-Climb is a Watch + iPhone product exploration for indoor bouldering. The working product name is **LineWise** with the Chinese name **线感**: a bouldering companion that helps the user read lines, remember gym visits, understand movement, train deliberately, and eventually connect with climbing partners.
-
-The current P0 frame is still a **Gym Visit Memory System**: Watch captures low-interruption training anchors, while iPhone maintains route/project memory, movement cues, review, and next-session recall.
+**线感 / LineWise** is an iPhone app for indoor bouldering. You photograph a wall; the phone segments every hold; you tap one and the whole same-colour line lights up (the spotlight). You can then pose a stick figure scaled to your body on the line, play the moves back, and keep where you fell, why, and what to try next. The product contract is `docs/linewise_prd_v2_0.md`. Visuals and interaction follow `docs/linewise_ui_spec_v1.md`.
 
 ## Product Rules
 
-- `抱石` in English is **Bouldering**.
-- `LineWise` / `线感` is the current working name, not yet a trademark, domain, or App Store availability conclusion.
-- The P0 scope is indoor bouldering visits, not rope climbing, outdoor climbing, route guidebooks, social feeds, coach dashboards, or gym SaaS.
-- Route/project identity is first-class. Attempt counts without a route or project context lose most of their product value.
-- Watch owns short in-session actions: start, rest timer, Try/Send/Fail/Undo, and minimal project switching. `Flash` is a review/result attribute, not a required separate Watch button in P0.
-- iPhone owns route cards, subjective grade, failure reasons, movement cues, session review, and next-session recall.
-- Automation must be phrased as `suggested`, not `detected`. User correction is part of the trust model.
-- HealthKit, heart rate, and motion data are supporting evidence. Do not make medical, safety, fatigue, or precise calorie claims.
-- P0 should prove the manual-first `route/project -> attempt/rest -> review -> next-session recall` loop before AI route reading, video analysis, partner matching, teaching content, or gym integration.
-- The long-term product may include AI route reading, stick-figure movement visualization, routesetter-lens analysis, teaching/training, and climbing partner workflows, but these must remain separate modules until validated.
-- Canonical P0 chain: `GymVisit -> RouteCard -> Attempt -> FailureEpisode -> MoveCue -> NextSessionCue`.
+- `抱石` in English is **Bouldering**. `LineWise` / `线感` is a working name, not a trademark or App Store conclusion.
+- Scope: indoor bouldering, one person, iPhone, local-first, no account, no network needed. Not rope, outdoor, coaches, gyms, community, or video.
+- Everything is organised by **line**. There is no day or gym-visit view; dates are a field and a history filter.
+- The spotlight is the only visual motif. Every screen is that image plus one thing. Holds are drawn as their real contours; a hold that could not be segmented falls back to a circle.
+- A line's identity is its lit holds on a wall photo. Colour is only how the user picks them. Lines without a photo are allowed but lose the spotlight and sequence.
+- Only on-device models of 100 MB or less (currently SAM 2.1 Tiny, Core ML). No cloud inference, no uploads, no account.
+- The system suggests, never scores: detected holds, colour groups, start/finish and move drafts are editable suggestions. The simulation respects body size and joint limits and may show a reach gap, but never says whether a route is climbable.
+- Summaries quote only the user's own records on that line. Nothing is inferred about the user's ability from photos or body size. Weight is never asked.
+- Operation budget is a hard requirement: build a colour line in ≤ 10 s, log a session in ≤ 4 taps, zero taps needed while climbing.
+- Motion explains cause and effect: animations start from the user's finger, waiting is carried by the scan band, and reduce-motion is respected. No button panels to move limbs; no side-by-side split in portrait.
+- Work follows PRD v2.0 Demo order A → D, each with a real gym visit. Apple Watch, imports, video analysis, scoring, cloud AI, search and iPad layouts are out of scope.
 
-## Ubiquitous Language
+## Language
 
-| Term | Meaning |
-| --- | --- |
-| `LineWise` | Working English product name. It means line-reading wisdom: the product helps users see route logic, movement options, and training implications. |
-| `线感` | Working Chinese product name. It points to route-reading intuition, movement feel, and the indoor bouldering habit of reading a line before trying it. |
-| `GymVisit` | One real visit to a climbing gym, from start to finish. It may contain many routes, attempts, rest intervals, and notes. |
-| `RouteCard` | The user's personal memory object for one gym route. It can include color, wall area, official grade, subjective grade, photo, status, and notes. It does not require an official gym route database. |
-| `Project` | A route the user cares about enough to revisit. A project can be unsent, sent, archived, or gone after a reset. |
-| `Attempt` | One try on a route or project. It should be tied to a RouteCard when possible. |
-| `RestInterval` | The recovery window after an attempt. It is part of pacing and memory, not a medical prescription. |
-| `FailureEpisode` | A user-confirmed or suggested explanation of where and why an attempt failed. It should usually have one primary blocker and may link to a MoveCue. |
-| `MoveCue` | A short cue about how to climb a route, such as foot sequence, body position, timing, or a coach/friend hint. Use this as the user-facing term instead of `beta`. |
-| `NextSessionCue` | A small reminder shown before or during the next gym visit, telling the user what to try and what to remember. |
-| `SubjectiveGrade` | The user's felt difficulty for a route, separate from the gym's official grade. |
-| `SuggestedTimeline` | Any inferred or automatically proposed timeline. It is always editable and never treated as ground truth. |
-| `SuggestionProvenance` | Thin metadata that records why something was suggested, such as source, confidence, and whether the user accepted, edited, or rejected it. |
-| `CorrectionEvent` | A user correction to an event, annotation, route, or suggestion. Corrections are product trust data, not just cleanup. |
-| `RouteRead` | An AI-assisted interpretation of a route photo, including hold grouping, start/top candidates, movement hypotheses, and possible movement cues. It is a suggestion, not ground truth. |
-| `StickFigureCue` | A playful visual explanation that places a simple body model or motion path onto the route to explain sequencing and movement. |
-| `SetterLens` | An analysis view that explains a route from a routesetter's perspective: intended movement, key difficulty, constraint, wall style, and skill focus. |
-| `TrainingPath` | A structured learning path that connects route failures to teaching videos, movement drills, strength/mobility work, and next-session practice. |
-| `ProofCheck` | A small next-session validation prompt that asks whether a MoveCue or drill helped on the route. |
-| `MicroDrill` | A short on-wall drill linked to a repeated FailureEpisode. It is not a generic course item. |
-| `ClimbingBuddy` | A companion layer that may mean an AI assistant, a human climbing partner, or both. Do not collapse these into one feature without specifying which one is being designed. |
-| `PersonalClimbingDataset` | The user's local-first collection of route photos, attempt outcomes, movement cues, Watch data, and optional videos. It exists to make future AI and training features more reliable. |
+| Term | Code | Meaning |
+| --- | --- | --- |
+| 岩馆 | `Gym` | A name. No GPS. |
+| 墙 | `Wall` | One wall photo (optional) in a gym, with optional area name and angle. Can carry many lines. |
+| 线 | `Line` | A set of lit holds on a wall, with start, finish, grade text, felt grade, status and cycle. |
+| 点 | `Hold` | One hold on the line: normalised position and radius, plus an optional contour polygon and hand/foot anchor. Numbered bottom to top as ①…; the shared language for fall point, sequence and notes. |
+| 识别出的岩点 | `DetectedHold` | A hold found by whole-wall segmentation on a wall photo (polygon, centre, colour). Lines pick from these. |
+| 颜色组 | `colorGroup` | The set of detected holds sharing the tapped hold's colour. Saturated colours expand automatically; white, black and grey do not. |
+| 读线 | — | Photograph → scan → contours → tap one → colour group lights up → correct → start/finish. |
+| 记录 / 记这一次 | `Session` | One day on one line: attempts, sent, fall point (or fall text), one reason, and 下次试什么. `source` is `in_gym`, `after` or `backfill`. |
+| 尝试 | `AttemptRecord` | Optional per-attempt row inside a session. |
+| 为什么掉 | `FailReason` | One of 顺序 / 脚 / 身体 / 时机 / 够不着 / 不敢 / 没力 / 不知道. |
+| 下次试什么 | `Session.note` | The user's own sentence. Replaces the old terms MoveCue and beta. |
+| 提醒 | `Line.reminderText` | Built from the most recent session with content: 掉哪 · 原因 · 下次试什么. Editable. |
+| 验证 | `Session.check` | 有用 / 没变化 / 问题变了 / 没试, stored on the next session with `reminderSnapshot` (the reminder text it judged). Asked in 记这一次. |
+| 顺序 / 快照 | `ClimbSequence` | Stick-figure steps dragged onto holds, kept as a plan and an actual; played back with smooth interpolation. |
+| 体型 | `BodyProfile` | Height (asked once), arm span and optional leg ratio. Only used to draw and pose the figure. |
+| 分享图 | ShareCard | A rendered 1080×1920 image. Exported, never uploaded. |
+| 状态 | `LineStatus` | `projecting` / `sent` / `dropped` / `gone`; 再磕一轮 starts a new cycle. |
 
-## Active Product Docs
+Old terms (GymVisit, RouteCard, FailureEpisode, MoveCue, NextSessionCue, ProofCheck, capture modes) map to these in PRD §16. Use the new terms in new docs, code and issues.
 
-- `docs/project_background.md`: active project background and strategic framing for new collaborators.
-- `docs/climbing_bouldering_prd_v0_1.md`: active P0/P0.5 requirements contract.
-- `docs/climbing_bouldering_mvp_gate.md`: active Go/No-Go gates and validation metrics.
-- `docs/climbing_bouldering_data_collection_plan.md`: active real-gym data collection protocol.
-- `docs/climbing_bouldering_platform_contract.md`: active Apple Watch/iPhone/HealthKit/privacy contract.
-- `docs/product_initialization_v0.md`: current Matt-style initialization note, working name, expanded product pillars, and near-term settlement plan.
-- `docs/adr/0002-linewise-expanded-product-vision.md`: durable decision to keep Gym Visit Memory as P0 while naming the broader product `LineWise` / `线感`.
-- `docs/adr/0003-canonical-p0-domain-model-and-terms.md`: durable decision for canonical P0 entities and terminology.
-- `docs/adr/0001-gym-visit-memory-system.md`: durable decision that the product starts from gym visit memory rather than generic session logging.
+## Docs
 
-## Historical Research Docs
+- Active: `CONTEXT.md`, the PRD v2.0, the UI spec, `docs/linewise_status_2026-09-13.md` (implementation state, build and test commands), `docs/linewise_hold_segmentation_proposal_2026-09-13.md` (segmentation evidence), `docs/adr/`.
+- Evidence: `docs/climbing_bouldering_research_report_v1.md` (July 2026 competitor and needs research; its product recommendations are superseded by the PRD).
+- History: `docs/linewise_prd_v1_0.md` (v1.1; v2.0 still cites its memory-loop sections), `docs/climbing_bouldering_prd_v0_1.md`, `…_mvp_gate.md`, `…_platform_contract.md`, `…_data_collection_plan.md`, `docs/project_background.md`, `docs/product_initialization_v0.md`, and the older research reports. Read the platform contract again when Watch or HealthKit come back.
 
-- `docs/bouldering_field_research_v2.md`: field-observation-oriented V2 research and source material.
-- `docs/climbing_bouldering_research_report_v1.md`: earlier five-PM product-direction baseline.
-- `docs/bouldering_industry_history_business_report.md`: industry, brand, commercial, and coaching background.
-- `docs/bouldering_market_mvp_report.md`: original broad MVP market report.
+## Validation
 
-## Validation Principles
-
-- Product validation comes first: real gym visits, RouteCard creation, Watch tap burden, next-session recall, and review usage.
-- Data collection should start before complex AI promises: route photos, start/top labels, attempt outcomes, failure reasons, movement cues, and Watch timelines are the first useful dataset.
-- Simulator validation will matter after implementation begins, but it cannot replace physical Apple Watch validation for motion recording, background behavior, HealthKit writes, WatchConnectivity, and in-gym usability.
-- Any PRD must define Go/No-Go metrics before implementation issues are created.
+- Product questions are answered in real gyms, not in the simulator. Each gym visit ends with the PRD §10.4 field note in `docs/field-notes/YYYY-MM-DD.md`.
+- Simulator tests cover logic and UI flows. Camera, OCR, speech, share and performance still need a physical iPhone.
+- Real wall photos stay out of the public repo (people appear in them).

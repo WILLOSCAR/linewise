@@ -175,9 +175,14 @@ final class Line {
         return parts.joined(separator: " · ")
     }
 
+    /// 最近一次记了掉在哪、原因或上了的记录。
+    var lastFallSession: Session? {
+        orderedSessions.last(where: { $0.fallHoldID != nil || $0.fallText?.isEmpty == false || $0.reason != nil || $0.sent })
+    }
+
     /// 最新一次“掉在哪 · 原因”的短句。
     var lastFallLine: String? {
-        guard let s = orderedSessions.last(where: { $0.fallHoldID != nil || $0.fallText?.isEmpty == false || $0.reason != nil || $0.sent }) else { return nil }
+        guard let s = lastFallSession else { return nil }
         if s.sent, s.fallHoldID == nil, s.fallText?.isEmpty != false { return "上次上了" }
         var parts: [String] = []
         if let l = label(for: s.fallHoldID) { parts.append("上次掉在 \(l)") }
@@ -195,11 +200,9 @@ final class Line {
                 reason: s.reason, note: s.note, check: s.check, cycle: s.cycle
             )
         }
-        let answered = reminderSessionID.map { rid in
-            orderedSessions.contains { $0.check != nil && $0.id != rid && $0.createdAt > (orderedSessions.first { $0.id == rid }?.createdAt ?? .distantPast) }
-        } ?? false
+        // “没回答”只指提醒之后已经有新记录在等回答；刚由最新记录拼出的提醒还没机会被验证。
         return LineDigest(sessions: sessions, reminder: reminderText, reminderVerified: reminderVerified,
-                          reminderAnswered: answered, status: status, cycle: cycle)
+                          reminderAnswered: pendingCheckSession == nil, status: status, cycle: cycle)
     }
 
     /// 是否需要在线路页问“上次这句有用吗？”：有提醒，且提醒之后出现了新的记录尚未回答。

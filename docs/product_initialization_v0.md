@@ -1,7 +1,7 @@
 # LineWise Product Initialization v0
 
 Date: 2026-06-30  
-Status: Requirements settlement, market research, naming, and data-collection design. No implementation PRD yet.
+Status: Historical (June 2026 initialization). Superseded by PRD v1.1 and ADR 4; the naming rationale still holds.
 
 ## 1. Why This Doc Exists
 

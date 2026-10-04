@@ -1,6 +1,7 @@
 # ADR 1: Start From Gym Visit Memory
 
 Date: 2026-06-30
+Status: Partly superseded by ADR 4 (2026-09). Still valid: memory before generic logging, route identity first, suggested not detected. Replaced: the GymVisit object and Watch as the capture surface.
 
 ## Decision
 

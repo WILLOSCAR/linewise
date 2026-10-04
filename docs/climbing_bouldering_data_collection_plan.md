@@ -1,7 +1,7 @@
 # LineWise Data Collection Plan
 
-Date: 2026-07-01  
-Status: Active plan for real indoor bouldering data collection
+Date: 2026-07-13
+Status: Historical. Current field protocol is the PRD v1.1 §10.3–§10.4 field note. Kept for the later AI-dataset phase.
 
 ## 1. Purpose
 
@@ -17,6 +17,10 @@ The goal is not to collect a huge dataset first. The goal is to collect a small,
 4. **No official truth claims.** User labels are personal memory, not official gym route data.
 5. **Capture why failure happened.** Attempt outcome alone is not enough.
 6. **Link everything to RouteCard.** Photos, attempts, cues, and failures need route identity.
+7. **Collect outcomes, not just advice.** A MoveCue becomes training data only when a later ProofCheck records what happened.
+8. **Preserve provenance.** Watch, iPhone, history, Health, FIT, Photos, human and model outputs must remain distinguishable.
+9. **Do not rely on color alone.** Every meaningful Project should have a second route anchor.
+10. **Collect personal context only when it changes a decision.** Body/experience fields are optional, user-authored, and never inferred in this phase.
 
 ## 3. Field Session Checklist
 
@@ -24,13 +28,13 @@ Before entering the gym:
 
 - Apple Watch charged.
 - iPhone storage available.
-- Decide whether this is a normal session, Watch test, or dataset session.
+- Decide whether this visit uses Watch capture, iPhone quick capture, review-only, or dataset mode.
 - Check whether the gym allows route photos/videos.
 
 During the gym visit:
 
 - Create RouteCards for meaningful routes.
-- Mark attempts on Watch when practical.
+- Mark meaningful attempts using the selected capture mode when practical.
 - Record one MoveCue when a route produces a useful lesson.
 - Avoid photographing unrelated people.
 - If a wall is crowded, wait, crop, or skip photo capture.
@@ -39,7 +43,8 @@ After the visit:
 
 - Review the session within 24 hours.
 - Attach attempts to RouteCards.
-- Add FailureEpisodes and NextSessionCue.
+- Add FailureEpisodes and NextSessionCue; on the next visit, complete a ProofCheck when possible.
+- Verify route identity using at least two of label, wall area, start location, tag/number, photo, or color.
 - Mark data quality.
 - Export/debug if needed.
 
@@ -47,14 +52,25 @@ After the visit:
 
 | Object | Required Fields | Optional Fields |
 | --- | --- | --- |
-| `GymVisit` | start_at, end_at, modality=indoor_bouldering, review_state | gym_label, session_focus |
-| `RouteCard` | label, status | gym_label, wall_area, color, grade_text, subjective_grade, photo_ref |
-| `Attempt` | route_card_id?, result, timestamp | duration, rest_after, source |
+| `GymVisit` | start_at, end_at, modality=indoor_bouldering, review_state, source | gym_label, session_focus, original_timezone, import_transaction_id |
+| `RouteCard` | label, status, source | gym_label, wall_area, color, route_number_or_tag, start_anchor, grade_text, subjective_grade, photo_ref |
+| `Attempt` | route_card_id?, result, timestamp, source | duration, rest_after, source_external_id |
 | `RestInterval` | start_at, end_at | route_card_id, reason |
 | `FailureEpisode` | route_card_id, primary_blocker | attempt_id, location_note, confidence |
 | `MoveCue` | route_card_id, text | source, linked_failure_episode |
 | `NextSessionCue` | route_card_id, cue_text | reminder_context |
+| `ProofCheck` | next_session_cue_id, result | revised_move_cue, tested_at |
 | `CorrectionEvent` | object_type, event_type, timestamp | before, after, latency_ms |
+
+Optional P1 `ClimberContext` research fields, collected only with explicit consent:
+
+| Field | Rule |
+| --- | --- |
+| `height_range` | Coarse self-reported range, not inferred |
+| `reach_range` | Coarse self-reported ape-index/reach range |
+| `experience_band` | Self-reported, not derived from a single grade |
+| `movement_preferences` | Optional strengths/dislikes in the user's own words |
+| `self_reported_constraints` | Optional; not medical diagnosis and not used for safety claims |
 
 ## 5. P0.5 Photo Data
 
@@ -70,6 +86,8 @@ For each route selected for dataset mode, collect:
 | `occlusion_bucket` | `clear`, `partial_person`, `crowded`, `blocked` |
 | `route_display_color` | User-labeled color or tag color |
 | `color_mode` | `hold_color`, `tag_color`, `mixed`, `unknown` |
+| `route_number_or_tag` | Visible number, shape, tape mark, or official label if present |
+| `start_anchor` | User description or tapped start location |
 | `start/top` | User tap if visible |
 | `quality_state` | `complete`, `partial`, `noisy`, `discard` |
 
@@ -213,23 +231,28 @@ Do not require secondary tags in P0.
 | `noisy` | Occluded, blurry, ambiguous, or heavily angled | Evaluation only |
 | `discard` | Privacy, bad image, route unclear | No |
 
-## 10. First 5 Gym Visits Plan
+## 10. First 6 Gym Visits Plan
 
 | Visit | Goal | Minimum Output |
 | --- | --- | --- |
 | 1 | Memory baseline | 3 RouteCards, 3 attempts, 1 NextSessionCue |
-| 2 | Watch burden | 1 full Watch session, 10+ attempt events |
+| 2 | Capture comparison | Watch or iPhone quick capture, plus review-only baseline |
 | 3 | Route photo quality | 5 route-focused photos, 5 wall-context photos |
 | 4 | Failure taxonomy | 10 FailureEpisodes, 5 MoveCues |
 | 5 | Dataset correction | 5 annotated routes, correction time recorded |
+| 6 | Integrity/accessibility | 1 history entry, 1 repeated import fixture, 3 routes retrieved without color |
 
 After 5 visits, answer:
 
 - Is this easier than notes/photos?
 - Are the fields too many?
 - Which photos are usable?
-- Does Watch capture survive the gym?
+- Which capture mode survives the gym with the least burden?
 - Is NextSessionCue actually reopened?
+- Does a reopened cue produce a useful ProofCheck?
+- Can a past visit be entered with the correct date and source?
+- Does repeating an import create zero duplicates?
+- Can the user find a Project when color names are hidden?
 
 ## 11. Privacy Rules
 

@@ -222,10 +222,12 @@ struct Store {
     /// 回答“上次这句有用吗？”
     func answerCheck(_ session: Session, line: Line, check: ReminderCheck) -> () -> Void {
         let previous = session.check
+        let previousSnapshot = session.reminderSnapshot
         let previousVerified = line.reminderVerified
         let previousReminder = line.reminderText
         let previousReminderSession = line.reminderSessionID
         session.check = check
+        session.reminderSnapshot = previousReminder
         session.updatedAt = .now
         switch check {
         case .worked:
@@ -243,6 +245,7 @@ struct Store {
         save()
         return { [self] in
             session.check = previous
+            session.reminderSnapshot = previousSnapshot
             line.reminderVerified = previousVerified
             line.reminderText = previousReminder
             line.reminderSessionID = previousReminderSession

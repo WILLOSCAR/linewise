@@ -77,8 +77,15 @@ extension Store {
     }
 
     /// 写入并更新提醒：`fallLabel` 优先用点的编号，无照片线退回文字版。
-    func commit(_ draft: SessionDraft, to session: Session, line: Line, date: Date) {
+    /// `reminder` 是表单里问过“有用吗”的那句提醒（没问为 nil）。验证必须在换提醒之前记下，
+    /// 否则新记录一有内容，提醒就换成新的，对旧那句的验证也跟着丢了。
+    func commit(_ draft: SessionDraft, to session: Session, line: Line, date: Date, checking reminder: String? = nil) {
         write(draft, to: session, date: date)
+        if let reminder {
+            session.check = draft.check
+            session.reminderSnapshot = draft.check == nil ? nil : reminder
+            if draft.check == .worked, line.reminderText == reminder { line.reminderVerified = true }
+        }
         commitSession(session, line: line, fallLabel: line.label(for: session.fallHoldID) ?? session.fallText)
     }
 
@@ -107,7 +114,8 @@ extension SessionDraft {
             reason: session.reason,
             note: resolved.note,
             fallText: resolved.fall,
-            attempts: session.attempts
+            attempts: session.attempts,
+            check: session.check
         )
     }
 }

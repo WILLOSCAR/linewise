@@ -1,1748 +1,1087 @@
-# 攀岩 / Bouldering Apple Watch App 调研报告 v1
+# LineWise 室内抱石产品重新调研报告
 
-Date: 2026-05-24  
-Project: `watchapp/climb`  
-Status: Five-PM line-by-line reviewed primary report, revised after consensus veto fixes  
-English naming: `抱石` = **Bouldering**
+Date: 2026-07-13
 
-Reading path: 10-minute review should read `0 Executive Summary`, `2-17 主报告`, and `21 Final Consensus` first. Sections `1`, `18`, and `19` preserve the decision audit and are useful for tracing why the product was narrowed.
+Status: Research evidence (July 2026). Competitor and user findings are current; its product recommendations (Watch-assisted three capture modes, imports, ClimberContext) are superseded by PRD v1.1 and ADR 4.
 
----
+Project: LineWise / 线感
 
-## 0. Executive Summary
+Scope: Indoor Bouldering, iPhone + optional Apple Watch capture
 
-### 0.1 最终判断
-
-这个产品**有必要继续做独立验证**，但不能先假设它天然应该成长为一个独立平台。
-
-最合理的当前对外定位不是“攀岩版 Strava”、不是“AI 自动识别攀岩动作”、不是“路线库/社区/岩馆 SaaS”，而是：
-
-> **Apple Watch-backed bouldering training memory app：面向室内抱石用户，用 Watch 低干扰捕获训练锚点，用 iPhone 完成可修正复盘和下次训练前回忆。**
-
-内部决策模型是：
-
-> **Rhythm Capture + Recall Retrieval + Proof/Trust：手表管训练节奏，手机管可取回记忆，系统必须让记录可确认、可修正、可追溯。**
-
-更产品化的一句话：
-
-> 面向每周至少 2 次室内抱石、经常 project、且可能从低成本复盘中受益的 Apple Watch 用户，用最低交互成本记录 attempt、rest、send/fail 标签和 project 线索，并在 iPhone 上生成可修正、可在下次训练前取回的复盘。训练后复盘意愿本身是 P0 需要验证的假设。
-
-这版报告经过 5 个产品经理视角重新讨论后，最终收敛为一个更克制但更可上线的方向：
-
-| 结论 | 解释 |
-| --- | --- |
-| 可以做 | 室内抱石存在高频、重复、间歇、多尝试、多失败、重 project 的真实记录和复盘需求。 |
-| 需要小切口验证 | 市场已有 Apple Workout、Strava、Redpoint、Pinnacle、Climb Meter、KAYA、Crimpd、Vertical-Life 等替代品，不是空白市场。 |
-| Watch-first 成立 | 关键交互窗口在“下墙后的几秒休息期”，Watch 比 iPhone 更适合低干扰记录。 |
-| Watch-only 不成立 | 复杂修正、project 管理、趋势解释和复盘必须放到 iPhone。 |
-| Manual-first 是 P0 核心假设 | 即使自动候选很弱，产品也要先靠一键标记 + 训练后复盘成立。 |
-| Recall-led 是留存假设 | 用户长期使用的理由不应只是“记录本身”，而应是下次训练前能用到的记忆和提示；这一点需要 beta 验证。 |
-| Rhythm 是入口，不是付费理由 | 休息报时、触觉锚点和训练仪式能形成习惯，但 timer 本身容易商品化。 |
-| Recall 比 recap 更值钱 | 训练后复盘是清洗层，下次训练前能否取回 project cue 才是产品价值层。 |
-| Category 不是 timer，也不是 training OS | 内部战略假设是 `watch-backed training memory system for attempt-based sports`，但必须先从抱石 wedge 证明。 |
-| Trust/Legitimacy 进入 Proof | 主观状态不是噪声，但也不是诊断；只有在解释行为并改善下一次尝试时才进入系统。 |
-| 先验证，不先扩张 | P0 只验证室内抱石自由训练，不做 rope、户外、岩馆路线库、教练端、社交 feed。 |
-
-### 0.2 投资论点
-
-这个产品值得继续推进的理由是：
-
-1. **攀岩不是连续周期运动**：跑步看配速、距离、心率；抱石更关心 attempt、rest、send/fail、project、失败原因和下次策略。
-2. **默认工具缺语义层**：Apple Watch 原生支持 Climbing workout，但它不会告诉用户今天打了几次、哪条 project 卡住、休息是否影响后半段表现。
-3. **手机不是训练现场好入口**：攀岩时手上有镁粉、手机可能放包里、下墙后用户只愿意做 1-3 秒操作。
-4. **已有 Watch 攀岩 App 说明用户教育和供给尝试存在**：Redpoint、Pinnacle、Climb Meter 等说明“用表记录攀岩”不是陌生方向；但真实需求强度、留存和付费仍要由 beta 验证。
-5. **真正价值应在复盘，不在传感器炫技**：需要验证用户是否会因为 next-session recall 持续使用，而不是只做一次性记录。
-
-### 0.3 最大反对意见
-
-5 个 PM 讨论后，一致认为最大风险不是算法，而是行为成本。以下阈值是内部 beta 假设，不是行业基准；第一次真实 beta 后必须校准：
-
-| 反对意见 | 为什么危险 | 必须怎么验证 |
-| --- | --- | --- |
-| 用户不愿意抱石时戴表 | 磕碰、划伤、碍手、担心安全，都会让 Watch-first 失效。 | 目标用户中至少 60% 愿意整场戴表；低于 40% 直接 no-go。 |
-| 用户不愿意每次下墙后点 | 抱石一场可能 15-40 次尝试，高频标记容易烦。 | 中位交互负担不超过 20 taps/小时，且“不打断训练”评分 >= 4/5。 |
-| 用户训练后不看复盘 | 如果 recap 不能影响下次训练，记录就只是自嗨。 | 60% session 在 24 小时内被打开；40% 用户下次训练前会回看。 |
-| Apple Workout + 备忘录已经够用 | 免费、无学习成本、无迁移成本，是最强替代品。 | 4 周内 35% 新用户记录 >= 4 次真实 session。 |
-| 付费理由不足 | 垂直工具用户有限，免费替代多。 | 完成 >=3 次 session 的用户中，付费假门转化 >= 8%。 |
-
-### 0.4 最终产品原则
-
-| 原则 | 产品含义 |
-| --- | --- |
-| `Boulder only` | 首发只做室内抱石自由训练，不做绳攀、户外、训练课。 |
-| `Record-enabled, recap-led` | 记录只是原料，复盘和下次记忆才是价值兑现。 |
-| `Manual-first` | 先让用户的一键标记闭环成立，再用 motion/HR 降低成本。 |
-| `Suggested, not detected` | 自动结果只叫 suggested timeline，不叫 detected truth。 |
-| `Watch captures, iPhone explains` | Watch 做现场短操作，iPhone 做修正、解释和长期记忆。 |
-| `Recap is plumbing, recall is product` | 复盘不是终点，它服务下次训练前的 project recall。 |
-| `Time anchor is primitive, not product` | 报时/节奏是 Watch 侧状态切换原语，不是外部品类或付费理由。 |
-| `Legitimacy protects trust` | Proof 不只是客观证据，也包括用户修正、候选来源；若启用 AI，再记录 AI provenance。 |
-| `Low interruption over feature richness` | 少一个功能可以接受，多一次打扰可能毁掉产品。 |
-| `Kill gates before roadmap` | 指标没过时不扩功能、不讲平台、不讲 AI 助手。 |
-
-### 0.5 P0 范围
-
-P0 只证明一个闭环：
-
-> Watch 开始 session -> 低干扰记录时间、心率、rest、attempt 标签 -> iPhone 修正和复盘 -> 下次训练前能回看并产生行动。
-
-| 模块 | P0 必须有 | P0 不做 |
-| --- | --- | --- |
-| Watch session | Start Boulder、Pause/Resume、End、长按结束、忘记结束后可裁剪。 | Boulder/Rope/Training 多入口复杂模式。 |
-| Workout/Health | 启动 Climbing workout，记录时间、心率、活动能量，写入 HealthKit。 | 用 HealthKit 推断 send/fail。 |
-| Manual event | 下墙后 `Try / Send / Fail / Undo`。 | Watch 上输入完整路线信息。 |
-| Rest timer | 当前 rest 时间、柔和触觉提醒、可关闭。 | 医疗化疲劳判断或强制休息建议。 |
-| P0b optional suggested candidates | motion + time + HR 生成 attempt/rest 候选，默认不作为事实。 | 自动判定路线完成、flash、动作技术。 |
-| Local-first sync | Watch 本地先保存，iPhone 可用时补传、去重、确认。 | 默认云端上传。 |
-| iPhone review | 修正 attempt、result、session 时间、project 绑定。 | 复杂路线库、社区、feed。 |
-| Project basics | Recent / New / Unassigned，训练后可选补充。 | 岩馆路线库或 route database。 |
-| Recap | 基础 session summary、待确认项、用户确认后的 next cue。 | 泛泛 calories summary、自动教练建议、AI 真相判断。 |
+Note: 为避免继续增加 Markdown，保留原文件路径并整体重写；旧版五 PM 讨论结论已被本报告取代。
 
 ---
 
-## 1. 五个产品经理决策过程摘要（可跳读）
+## 0. 十分钟结论
 
-### 1.1 角色设定
+### 0.1 结论先行
 
-这次讨论模拟 5 个产品经理，从互相挑刺到最终收敛：
+LineWise 值得继续做，但产品理由必须重新表述。
 
-| PM | 角色 | 核心问题 |
+截至 2026 年，国内外市场已经不缺以下能力，而且国内独立产品的覆盖速度比上一版报告假设得更快：
+
+- 攀岩 workout、心率、时长和卡路里；
+- 线路、完攀、尝试和 Project 记录；
+- 视频自动整理、逐帧对比、公开解法与社区；
+- 拍墙搜线、岩馆主页、线路更新通知；
+- AI 训练建议、训练计划和数据看板。
+- 姿态骨架、关节角度、重心轨迹、视频叠图和动作评价；
+- 3D 岩壁、虚拟姿态和用“火柴人”表达脑中 Beta；
+- Apple Watch 自动记录、Project、FIT 导入和攀爬能力指标。
+
+特别是国内产品“磕磕”已经把视频整理、拍墙搜线、逐帧对比、社区解法、岩馆入驻和订阅串成了较完整的链路；“攀岩科学”已经公开提供姿态、重心、3D 场景、自定义线路和火柴人 Beta；ClimbPin 已覆盖 iPhone + Apple Watch、自动检测、Project、心率、FIT 导入和量化指标；GoTop、壁记、岩究生分别覆盖视频自动整理、动作分析和训练日志。LineWise 不能再把“攀岩记录 + Watch + AI 读线 + 火柴人 + 社区”当作天然差异化。[攀岩科学 App Store](https://apps.apple.com/cn/app/%E6%94%80%E5%B2%A9%E7%A7%91%E5%AD%A6/id6738903694) [ClimbPin App Store](https://apps.apple.com/cn/app/climbpin-%E5%B2%A9%E9%92%89/id6755990150) [GoTop App Store](https://apps.apple.com/cn/app/gotop/id6757733784)
+
+本轮重新调研后，最有价值、仍未被充分解决的问题是：
+
+> 用户如何以极低成本保留“我在这条线上卡在哪里、我当时为什么失败、别人建议我怎么改、下一次要验证什么”，并在下一次到馆时自动取回，而不是只得到一份完攀档案或视频相册。
+
+因此，当前更准确的定位是：
+
+> **LineWise 是一个面向室内抱石的私人尝试记忆与验证系统。iPhone 管路线、视频、失败与复盘；Apple Watch 在用户愿意佩戴且岩馆允许时，提供低干扰的尝试、结果和休息锚点。**
+
+### 0.2 本轮最重要的五个判断
+
+| 判断 | 结论 | 对产品的影响 |
 | --- | --- | --- |
-| PM-A 用户与 ICP | 谁真的需要它？谁只是看起来像用户？ |
-| PM-B 市场与竞品 | 这是空白、机会，还是已被替代品吃掉？ |
-| PM-C Watch 平台 | 为什么必须是 Watch？Watch 的边界在哪里？ |
-| PM-D 数据与复盘 | 记录什么才会变成用户下次训练能用的价值？ |
-| PM-E 商业化与增长 | 独立 App 能不能活？什么指标没过就该停？ |
+| Watch 是否是核心 | 是重要能力，但不是唯一入口 | 从 `Watch-first` 修正为 `Watch-assisted`；必须有无表模式 |
+| 记录是否是差异化 | 不是 | RouteCard、attempt、video 都是基础能力，价值在失败推理和下次验证 |
+| AI 读线是否应先做 | 不应 | 先做照片/视频整理、手动校正、MoveCue 与 ProofCheck，积累可训练数据 |
+| 岩馆是否是首发客户 | 不是 | P0 仍做个人用户；岩馆是场景、渠道和未来数据合作方 |
+| 真正北极星是什么 | 下一次尝试被改善 | 追踪 `NextSessionCue 被取回并完成 ProofCheck`，而非单纯记录量 |
+| 功能新颖性能否成立 | 不能 | 国内竞品已逐项覆盖原设想；只能靠更完整的学习闭环、可信度和可靠性竞争 |
+| 岩馆最缺的是否是新 App | 不是 | 岩馆更缺稳定客流、优质线路、运营人才、即时教学反馈和低维护数字化 |
 
-### 1.2 Round 1: 这个产品到底有没有必要？
+### 0.3 产品真正需要具备的能力
 
-| PM | 观点 | 反驳 | 收敛 |
+1. **多入口采集**：Watch、iPhone、相机、视频、语音都能进入同一条 RouteCard。
+2. **可修正事实层**：系统建议和用户事实分开；所有自动结果可编辑、可撤销、可追溯。
+3. **路线身份与生命周期**：识别同一条线、跨天关联、换线后归档，不依赖官方岩馆数据库。
+4. **失败结构化**：将一次失败压缩成位置、主要阻碍和一个 MoveCue，而不是填写十几个训练标签。
+5. **下次验证**：把 MoveCue 变成下次可执行的 ProofCheck，记录是否真的有帮助。
+6. **低干扰现场体验**：用户可以只记录有意义的尝试，不强迫每次下墙都操作。
+7. **私人数据资产**：本地优先、可导出、视频和健康数据不默认上传。
+8. **平台可靠性**：Watch 断连、低电量、无 HealthKit 权限、无网络时仍不丢核心事件。
+9. **历史补录与互操作**：允许训练后补记，能导入 HealthKit/FIT/照片并导出个人数据，不强迫用户重建过去。
+10. **个体差异上下文**：可选保存身高、臂展、经验、惯用动作和限制，任何建议都说明适用条件，不以性别或等级替代身体事实。
+11. **可访问性**：路线不能只靠颜色识别；照片、标签和线路身份应支持颜色名称、位置、形状或编号等冗余信息。
+
+### 0.4 现在不应做什么
+
+- 不做另一个公开 Beta 视频社区；
+- 不做岩馆路线管理 SaaS；
+- 不做泛化“AI 攀岩教练”；
+- 不承诺单张照片自动给出正确动作；
+- 不用单腕 IMU 判断完整技术、send/fail 或安全风险；
+- 不把心率、卡路里、疲劳分数当作主要产品价值；
+- 不要求用户每次尝试后填写路线、难度、动作和主观状态；
+- 不要求岩馆先入驻才能使用。
+- 不把“功能比别人多”当作产品策略；
+- 不先做需要持续运营的公开内容、教练市场和岩馆后台。
+
+---
+
+## 1. 调研问题、方法与局限
+
+### 1.1 本轮要回答的问题
+
+本轮不是继续堆功能，而是重新回答：
+
+1. 中国室内抱石发展到什么阶段？
+2. 抱石者、岩馆、教练和定线员真正需要什么？
+3. 当前产品已经把哪些需求解决得足够好？
+4. Apple Watch 在真实岩馆里到底是优势还是限制？
+5. AI 读线、动作识别和训练建议需要什么数据与前置能力？
+6. LineWise 应凭什么存在，并以什么顺序验证？
+
+### 1.2 证据等级
+
+| 等级 | 证据 | 用法 |
+| --- | --- | --- |
+| A | Apple、国家标准平台、体育总局、竞品官方/App Store、正式论文 | 确认平台、法规、产品与技术事实 |
+| B | 行业报告、政府报道、行业软件官网 | 判断市场和经营方向，避免直接外推精确商业结论 |
+| C | Reddit、App Store 评论、社区讨论 | 提取痛点和 badcase，不当作总体比例 |
+| D | 本报告推断 | 明确标为待验证假设，必须通过访谈或实地测试证明 |
+
+### 1.3 局限
+
+- 小红书和大众点评内容难以稳定、完整地公开检索，不能把搜索结果当作系统样本。
+- 国内岩馆经营数据多来自行业报告和品牌自述，精确营收、复购和单店模型需要一手访谈。
+- App Store 不少新产品评价样本不足，因此更新日志只能证明产品做了什么，不能证明用户满意。
+- 海外社区反馈能说明行为摩擦，但不能直接代表北京、上海用户。
+- Apple Watch 佩戴风险、岩馆政策和用户习惯差异很大，必须逐馆验证。
+
+---
+
+## 2. 市场、经营与场景背景
+
+### 2.1 中国室内攀岩进入扩张后的精细化阶段
+
+中国登山协会指导的《2024 中国攀岩行业发展报告》公开摘要显示，截至 2025 年 1 月，国内攀岩场馆约 811 家，同比增长 27.5%；报告估算 2024 年行业规模约 40 亿元。这个数据说明供给仍在扩张，但并不等于每个 App 都有自然红利。[数说故事报告介绍](https://www.datastory.com.cn/details/1219.html) [中华全国体育总会摘要](https://www.sport.org.cn/shouye/tycy/2026/0611/698997.html)
+
+香蕉攀岩官方称已在北京、上海、深圳、成都、武汉、长沙、珠海等城市拥有 20 多家门店；上海长宁的第二家门店在 2025 年落地，说明连锁化、商圈化和体验消费正在增强。[Banana Climbing](https://bananaclimbing.com/) [上海市政府报道](https://english.shanghai.gov.cn/en-Fitness/20250721/e484c72d3646431cb5a8201eb2ba0dfc.html)
+
+这带来三个产品背景：
+
+1. 用户会跨馆、跨店、跨城市，单一岩馆 App 无法完整保存个人记忆。
+2. 路线频繁更换，路线身份天然有生命周期，不能按永久路线数据库设计。
+3. 竞争从“有没有岩馆”逐渐转向线路质量、新手转化、社区氛围、教练服务和复购。
+
+### 2.2 岩馆不是单纯场地，而是持续更新的内容业务
+
+岩馆的核心商品不是墙本身，而是持续更新的线路体验、社群和教学服务。国际岩馆软件将以下能力放在产品中心：
+
+- 路线库存、区域、颜色、难度、定线员和上墙时间；
+- 换线计划、路线寿命和 Last Chance 通知；
+- 难度分布、动作风格分布和线路受欢迎程度；
+- 用户尝试、完攀、评级与反馈；
+- 比赛、挑战、会员留存和召回。
+
+TopLogger、Griptonite、Crux 都把线路反馈、换线计划和用户参与度作为岩馆端核心价值，而不是把“做个路线列表”当作终点。[TopLogger Gym Owners](https://toplogger.nu/gym-owners) [Griptonite Route Manager](https://griptonite.io/gyms/route-manager/) [Crux Official Climbs](https://docs.cruxapp.ca/documentation-for-gym-staff/about-crux/optional-feature-gym-set-climbs)
+
+### 2.3 岩馆收入结构决定它优先购买什么
+
+《2024 中国攀岩行业发展报告》的公开摘要显示，常规门票、私教、团课仍是最普遍的业务，同时企业团建、户外活动、装备销售和训练营也已广泛存在。36 氪对香蕉攀岩与 GOAT 的采访给出一个更具体但应谨慎看待的单点样本：受访者称门票约占成熟岩馆收入的 80%，次卡和月卡因跨馆消费而常见，课程收入占比不高但绝对值可观，零售约占 10%。这些数字不是行业审计结果，但足以说明岩馆首先关心稳定到店、复访、课程转化与运营效率，而不是“再多一个曝光渠道”。[数说故事报告介绍](https://www.datastory.com.cn/details/1219.html) [36 氪岩馆商业采访](https://36kr.com/p/3721557299689861)
+
+| 收入/成本项 | 经营逻辑 | 对产品的真实要求 |
+| --- | --- | --- |
+| 单次票、次卡、月卡、年卡 | 高频到店与稳定客流是现金流基础 | 能否形成 Project 回访和换线前召回 |
+| 私教、团课 | 新手买安全感，进阶用户买即时反馈和突破 | 能否把重复失败整理成可教学的上下文 |
+| 活动、比赛、女性主题活动 | 获客、品牌、社群与复访，不一定直接盈利 | 能否降低报名、挑战记录和内容维护成本 |
+| 零售与周边 | 延长体验，但通常不是主收入 | 不应成为 LineWise 早期重点 |
+| 定线与换线 | 线路质量直接影响复访，且成本高 | 反馈必须可解释、抗刷量、能对应具体线路生命周期 |
+| 房租、保洁、通风、前台、设备 | 空间体验和基础运营持续消耗现金 | 数字产品不能增加现场录入和培训负担 |
+
+该采访还称，主流场馆约 300-800 平方米，回本常需 3-5 年；香蕉攀岩受访者称其一年更换约 1 万条线路并在线路设计投入数百万元。这里最值得相信的不是精确金额，而是经营者把线路新鲜度和体验服务视为持续成本与竞争力。[36 氪岩馆商业采访](https://36kr.com/p/3721557299689861)
+
+### 2.4 经营压力使“留存”比“拉新故事”更重要
+
+Climbing Business Journal 对 240 家场馆的 2025 年调查显示，北美新馆增长放缓，许多既有岩馆面临流量、收入和成本压力。该样本不能直接代表中国，但它提示成熟阶段的关键问题会从扩张转向会员价值、复访和运营效率。[CBJ Gyms and Trends 2025](https://climbingbusinessjournal.com/gyms-and-trends-2025/)
+
+对 LineWise 的含义不是立刻做 B2B，而是：未来若与岩馆合作，必须证明能促进“回到某条线、回到某家馆、参与课程或活动”，而不只是增加内容浏览量。
+
+### 2.5 安全与合规是岩馆的硬边界
+
+中国强制性国家标准 `GB 19079.4-2025` 覆盖从业人员资格、岩壁与装备、环境、安全制度、应急预案、检查、监控和公众责任保险，已于 2026 年 7 月 1 日实施。[全国标准信息公共服务平台](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=7610EFE44A5347A8E0F6102B7D748C42) [国家体育总局安全管理提示](https://www.sport.gov.cn/dszx/n5414/c29427787/content.html)
+
+产品边界必须清楚：
+
+- LineWise 不能替代岩馆安全制度、教练、保护员或应急服务；
+- AI 不应给出“安全”“可避免受伤”“已经恢复”等结论；
+- 岩馆合作中的照片、视频、监控和用户行为数据必须单独授权；
+- 用户佩戴 Watch 是否符合场馆规定，必须由用户遵守现场要求。
+
+### 2.6 岩馆不是一个同质市场
+
+LineWise 后续调研必须区分场馆类型，否则“岩馆需要什么”会变成无效平均数。
+
+| 岩馆类型 | 主要竞争点 | 数字化接受度假设 | 最可能合作切口 |
 | --- | --- | --- | --- |
-| PM-A | 有必要，但只对进阶室内抱石用户有强需求。 | 新手和轻量打卡用户可能只想拍照或用 Apple Workout。 | ICP 必须限定为每周至少 2 次、经常 project、可能有复盘需求且愿意参与验证的用户。 |
-| PM-B | 市场有工具，不是空白。 | 竞品多反而说明用户有记录需求。 | 机会不是“没人做”，而是“还没人把低干扰记录 + next-session recall 做成默认习惯”。 |
-| PM-C | Watch-first 有必要。 | Watch 容易磕碰、交互窄、电量有限。 | Watch 只承担现场短操作，不能承担完整 App。 |
-| PM-D | 记录本身不够，需要转成复盘。 | 复盘如果只是漂亮统计也没用。 | Recap 至少帮助用户回忆；next cue 需要用户确认后展示。 |
-| PM-E | 可做小而尖工具，不宜先讲平台。 | 小市场可能付费弱。 | 先做 B2C narrow beta，用留存和付费假门决定是否继续。 |
+| 全国/区域连锁 | 品牌一致性、活动、跨店、运营效率 | 高，但已有系统且采购复杂 | 跨店个人 Project、官方线路身份、活动 ProofCheck |
+| 精品单店/社区馆 | 线路、氛围、主理人关系、复购 | 中，决策快但人手少 | 零维护换线提醒、轻量反馈、课程线索 |
+| 训练型馆/Board 馆 | 难度、训练质量、进阶人群 | 中高，用户更数据化 | 失败模式、训练作业、教练交接 |
+| 商场体验型馆 | 新手转化、空间、拍照、团建 | 中，重体验与客流 | 新手引导、课程入口，不适合复杂训练数据 |
+| 青训/综合攀岩中心 | 课程、安全、家长信任、长期培养 | 高但合规要求更高 | 课程作业和家长摘要，远期且需单独产品设计 |
 
-最终结论：
-
-> 有必要做，但必要性不是“攀岩需要一个 App”，而是“室内抱石用户需要一个低成本、可复盘、能延续到下一次训练的 session memory layer”。
-
-### 1.3 Round 2: 谁是用户，谁不是？
-
-PM-A 提出用户必须被收窄，否则产品会同时讨好新手、进阶、户外、绳攀、教练和岩馆，最后什么都做浅。
-
-最终 ICP:
-
-| 条件 | 为什么必要 |
-| --- | --- |
-| 每周室内抱石 >= 2 次 | 高频才能形成记录习惯。 |
-| 一场训练 >= 10 次 attempt | attempt/rest 事件层才有价值。 |
-| 经常 project | 需要跨 session 的记忆。 |
-| 已经戴 Apple Watch 或愿意尝试 | Watch-first 的前提。 |
-| 可能愿意训练后花 30-60 秒 review | recap-led 的待验证前提。 |
-| 对进步、训练质量或 project continuity 有明确关注 | 才会关心 rest pattern、send rate、project trend。 |
-
-明确非首发用户：
-
-| 用户 | 为什么不是 P0 |
-| --- | --- |
-| 纯新手体验用户 | 还不理解 grade、project、attempt 复盘，记录压力会过高。 |
-| 轻社交打卡用户 | 小红书/朋友圈/照片已经满足主要需求。 |
-| 户外攀岩用户 | topo、天气、GPS、离线、安全和路线信息比 Watch 标记更重要。 |
-| 先锋/顶绳用户 | belay、fall、rope route、高度和安全语义不同。 |
-| 训练板重度用户 | MoonBoard/Kilter 等已有标准化路线和训练生态。 |
-| 不愿戴表用户 | 无法被 Watch-first 方案服务。 |
-
-### 1.4 Round 3: 真正竞争对手是谁？
-
-PM-B 认为旧报告最大问题是把竞品当功能列表，而没有按 job-to-be-done 分层。
-
-真正的竞争层级：
-
-| 层级 | 对手 | 抢什么 |
-| --- | --- | --- |
-| L0 默认替代品 | Apple Workout、Strava、备忘录、Excel、照片 | 抢用户习惯和最低成本。 |
-| L1 Watch 记录器 | Redpoint、Pinnacle、Climb Meter、Garmin/COROS | 抢“用表记攀岩”的心智。 |
-| L2 轻量 logbook / AI-adjacent logbook | GoClimbr、CrushLog、SendLog、SendSage、MyClimb | 抢训练后复盘和长期记录。 |
-| L3 路线/岩馆/社区平台 | KAYA、Mountain Project、Vertical-Life、TopLogger、Griptonite | 抢分发、route identity、community network。 |
-| L4 训练生态 | Crimpd、Lattice、MoonBoard、Kilter Board | 抢高付费、高训练意愿用户。 |
-
-这个分层带来一个更尖锐的判断：
-
-> Market proof 不是“有人下载攀岩 App”，而是“用户愿不愿意替换掉 Apple Workout + Notes/Excel/照片这套足够便宜的习惯”。
-
-### 1.5 Round 4: 为什么必须是 Watch？
-
-PM-C 把 Watch-first 论证压成一个定理：
-
-> Watch-first 的必要性来自现场捕获窗口；Watch-only 的错误来自小屏和攀岩安全边界。
-
-为什么 Watch 必须存在：
-
-| 理由 | 解释 |
-| --- | --- |
-| 下墙后窗口很短 | 用户愿意点一下，但不愿意掏手机、解锁、找 App、填表。 |
-| 休息计时天然在手腕上 | rest 是抱石训练的关键变量，Watch 是更自然的计时和提醒设备。 |
-| 触觉比视觉更合适 | 休息提醒可以轻触觉，不需要用户盯屏。 |
-| HealthKit/Workout 生态 | Apple Watch 原生 workout、心率、活动能量、Fitness 环闭环是底层价值。 |
-| motion 可做候选分段 | 虽然不能做真相，但可以减少回看和修正成本。 |
-| 离线场景 | iPhone 不在身边时，Watch 仍应记录 session。 |
-
-为什么不能 Watch-only:
-
-| 不适合 Watch 的事 | 原因 |
-| --- | --- |
-| project 管理 | 需要编辑名称、颜色、grade、墙面、备注，小屏太慢。 |
-| 复杂纠错 | timeline 拖动、拆分、合并、改结果应在 iPhone。 |
-| 趋势解释 | 图表、比较、长期复盘需要大屏。 |
-| 路线库 | 搜索、地图、照片、评论都不适合训练中手表输入。 |
-| 动作分析 | 单腕数据不足，需要视频或多传感器。 |
-
-### 1.6 Round 5: 记录什么才有价值？
-
-PM-D 认为产品不能叫“记录器”，而应叫“复盘副驾”。因为用户不是为了拥有数据而记录，而是为了下次训练更清楚。
-
-有效 recap 必须同时满足四个条件：
-
-| 条件 | 解释 |
-| --- | --- |
-| 可行动 | 能告诉用户下次先回到哪个 project，或本次后半段表现如何变化。 |
-| 有上下文 | attempt 必须连到 project、grade、result、rest，而不是孤立计数。 |
-| 可比较 | 用户需要看到今天和过去几次相比有什么变化。 |
-| 可信 | 自动候选可修正，数据来源清楚，不把猜测说成事实。 |
-
-因此 P0 recap 不是：
-
-> “今天训练 78 分钟，消耗 420 kcal，平均心率 132。”
-
-而应先是可编辑的复盘提示：
-
-> “今天 78 分钟，18 次 attempt，5 次 send。Project A 连续 6 次未完成，后 3 次平均 rest 从 2:10 增加到 4:20，且 send rate 在后半段下降。若这条线仍是 active project，可保存一个 next cue：下次热身后先回到 Project A，关注前几次尝试节奏。”
-
-注意：这种提示必须以“用户可确认/可编辑的训练复盘线索”呈现，不能写成教练处方、医疗恢复或安全诊断。
-
-### 1.7 Round 6: 商业上能不能活？
-
-PM-E 的判断最克制：
-
-> 这可能是一个能养活小团队或独立产品的小而尖工具，但不能先按大平台估值逻辑做。
-
-商业成立的前提：
-
-| 前提 | 验证方式 |
-| --- | --- |
-| 高频目标用户真的存在 | 访谈 + 岩馆/社群招募 + 4 周 beta。 |
-| 用户愿意替换现有习惯 | retention 和复盘回看，而不是下载量。 |
-| 复盘能影响下次训练 | next-session recall 和用户主观反馈。 |
-| 付费点不依赖路线库 | Pro 候选价值来自长期 project、趋势、复盘、导出、个性化；具体排序要通过假门验证。 |
-| 有可重复获客渠道 | 岩馆教练、creator、App Store SEO、Reddit/小红书/B站。 |
-
-不建议一开始做：
-
-| 不建议 | 原因 |
-| --- | --- |
-| 月订阅优先 | 早期价值密度不足，用户会抗拒。 |
-| 岩馆 SaaS | 销售慢、定制多、路线维护重，会拖垮 MVP。 |
-| 社交平台 | 冷启动难，且不解决核心复盘问题。 |
-| AI 大叙事 | 容易过度承诺，反而降低信任。 |
-
-更现实的变现顺序：
-
-1. 免费核心记录，验证行为习惯。
-2. 早期一次性 / lifetime / founder unlock，测试付费意愿。
-3. Pro 年付，放在长期趋势、project analytics、导出、个性化规则、视频关联之后。
-4. 教练/岩馆只做分发和 beta 数据合作，不先做 B2B 产品。
-
-### 1.8 五个 PM 的最终投票
-
-| PM | 投票 | 条件 |
-| --- | --- | --- |
-| PM-A 用户 | Go | 必须只打室内抱石进阶用户，不做泛攀岩。 |
-| PM-B 市场 | Go with proof | 必须把 Apple Workout + Notes 作为最大竞品验证。 |
-| PM-C 平台 | Go | 必须写清 Watch-first not Watch-only，并设设备/电量/同步门禁。 |
-| PM-D 复盘 | Go | 必须让 recap 成为主价值，不做普通运动 summary。 |
-| PM-E 商业 | Conditional Go | 必须有 4-6 周 beta kill gates，指标不过就 pivot 或停。 |
-
-最终委员会结论：
-
-> **继续推进，但只作为室内抱石 P0 验证项目推进。先证明佩戴、低干扰标记、训练后复盘、下次回看和付费信号，再讨论 rope、AI、社交、岩馆合作和平台化。**
+P0 不为这些场馆分别开发产品；该分层只用于避免未来拿一个合作方案套所有馆。
 
 ---
 
-## 2. 调研方法和证据等级
+## 3. 五类主体的真实需求
 
-### 2.1 调研范围
+### 3.1 抱石用户
 
-本次重研覆盖：
+#### 功能需求背后的深层任务
 
-1. 攀岩市场和室内岩馆趋势；
-2. Apple Watch / HealthKit / Workout / WatchConnectivity / Core Motion 能力；
-3. 攀岩垂直 App、Watch 攀岩记录 App、运动平台、训练生态、logbook 工具；
-4. 抱石真实训练场景；
-5. 目标用户行为漏斗；
-6. MVP 功能、平台门禁、商业化和 go/no-go 标准。
-
-### 2.2 证据等级
-
-| 类型 | 来源 | 可信度 | 使用方式 |
+| 表面诉求 | 深层任务 | 现有替代 | 仍未满足之处 |
 | --- | --- | --- | --- |
-| 官方事实 | Apple Developer、Apple Support、App Store、竞品官网 | 高 | 确认平台能力、竞品功能、付费方式、系统边界。 |
-| 市场事实 | Climbing Business Journal、竞品公开信息 | 中高 | 判断市场增长、生态成熟度和竞争强度。 |
-| 用户反馈 | App Store 评论、社区讨论、Reddit、Mountain Project 等 | 中 | 发现痛点和 badcase，但样本偏差较大。 |
-| 产品推断 | 基于攀岩场景和 Watch 交互限制 | 中 | 用于 MVP 收敛和验证假设。 |
-| 待证假设 | 留存、付费、自动候选准确率、复盘价值 | 低到中 | 必须通过访谈、原型和真实训练 beta 验证。 |
+| 记录完攀 | 证明自己在进步 | 相册、App、打卡 | 成功被记录，失败过程被丢失 |
+| 找 Beta | 降低卡线成本 | 朋友、公开视频、定线员视频 | 不同身高/力量下解法未必适用 |
+| 记录 attempt | 控制训练量、理解 project | 表格、记忆、日志 App | 高频操作麻烦，跨天关联困难 |
+| 休息计时 | 让下一次尝试更完整 | 手机计时器、Watch | 很少与具体路线和结果关联 |
+| 看视频 | 发现动作差异 | 相册慢放、逐帧 App | 看见差异不等于知道下次改什么 |
+| 找搭子 | 社交、拍摄、反馈、陪伴 | 群聊、小红书、岩馆现场 | 匹配安全、水平、时间和边界复杂 |
+| 学动作 | 建立动作语言和身体感觉 | 教练、短视频、课程 | 泛化教程难映射到眼前这条线 |
 
-### 2.3 这次和旧报告的区别
+#### 用户真正愿意保存的信息
 
-旧报告主要回答“这个方向看起来有什么机会”。  
-这版报告重点回答：
+社区反馈反复提到：用户想记录 Project、attempt、视频、语音 MoveCue、墙面角度、握点风格、主观感受和休息，但不愿维护复杂表格；很多人最终回到纸笔、备忘录或 Google Sheets。[Climbing journal 讨论](https://www.reddit.com/r/climbharder/comments/1kydfn6) [Session tracking 讨论](https://www.reddit.com/r/climbharder/comments/s342cw) [轻量日志反馈](https://www.reddit.com/r/climbharder/comments/1iirzz5)
 
-1. **为什么这个产品有必要存在？**
-2. **谁真的会用，而谁只是噪音用户？**
-3. **为什么必须是 Watch，但又不能是 Watch-only？**
-4. **如何证明它不是 Apple Workout + Notes 的重复品？**
-5. **什么指标不过就应该停？**
+由此可推断，最小有用记录不是所有字段，而是：
 
----
+```text
+哪条线 + 这次结果 + 卡点 + 一个下次动作
+```
 
-## 3. 市场再判断
+时间、心率、休息和视频是上下文，不是核心结论。
 
-### 3.1 市场不是空白，也不是爆发红利
+#### 需求优先级不是功能优先级
 
-[Climbing Business Journal 的 2025 报告](https://climbingbusinessjournal.com/gyms-and-trends-2025/)显示，北美攀岩馆行业仍在增长，但增长是有约束的：2025 年净增长率约 4.7%，并且行业也面对经济和运营压力。这个信号很重要：
-
-| 判断 | 产品含义 |
-| --- | --- |
-| 室内攀岩仍在增长 | 高频训练人群仍值得关注。 |
-| 不是爆发式红利 | 不能用“市场自然增长”掩盖产品验证不足。 |
-| 岩馆是线下渠道 | 可以作为种子用户和数据采集场景。 |
-| 岩馆 SaaS 不适合 P0 | 销售周期、路线维护、运营成本都太重。 |
-
-因此，这个产品不能靠“攀岩市场增长”本身成立。它必须靠一个更具体的行为价值成立：
-
-> 高频抱石用户是否真的愿意用 Watch 留下训练记忆，并在下一次训练前回看。
-
-### 3.2 默认替代品很强
-
-最危险的竞争不是 Redpoint 或 KAYA，而是用户已经在用、并且足够便宜的组合：
-
-| 默认替代品 | 优势 | 我们必须赢在哪里 |
+| 层级 | 用户需要完成的任务 | 产品含义 |
 | --- | --- | --- |
-| Apple Workout | 免费、系统自带、能关环、能记心率和时间。 | 增加 attempt/rest/send/project 语义层。 |
-| Strava | 支持 Rock Climb 类型，社交和运动历史强。 | 攀岩训练复盘更具体，而不是泛运动 feed。 |
-| 备忘录/Excel | 灵活、无迁移成本。 | 现场记录更低成本，训练后自动形成结构化 recap。 |
-| 照片/视频 | 能保存路线和动作。 | 把照片外的 attempt、rest、result 和时间线补上。 |
-| 口头记忆 | 完全无成本。 | 解决“下次进馆忘了上次卡在哪”的问题。 |
+| 卫生层 | 数据不丢、能补录、能撤销、路线不串、日期正确 | 先于任何 AI；失败一次就会破坏长期记录意愿 |
+| 降摩擦层 | 不在攀爬中操作，训练后也能恢复事实 | `review_only` 与历史补录必须是 P0，不是降级方案 |
+| 记忆层 | 下次快速想起卡点、建议与路线状态 | RouteCard、FailureEpisode、NextSessionCue |
+| 学习层 | 验证某个提示是否对自己、这条线有效 | ProofCheck 和提示来源 |
+| 个性化层 | 区分身高、臂展、力量、经验和偏好 | 可选 `ClimberContext`，不做未经同意的人体推断 |
+| 社交层 | 与朋友/教练交换上下文而不是扔一堆视频 | 结构化分享包，晚于私人闭环 |
 
-如果产品只比这些替代品多一点统计，它就不值得独立存在。
+#### 两个容易被忽视的深层需求
 
-### 3.3 竞品地图
+1. **用户要保存的是“自己的可行解”，不是唯一标准答案。** 路线预读研究显示，视觉预规划会影响后续动作执行，专家和新手的视觉搜索与运动经验不同；同一张线路图因此不应只输出一条确定序列。[Embodied planning in climbing](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2024.1337878/full) [Bouldering route preview cognition](https://pubmed.ncbi.nlm.nih.gov/38740079/)
+2. **用户需要允许“之后再记”。** 岩究生的公开评论明确要求历史补录，并抱怨记录被写到错误日期。实时记录并不是所有用户的首选，`review_only` 必须能完整建立事实，而不是只能写一条备注。[岩究生 App Store](https://apps.apple.com/cn/app/%E5%B2%A9%E7%A9%B6%E7%94%9F/id6740552981)
 
-| 类别 | 代表产品 | 已有能力 | 对我们的压力 | 我们不硬碰什么 |
-| --- | --- | --- | --- | --- |
-| Watch 攀岩记录 | Redpoint、Pinnacle、Climb Meter | Apple Watch 记录、HealthKit、climb count、grade、同步等能力，需逐产品核验。 | 说明“用表记录攀岩”已有用户教育和供给尝试。 | 不承诺全自动，不拼高度/路线自动识别。 |
-| 原生/泛运动 | Apple Workout、Strava、Garmin、COROS | workout、HR、calories、运动历史、社交。 | 免费或硬件生态强。 | 不拼泛运动，不拼硬件训练负荷。 |
-| 路线/社区/guidebook | KAYA、Mountain Project、Vertical-Life、27 Crags | route、topo、community、logbook、gym 数据。 | route identity 和分发强。 | 不做 route database，不做 topo。 |
-| 训练内容 | Crimpd、Lattice、board apps | 训练计划、hangboard、board problems、训练体系。 | 抢高付费训练用户。 | 不做训练内容库。 |
-| 轻量 logbook / AI-adjacent logbook | GoClimbr、CrushLog、SendLog、SendSage、MyClimb | route/project/logbook/analytics，部分产品声称 AI insight。 | 抢 recap 和长期记录心智。 | 不做纯手机填表；用 Watch 降低现场 capture friction。 |
-| 岩馆 SaaS | TopLogger、Griptonite、Vertical-Life | route setting、gym TV、ranking、feedback、运营数据。 | 有岩馆渠道和路线数据。 | 不先做 B2B。 |
+#### 个体差异与可访问性
 
-### 3.4 差异化必须这样说
+岩馆受访者主动提到男性定线员占多数、身高和力量差异，以及通过女性定线员和不同试爬者校准线路的问题。产品不应把“官方 Beta”默认成每个人的最优解，也不应只保存性别这种粗粒度标签。[岩馆群访](https://www.sohu.com/a/989252629_121124646)
 
-不准确甚至危险的说法：
+P1 可选 `ClimberContext` 应只保存用户自愿提供且直接有用的信息：
 
-| 说法 | 问题 |
-| --- | --- |
-| 首个攀岩 Apple Watch App | 事实不成立，Redpoint/Pinnacle/Climb Meter 已存在。 |
-| AI 自动识别攀岩动作 | 容易过度承诺，单腕数据不够。 |
-| 攀岩版 Strava | 战场太大，Strava 已在泛运动和社交上强很多。 |
-| 自动判断疲劳/恢复/安全 | 医疗与安全风险高，证据不足。 |
-| 自动识别路线完成 | Watch 不知道路线身份，也看不到全身和墙面。 |
+- 身高与臂展区间，而非精确身体档案；
+- 攀爬经验和主观等级区间；
+- 惯用/不擅长动作、伤病限制的用户自述；
+- 本次建议来自本人、朋友、教练、定线员还是 AI；
+- 用户是否认为该建议适合自己的身体条件。
 
-准确说法：
+颜色也不能成为路线唯一身份。色觉用户反馈显示，相邻的蓝/紫、红/绿、粉/红线路会被混淆，粉尘和灯光会进一步降低辨识。路线卡应同时支持颜色名称、墙区、起点位置、照片、编号/标签等冗余标识；未来岩馆合作可建议使用形状、纹理或编号增强识别。[视觉障碍岩馆可访问性清单](https://climbingbusinessjournal.com/justin-salas-on-visual-impairment-accessibility-in-climbing-gyms-checklist-included/) [色觉用户讨论](https://www.reddit.com/r/bouldering/comments/1119n3k/bouldering_with_colour_blindness/)
 
-| 对象 | 说法 |
-| --- | --- |
-| 用户 | 不用掏手机，低干扰记住今天每条 project 怎么打，下次进馆前能快速回想。 |
-| 产品 | 把抱石 session 变成可编辑的 attempt/rest/project 记忆。 |
-| 竞品 | 不和 KAYA 拼内容，不和 Crimpd 拼训练计划，不和 Strava 拼泛运动；只拼 capture friction 更低、next-session recall 更强。 |
-| 技术 | 自动候选只是减少整理成本，最终事实由用户确认。 |
+#### 用户不想做的事
 
----
+- 每次尝试后解锁手机并填表；
+- 每条线先建立完整档案再开始爬；
+- 训练结束后做长问卷；
+- 被迫公开视频或位置；
+- 被 AI 用确定语气解释身体和技术；
+- 在只想爬得开心时被训练计划绑架。
 
-## 4. 产品必要性论证
+### 3.2 岩馆经营者
 
-### 4.1 用户为什么需要它？
+#### 岩馆真正关心的业务结果
 
-室内抱石训练有几个天然特征：
-
-| 特征 | 导致的问题 | 产品机会 |
-| --- | --- | --- |
-| 短时间高强度 | 每次 attempt 时间短，训练节奏碎片化。 | Watch 记录 session、用户标记和传感器线索；系统生成 rest/attempt 候选。 |
-| 多次尝试 | 用户会在同一条线反复失败。 | 记录 attempt count、result、project history。 |
-| 长休息 | rest 直接影响后续表现。 | Watch 休息计时和触觉提醒有价值。 |
-| grade/墙面/风格差异大 | 只看总时长和心率没意义。 | recap 需要连到 project 和主观标签。 |
-| 训练中不方便拿手机 | 现场记录成本高。 | Watch 一键标记。 |
-| 训练后记忆快速衰退 | 用户可能忘记哪条线卡住、试了几次。 | iPhone 整理成待确认 session，用户确认后成为 canonical record。 |
-
-### 4.2 用户真正的 Jobs To Be Done
-
-| JTBD | 当前替代方案 | 替代方案不足 | P0 验证目标 |
+| 需求 | 业务原因 | LineWise 未来可能贡献 | P0 是否做 |
 | --- | --- | --- | --- |
-| 不掏手机也记录今天练了什么 | Apple Workout + 记忆 | 没有 attempt/project 语义 | Watch 下墙后一键标记。 |
-| 知道一条 project 试了几次 | 备忘录/Excel | 训练中填表太麻烦 | 候选时间线 + 用户确认。 |
-| 训练后 1 分钟看懂质量 | 心率/卡路里 summary | 和攀岩语义不匹配 | session recap 翻译成 attempt/rest/send。 |
-| 下次进馆知道先打哪条 | 口头记忆/照片 | 容易忘、上下文缺失 | 用户确认后的 project cue。 |
-| 长期看到进步 | 手写 logbook | 不结构化、不自动对比 | P1 再验证 send rate、attempt trend、rest pattern。 |
+| 新手快速上手 | 降低第一次体验的恐惧和流失 | 新手线路提示、基础术语、课程入口 | 否 |
+| 提升复访 | 会员与次卡收入依赖持续到馆 | Project recall、换线前提醒 | 仅验证个人侧 |
+| 路线反馈 | 路线是核心内容，需要知道冷热和误定级 | 匿名聚合尝试/主观难度/失败点 | 否，需合作与授权 |
+| 换线沟通 | 用户 Project 被拆会产生挫败 | 路线生命周期、Last Chance | P1 可做个人标记 |
+| 教练转化 | 课程是重要增值收入 | 将重复失败转为教练咨询入口 | 否 |
+| 社区和活动 | 形成归属感与挑战感 | 私密小组、活动 ProofCheck | 否 |
+| 运营低负担 | 定线和前台已经忙 | 自动/用户生成数据、零重复录入 | 所有合作前置条件 |
+| 安全合规 | 高危险性体育场所的底线 | 仅做提示和流程边界，不做安全判断 | 必须遵守 |
 
-### 4.3 为什么 Apple Workout 不够？
+#### 经营者的需求有明确先后关系
 
-Apple Watch 原生支持 Climbing workout，这是基础，不是终点。
+1. 场馆安全、卫生、通风、设备和前台体验不出问题；
+2. 新手能顺利完成第一次体验并理解规则；
+3. 线路持续有趣、分布合理、换线频率可感知；
+4. 次卡/月卡用户持续复访，年卡用户形成归属；
+5. 教练和活动能承接明确目标，不破坏普通用户体验；
+6. 数据能帮助决策，但采集和维护成本不能超过价值。
 
-| Apple Workout 能做 | 它做不了 | 我们补什么 |
-| --- | --- | --- |
-| 记录总时长 | 不知道一次次 attempt | attempt event layer。 |
-| 记录心率 | 不知道哪次尝试对应心率变化 | attempt/rest timeline。 |
-| 写入 Health/Fitness | 不知道 send/fail/project | 用户标签和 project 绑定。 |
-| 关 Activity rings | 不知道训练质量 | recap 和下一次训练记忆。 |
-| 低成本启动 | 不知道抱石特有结果 | session review。 |
+因此，LineWise 未来向岩馆展示的不是“AI 很先进”，而应是：
 
-因此产品不是替代 Apple Workout，而是在其上加一层攀岩语义：
+```text
+不用定线员重复录入 -> 用户能回到 Project -> 岩馆能看懂匿名反馈 -> 课程/换线触达更准确
+```
 
-> HealthKit 负责运动事实，App 负责攀岩意义。
+#### 岩馆不会接受的产品
 
-### 4.4 为什么不是纯 iPhone App？
+- 要求定线员为每条线额外录入大量字段；
+- 让未经确认的 AI 内容看起来像官方解法；
+- 公开负面线路评价但不给管理和申诉机制；
+- 在垫区鼓励用户频繁看屏或拍摄影响他人；
+- 采集用户健康、位置、视频却没有明确用途和权限；
+- 需要复杂硬件改造或与现有会员系统深度绑定才能启动。
 
-纯 iPhone logbook 可以做得更完整，但它无法解决最关键的 capture friction。
+#### 岩馆合作的最低交换
 
-| 场景 | iPhone 问题 | Watch 优势 |
-| --- | --- | --- |
-| 下墙后 3 秒 | 掏手机、解锁、找 App 太慢。 | 手腕上直接点。 |
-| 手上有镁粉 | 不想碰手机屏幕。 | Watch 触觉/少量按钮更可接受。 |
-| 手机放包里 | 训练节奏被打断。 | Watch 一直在身上。 |
-| rest 计时 | 手机不在视线内。 | Watch 一眼看到 rest。 |
-| 心率/Workout | 手机无法直接采集腕上 HR。 | Watch 是传感器入口。 |
+未来合作必须形成清楚交换：
 
-但纯 Watch 也不行。因此正确架构是：
+```text
+岩馆提供：官方线路身份、换线周期、定线员演示或课程入口
+LineWise 提供：用户回访、Project 召回、匿名线路反馈、低维护的内容触达
+```
 
-> Watch 做 capture，iPhone 做 canonical review。
+如果不能降低岩馆工作量或提升复访，岩馆没有理由接入。
 
----
+### 3.3 教练
 
-## 5. 目标用户和场景
+教练的价值不只是提供一个动作答案，而是观察、追问、筛选主要问题、设计练习、校正执行，并根据用户的情绪和身体状态调整。
 
-### 5.1 首发 ICP
+教练需要：
 
-| 维度 | 标准 |
-| --- | --- |
-| 运动类型 | 室内抱石为主。 |
-| 频率 | 每周 2 次以上，或每月至少 6 次。 |
-| 训练方式 | 经常 project，同一条线会多次尝试。 |
-| 数据态度 | 对进步、休息、尝试次数、send rate 有兴趣。 |
-| 设备 | 有 Apple Watch，且愿意在岩馆佩戴。 |
-| 复盘假设 | 训练后是否愿意完成 30 秒 quick save / 60-90 秒 detailed review，需验证。 |
-| 商业假设 | 其中一部分用户可能为长期复盘、趋势、导出付费，需假门验证。 |
+- 看到用户在同一条线的多次尝试，而不是只看最好的一次；
+- 知道用户自认为的问题与实际动作差异；
+- 给出一个足够短、能在下一次尝试验证的 MoveCue；
+- 记录哪个提示对哪个身体条件和线路类型有效；
+- 在课后保留作业与下一次复查点；
+- 避免被大量无上下文视频淹没。
 
-### 5.2 用户分层
+36 氪采访中的学员把课程价值概括为“即时反馈”：进阶班会全程录像，再由教练针对个人动作一对一调整；岩馆在筛选教练时还关注沟通、教学经验、服务、同理心和责任心。这个事实反对“AI 给出更多指标就等于教练”的假设。教练真正出售的是观察后的取舍、表达、信任和连续校正。[36 氪岩馆商业采访](https://36kr.com/p/3721557299689861)
 
-| 用户 | 需求强度 | P0 是否服务 | 说明 |
+| 教练工作环节 | 当前成本 | LineWise 可帮助 | 不能替代 |
 | --- | --- | --- | --- |
-| 进阶室内抱石用户 | 高 | 是 | 核心用户。 |
-| 数据控 / Apple Watch 重度用户 | 高 | 是 | 对 Health/Fitness 生态敏感。 |
-| Project 型用户 | 高 | 是 | 最需要跨 session 记忆。 |
-| 轻量室内抱石用户 | 中 | 部分 | 可以使用基础 session，但不为其扩功能。 |
-| 新手 | 中低 | 暂不优先 | 需要更强引导和安全教育，不适合 P0。 |
-| 先锋/顶绳用户 | 中 | 否 | 后续独立场景。 |
-| 户外攀岩用户 | 中 | 否 | route/topo/weather/safety 优先级更高。 |
-| 教练 | 中高 | 否 | 后续作为分发和 P2/P3 功能。 |
+| 课前了解 | 询问历史、目标、伤病、近期 Project | 一页结构化交接包 | 教练风险判断与问诊边界 |
+| 现场观察 | 多次尝试、找主要问题 | 自动定位代表性视频和失败时间点 | 教练现场注意力与动作判断 |
+| 给提示 | 信息太多，学员记不住 | 只保存一个可执行 MoveCue | 教练选择哪一个提示 |
+| 课后作业 | 微信文字、视频分散 | NextSessionCue + MicroDrill | 个体化训练处方 |
+| 下次复查 | 很难记住上次细节 | ProofCheck 与前后视频 | 教练对新问题的解释 |
 
-### 5.3 首发场景剧本
-
-1. 用户到室内岩馆，打开 Watch，点 `Start Boulder`。
-2. App 开始 workout、session timer、HR、motion 记录。
-3. 用户第一次尝试后下墙，Watch 显示 rest timer。
-4. 用户点 `Fail` 或 `Try`，无需输入路线。
-5. 用户 send 后点 `Send`，可 Undo。
-6. 训练中 App 只做极简显示和可选触觉提醒。
-7. 结束时长按 `End`，Watch 保存本地 session。
-8. iPhone 收到 pending review。
-9. 用户训练后补 project、grade/color、备注，确认 suggested timeline。
-10. 下次进馆前，App 显示 active projects 和上次最后状态。
-
-### 5.4 用户最不想被打扰的时刻
-
-| 时刻 | 禁止做什么 | 可以做什么 |
-| --- | --- | --- |
-| 攀爬中 | 弹窗、读长文本、要求确认、强提醒。 | 后台记录。 |
-| 刚落地还在喘 | 复杂输入、grade/project 选择。 | 一个大按钮标记结果。 |
-| belay/保护他人时 | 多步骤操作。 | P0 不服务绳攀。 |
-| 岩馆社交聊天时 | 频繁自动提醒。 | 可静默记录 rest。 |
-| 训练结束疲劳时 | 长问卷。 | 30-60 秒 pending review。 |
-
----
-
-## 6. 产品合同
-
-### 6.1 产品不是
-
-| 不是 | 原因 |
-| --- | --- |
-| 通用 climbing app | 攀岩场景过宽，P0 会失焦。 |
-| 攀岩路线库 | 路线维护、冷启动、版权/合作成本高。 |
-| 岩馆 SaaS | 销售和运营复杂，不适合 P0。 |
-| AI 动作教练 | 单腕数据不足，视频/上下文缺失。 |
-| 医疗恢复工具 | HR/fatigue 解释存在风险。 |
-| 社交 feed | 不解决首个核心问题。 |
-| Apple Workout 替代品 | 应该利用 HealthKit，而不是替代系统记录。 |
-
-### 6.2 产品是
-
-| 是什么 | 含义 |
-| --- | --- |
-| Watch-first capture layer | 在训练现场用最少交互捕获事件。 |
-| iPhone review layer | 训练后修正和解释 session。 |
-| Project memory layer | 记住用户下次训练前真正会用到的信息。 |
-| Assisted logbook | 自动候选辅助整理，但事实可编辑。 |
-| Fitness bridge | 把攀岩训练写入 Health/Fitness 生态，同时补足攀岩语义。 |
-
-### 6.3 产品价值链路
+LineWise 对教练最有价值的未来形态不是“教练后台”，而是结构化的教练交接包：
 
 ```text
-低干扰捕获
-  -> 可修正事实
-  -> 攀岩语义复盘
-  -> 下次训练记忆
-  -> 长期趋势
-  -> 付费价值
+RouteCard + 代表性失败视频 + 用户主观卡点 + 教练 MoveCue + 下次 ProofCheck
 ```
 
-任何功能如果不服务这条链路，就不进入 P0。
+### 3.4 定线员
 
-### 6.4 北极星指标
+定线员关心的不是用户有没有拍到好看视频，而是路线是否实现了预期体验：
 
-不建议用下载量、session 数、算法 F1 做北极星。更好的北极星是：
+- 目标难度与实际难度是否偏离；
+- 不同身高、臂展和水平的人是否有合理解法；
+- 哪一动作成为意外瓶颈；
+- 线路是否被跳过、过度拥挤或频繁寻求帮助；
+- 风格、动作、墙角度和难度分布是否均衡；
+- 线路下架后经验能否进入下一轮定线。
 
-> **每周完成 quick review，并产生或使用用户确认 next cue 的 climbing sessions 数。**
+Griptonite 和 TopLogger 已经证明 B2B 路线分析是独立、复杂的产品领域。LineWise 不应在 P0 复制它，而应先保留未来有价值的数据原语：路线生命周期、主观难度、尝试、失败位置、MoveCue 来源和用户校正。
 
-拆解指标：
+定线反馈还必须区分“难度”“体验”“安全”和“可访问性”。一条线被大量失败，可能是目标难度正确，也可能是起步歧义、跨度对部分身体条件不友好、标签不清、关键岩点脏污，或现场拥挤导致尝试不足。简单的 send rate 不能直接评价定线员。
 
-| 指标 | 含义 |
-| --- | --- |
-| Recorded sessions | 用户是否完成记录。 |
-| Reviewed sessions | 用户是否训练后打开复盘。 |
-| Corrected sessions | 用户是否愿意把数据修成可信事实。 |
-| Recalled sessions | 用户下次训练前是否回看。 |
-| Returned projects | 用户是否回到上次 project。 |
+| 定线问题 | 需要的数据 | 误用风险 |
+| --- | --- | --- |
+| 难度是否偏离 | 官方/主观等级、经验区间、尝试结果 | 把不同人群混成一个平均值 |
+| 动作意图是否被感知 | MoveCue、失败位置、代表性解法 | 公开 AI 猜测冒充官方意图 |
+| 是否存在身体适配问题 | 自愿的身高/臂展区间、替代解法 | 以性别标签替代身体事实 |
+| 路线是否值得保留/复刻 | 回访、收藏、Project、体验反馈 | 只看流量鼓励简单或网红线 |
+| 颜色/标签是否可辨 | 色觉反馈、照片、墙区与路线交叠 | 把识别失败当作攀爬失败 |
+
+路线预读研究支持“预规划与动作执行互相影响”，但也说明能力受经验和运动技能调节。SetterLens 应展示意图、约束和多种可能，而不是生成唯一标准动作。[Route preview efficacy](https://pubmed.ncbi.nlm.nih.gov/20561271/) [Embodied planning in climbing](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2024.1337878/full)
+
+### 3.5 前台、场务与现场员工
+
+此前报告漏掉了最常接触新手、投诉和现场异常的一组人。其需求与老板、教练不同：
+
+- 快速说明规则、落地区域、鞋/粉/储物和拍摄边界；
+- 处理高峰拥挤、借鞋不足、签到/闸机异常和物品遗失；
+- 回答线路颜色、难度、换线和课程问题；
+- 发现设备、垫区、墙面或用户行为问题并升级；
+- 不想再维护一套与票务、会员和现场 SOP 无关的系统。
+
+LineWise P0 不服务这类员工。未来岩馆合作若需要员工每天帮用户建路线、解释 AI 或处理内容纠纷，应直接判为高运营成本方案。
 
 ---
 
-## 7. 功能优先级
+## 4. 竞品重新分层
 
-### 7.1 P0: 证明核心闭环
+### 4.1 中国本地直接竞品
 
-| 模块 | 功能 | 验证标准 |
-| --- | --- | --- |
-| Watch start | Start Boulder 一键开始 | 5 秒内能开始。 |
-| Workout | HKWorkoutSession 管 start/pause/resume/end；HKLiveWorkoutBuilder/HealthKit samples 构建并保存 workout | Health/Fitness 可见。 |
-| Timer | session timer + rest timer | 训练中稳定显示。 |
-| Manual result | Try / Send / Fail / Undo | 休息窗口 <= 3 秒完成。 |
-| P0b suggested candidates | attempt/rest 候选 | 不作为事实，iPhone 可确认，且可关闭。 |
-| Local save | Watch 本地 checkpoint | 断连/崩溃后最大限度保留已落盘核心事件。 |
-| Sync | Watch -> iPhone 补传去重 | 重试后 session 不重复。 |
-| iPhone review | timeline、result、可选 project 绑定 | 30 秒 quick save；可选 60-90 秒 detailed review。 |
-| Recap | 一屏基础总结 + 用户确认后的 next cue | 用户觉得对下次训练有用。 |
-| Privacy/failure | 权限、低电量、同步失败状态 | 失败可解释、可恢复。 |
-
-### 7.2 P1: 证明长期价值
-
-| 功能 | 为什么是 P1 |
-| --- | --- |
-| Project cards | 连接跨 session 记忆，是留存关键。 |
-| Review reminders | 训练后轻提醒，帮助形成习惯。 |
-| Grade/color/wall preset | 训练后更快补充路线身份。 |
-| 4 周趋势 | 让用户看到 attempt、send、rest 的变化。 |
-| Rest pattern display | 展示休息分布和后半段表现，不输出恢复判断。 |
-| Export | 数据控和教练用户可能需要。 |
-
-### 7.3 P2/P3: 只有 P0/P1 过关后再考虑
-
-| 功能 | 阶段 | 条件 |
-| --- | --- | --- |
-| 视频关联 | P2 | 用户已经持续记录 project。 |
-| Coach sharing | P2 | 教练 beta 证明有需求。 |
-| Board integration | P2/P3 | 针对 MoonBoard/Kilter 等标准化路线。 |
-| Rope modes | P3 | 单独调研 belay/fall/route semantics。 |
-| Gym route integration | P3 | 有明确岩馆合作。 |
-| Social sharing | P3 | 个人价值已经成立。 |
-| Personal ML | P3 | 数据量和 correction log 足够。 |
-
-### 7.4 明确删除的功能
-
-| 功能 | 删除原因 |
-| --- | --- |
-| Watch 上选择 Rope / Training Timer | 首屏分散，P0 只做 Boulder。 |
-| Watch 上完整输入 grade/project | 休息窗口不应变成填表。 |
-| 自动 send/fail/flash | 无法从单腕数据可靠判断。 |
-| 疲劳评分作为主功能 | 证据不足，容易医疗化。 |
-| 户外 safety | 责任风险大，P0 不碰。 |
-| 路线库和社区 | 冷启动重，不是核心闭环。 |
-
----
-
-## 8. Watch / iPhone 分工
-
-### 8.1 Watch-first, not Watch-only
-
-| 层 | Watch | iPhone |
-| --- | --- | --- |
-| Capture | 开始、结束、计时、HR、motion、Try/Send/Fail/Undo。 | 可远程查看当前 session，但不是主入口。 |
-| Truth | 只记录用户当下标记和 suggested candidate。 | 训练后确认 canonical truth。 |
-| Review | 极简结束摘要。 | 完整 timeline、project 绑定和修正。 |
-| Memory | 显示 last project shortcut。 | 管理 active projects 和长期历史。 |
-| Rest context | 柔和 rest reminder。 | 长期 rest pattern 分析，不做恢复诊断。 |
-
-### 8.2 Watch P0 信息架构
-
-```text
-Home
-  Start Boulder
-  Last Session
-  Sync Status
-
-Active Session
-  Session Time
-  Heart Rate
-  Rest Time
-  Attempts
-  Try / Send / Fail
-  Undo
-  Pause
-  End (long press)
-
-End Summary
-  Duration
-  Attempts
-  Sends
-  Avg Rest
-  Sync State
-```
-
-Watch 上不要出现复杂设置、长解释、路线搜索、趋势图、社区入口。
-
-### 8.3 iPhone P0 信息架构
-
-```text
-Pending Review
-  Session summary
-  Manual timeline
-  Optional suggested candidates
-  Unconfirmed events
-  Quick confirm
-
-Session Detail
-  Attempts timeline
-  Send / fail list
-  Rest pattern
-  HR chart
-  Edit duration
-
-Project Basics
-  Recent projects
-  New project
-  Unassigned attempts
-
-History
-  Recent sessions
-```
-
-### 8.4 交互预算
-
-| 预算项 | P0 目标 |
-| --- | --- |
-| 开始训练 | <= 5 秒。 |
-| 单次下墙标记 | <= 3 秒。 |
-| 单小时点击量 | 中位 <= 20 taps/hour。 |
-| End session | 长按确认，<= 5 秒。 |
-| 训练后 review | 初次 <= 90 秒，熟练 <= 60 秒。 |
-| Watch 页面层级 | 训练中不超过 2 层。 |
-| 单屏文本 | 大数字 + 极短标签，不写解释性文案。 |
-
-如果交互预算过不了，产品会比备忘录更烦。
-
----
-
-## 9. 数据模型和复盘设计
-
-### 9.1 关键实体
-
-| 实体 | 字段 | 来源 |
-| --- | --- | --- |
-| Session | id、start/end、duration、source、workout id、sync state | Watch / HealthKit |
-| Attempt | start/end、result、source、confidence、corrected、project_id | 用户标记 + suggested timeline |
-| RestView | start/end、duration、before/after attempt、HR context | Watch timer + timeline 派生视图，不作为 P0 独立持久化对象 |
-| Project | name/nickname、grade、color、wall、status、notes | iPhone 用户输入 |
-| Correction | changed field、old/new、time、reason optional | iPhone review |
-| Recap | generated summary、待确认项、用户确认后的 next-session cue | iPhone |
-
-### 9.2 数据来源和真相等级
-
-| 真相等级 | 来源 | 例子 | UI 话术 |
+| 产品 | 当前公开能力 | 公开评价/版本日志暴露的问题 | 对 LineWise 的结论 |
 | --- | --- | --- | --- |
-| User confirmed | 用户手动标记或 iPhone 确认 | Send、Fail、Project A | Confirmed |
-| System recorded | Workout/HealthKit 事实 | session time、HR samples | Recorded |
-| Suggested | motion/time/HR 候选 | possible attempt、possible rest | Suggested |
-| Inferred | 规则派生 | possible flash only if user confirms first attempt + project identity | Inferred |
-| Unknown | 数据不足 | unclear segment | Needs review |
+| 磕磕 | 视频自动整理、拍墙搜线、逐帧对比、公开解法、岩馆主页、搭子、会员卡、云空间 | 版本日志持续修复后台整理、重复队列、旧设备崩溃、来电打断、线路评分和同步问题；评价样本不足 | “视频档案 + 岩馆 + 社区”已被占位，可靠性比功能数量更难 |
+| 攀岩科学 | 姿态分类、关节角度、重心轨迹、视频叠图、AI 分析、3D 岩壁、3D pose、自定义线路、火柴人 Beta、指力训练 | 有用户认可叠图，也有定线功能闪退反馈；安装包约 806 MB | 原设想中的 AI、火柴人、定线解析都不是新概念 |
+| ClimbPin 岩钉 | iPhone + Apple Watch、自动检测、Project、心率、CPG/CEG、完攀金字塔、Health/FIT 导入、AI 识图、iCloud | 手动保存闪退、图片点击无响应；日志持续修复 Watch 传输确认、同步卡死、云端残留和编辑不回传 | Watch 与指标已是直接竞争，LineWise 必须把事实可靠性和 ProofCheck 做得更深 |
+| GoTop | 自动裁剪、线路/颜色分组、尝试与完攀识别、训练摘要、本地视频 | 评价样本仅 7 个，产品宣称准确性尚缺独立验证 | 自动整理可作为导入能力，不应成为唯一价值 |
+| 壁记 | 尝试/结果/线路/视频、姿态、锁臂、重心、三点平衡、统计、多难度系统 | 仅 6 个评分，缺少长期使用证据 | 记录、相册和姿态分析已商品化 |
+| 岩究生 | 自定义日志、训练计划、休息、视频、结果 | 评论要求历史补录并反馈日期错误；用户要求开放自建岩馆 | 离线、补录、正确日期和用户自建身份是硬需求 |
+| 攀岩么 | 城市/岩馆/线路、打卡、收藏、公开内容、约爬和搭子 | 评价不足 | 本地发现和社交不是 LineWise P0 空白 |
+| 攀岩笔记等轻日志 | 路线、特征、未完攀筛选、月度摘要 | 多为轻量记录，数据深度有限 | 基础日志门槛很低，迁移价值必须在下一次学习 |
 
-原则：
+来源：[磕磕 App Store](https://apps.apple.com/hk/app/%E7%A3%95%E7%A3%95-%E6%94%80%E5%B2%A9%E8%AE%B0%E5%BD%95%E4%B8%8E-beta-%E7%A4%BE%E5%8C%BA/id6760823408) [攀岩科学 App Store](https://apps.apple.com/cn/app/%E6%94%80%E5%B2%A9%E7%A7%91%E5%AD%A6/id6738903694) [ClimbPin App Store](https://apps.apple.com/cn/app/climbpin-%E5%B2%A9%E9%92%89/id6755990150) [GoTop App Store](https://apps.apple.com/cn/app/gotop/id6757733784) [壁记 App Store](https://apps.apple.com/cn/app/%E5%A3%81%E8%AE%B0-%E8%AE%B0%E5%BD%95%E4%BD%A0%E7%9A%84%E6%AF%8F%E4%B8%80%E6%AC%A1%E6%94%80%E7%99%BB/id6749840034) [岩究生 App Store](https://apps.apple.com/cn/app/%E5%B2%A9%E7%A9%B6%E7%94%9F/id6740552981) [攀岩么 App Store](https://apps.apple.com/tw/app/%E6%94%80%E5%B2%A9%E4%B9%88/id6775133615) [攀岩笔记 App Store](https://apps.apple.com/cn/app/%E6%94%80%E5%B2%A9%E7%AC%94%E8%AE%B0/id6471394121)
 
-> UI 里永远不要把 Suggested 写成 Detected。
+### 4.2 已有能力版图：原五大愿景均已有直接实现
 
-### 9.3 Recap 层级
-
-| 层级 | 回答的问题 | P0/P1 |
+| LineWise 原愿景 | 市场已有实现 | 还能做出的差异 |
 | --- | --- | --- |
-| Session recap | 今天练了什么？训练节奏如何？ | P0 |
-| Attempt recap | 哪些 attempt 是 send/fail？休息多久？ | P0 |
-| Project recap | 哪条线推进了？哪条卡住了？ | P1 |
-| Trend recap | 最近 4 周有什么变化？ | P1 |
-| Next-session cue | 用户确认的下次回忆提示是什么？ | P0b 可手动保存，P1 起强化 |
+| 攀岩搭子 | 攀岩么、磕磕、微信群、小红书、岩馆现场 | 先做私人 AI/记忆伴侣；真人匹配必须解决时间、水平、拍摄、社交边界和安全 |
+| 自动读线 | 磕磕拍墙搜线、ClimbPin AI 识图、多款海外 AI App | 结合个人历史和 ProofCheck，输出多假设而非一条答案 |
+| 火柴人趣味交互 | 攀岩科学已有 3D pose 和虚拟火柴人 Beta | 用于解释一个 MoveCue，并在真实尝试后验证，不做孤立特效 |
+| 定线解析 | 攀岩科学自定义线路、岩馆 OS、定线工具 | 区分官方意图、用户解法和 AI 推断；引入身体适配和可访问性 |
+| 教学与训练 | 岩究生、攀岩科学、Crimpd、教练课程 | 从重复 FailureEpisode 触发一个 MicroDrill，不先建泛内容库 |
 
-### 9.4 P0 Recap 模板
-
-P0 不要做泛泛总结，要尽量变成攀岩语言：
+由此得到新的竞争原则：
 
 ```text
-78 min session
-18 attempts, 5 sends
-Avg rest 2:42
-
-Your second half had longer rests and fewer sends.
-3 attempts need review.
-Project A: 6 attempts, no send yet.
-Save as cue? Start with Project A after warmup.
+Feature novelty is gone.
+The defensible unit is: route identity + meaningful failure + one cue + later proof.
 ```
 
-中文版本：
+### 4.3 评价与更新日志反复暴露的是可靠性债务
+
+当前竞品的负面信号高度一致：
+
+- 自动识别会把无效片段、环境变化或短线路误算成攀爬；
+- Watch 与手机传输完成状态不清楚；
+- 云同步卡住、删除残留、编辑不回传；
+- 图片/视频添加失败、后台处理队列重复、来电中断后片段丢失；
+- 用户不能在训练后补录，或日期、路线、尝试被写错；
+- AI/姿态功能能演示，但崩溃、体积和解释可信度影响持续使用。
+
+因此，P0 的产品质量顺序必须是：
 
 ```text
-本次训练 78 分钟
-18 次尝试，5 次完成
-平均休息 2:42
-
-后半段休息变长，send 率下降。
-还有 3 个候选尝试需要确认。
-Project A：6 次尝试，暂未完成。
-可保存为下次回忆提示：热身后先回到 Project A。
+不丢 -> 不串 -> 可补 -> 可改 -> 可解释 -> 才自动化
 ```
 
-### 9.5 Correction log 的战略价值
+任何自动功能若让用户花更多时间校正，或无法说明来源，都不应进入默认流程。
 
-用户修正不是失败，而是数据飞轮：
+### 4.4 Apple Watch 与运动记录
 
-| Correction 类型 | 能学到什么 |
-| --- | --- |
-| 删除 false attempt | 哪些 motion pattern 容易误报。 |
-| 合并 attempt | 用户真实 attempt 时长边界。 |
-| 修改 result | 用户下墙后标记习惯和错误率。 |
-| 绑定 project | 哪些时间线需要 route identity。 |
-| 修改 session end | 忘记结束的检测规则。 |
-
-P0 应该把 correction log 做成轻量一等数据，而不是简单覆盖；但 UI 必须让用户感到“是在帮自己保存正确记忆”，不是在给模型打工。
-
----
-
-## 10. 平台和技术合同
-
-### 10.1 Apple 平台能力
-
-| 能力 | 官方/平台事实 | 产品用途 | 风险 |
+| 产品 | 强项 | 公开问题/限制 | LineWise 应吸收的教训 |
 | --- | --- | --- | --- |
-| Apple Watch Workout | Apple Watch 原生支持 Climbing workout。 | 系统运动入口、Health/Fitness 生态。 | 原生只给泛运动数据。 |
-| HKWorkoutSession | Watch 上一次只能运行一个 workout session。 | P0 必须处理被其他 workout 抢占。 | lifecycle 复杂。 |
-| HealthKit 权限 | 读写健康数据需要明确授权。 | HR、workout、energy、历史。 | 拒权后要降级。 |
-| Core Motion | 可访问加速度、陀螺仪等 motion 数据。 | attempt/rest 候选。 | 单腕数据误报多。 |
-| WatchConnectivity | Watch/iPhone 可传输用户数据。 | 离线后补传、review 同步。 | 乱序、重试、重复。 |
-| WKBackgroundModes | workout-processing 支持 active workout session 相关后台运行。 | workout 期间后台记录。 | 必须配置正确并真机验证；系统仍可能因后台 CPU、内存、电量等因素限制 App。 |
-| Haptics | 手腕触觉提醒。 | rest reminder。 | 不能频繁打扰。 |
+| Apple Workout | 系统原生、Workout/Health/Fitness | 没有路线、失败和 Project 语义 | 用作底层记录，不重复造泛运动摘要 |
+| Redpoint | Watch、HealthKit、多攀岩类型、自动高度 | 气压受空调/门窗影响；评论要求更好编辑和数据解释 | 自动化必须可修正，抱石不依赖高度 |
+| Pinnacle | Watch 离线、一键记录、难度体系 | 仍偏 grade/attempt log | 离线和极简操作是基线能力 |
+| Garmin/COROS | 硬件生态、路线/训练负荷 | 用户需要专用设备且交互模型不同 | 不和硬件平台拼泛训练负荷 |
 
-### 10.2 Platform Gates
+Redpoint 的用户评论直接暴露了两个问题：室内气压变化会造成错误高度/攀爬记录；如果记录不能方便地删除、编辑、合并并转成有用洞察，用户不会为高级版付费。[Redpoint App Store Reviews](https://apps.apple.com/us/app/redpoint-bouldering-climbing/id1324072645?platform=watch&see-all=reviews)
 
-| Gate | 必须验证 |
-| --- | --- |
-| Workout lifecycle | start、pause、resume、end、discard、crash recovery、another workout started。 |
-| Permission degrade | HealthKit、motion、HR 任一权限拒绝后，仍可手动记录 session。 |
-| Local durability | iPhone 不在附近、断连、低电量、App 崩溃后，已 checkpoint 的 session 最大限度保留；断电/崩溃前未落盘数据不做绝对承诺。 |
-| Sync integrity | retry、ack、去重、乱序、pending 状态、重复 session 防护。 |
-| Battery | 90 分钟真实抱石 session 电量消耗在可接受范围；低电量进入 essential mode。具体阈值需真机 beta 校准。 |
-| Device matrix | 不同 Watch 型号、watchOS、左右手佩戴、主力手差异。 |
-| App Review | HealthKit 用途、隐私、非医疗声明、订阅说明。 |
+Pinnacle 已提供 Watch 独立离线工作和一键记录，这意味着“Watch 能记攀岩”不是产品护城河，只是入场券。[Pinnacle App Store](https://apps.apple.com/us/app/pinnacle-climb-log/id1271954104)
 
-### 10.3 Sync 状态机
+### 4.5 岩馆、路线与社区系统
 
-```text
-Recording on Watch
-  -> Saved locally
-  -> Pending transfer
-  -> Transferred to iPhone
-  -> Review pending
-  -> User confirmed
-  -> Canonical session
-  -> Optional export / backup
-```
-
-失败状态：
-
-| 状态 | 用户看到什么 | 系统做什么 |
-| --- | --- | --- |
-| iPhone unavailable | Saved on Watch | 等待连接后补传。 |
-| transfer failed | Sync pending | retry + 保留本地。 |
-| duplicate detected | Already synced | 去重，不重复显示。 |
-| review not done | Needs review | 不生成强结论。 |
-| HealthKit write failed | Workout not saved to Health | 允许重试，保留 App session。 |
-
-### 10.4 Low Power / Essential Mode
-
-当低电量或高耗能风险出现时：
-
-| 正常模式 | Essential mode |
-| --- | --- |
-| HR + workout + motion candidates + haptics | workout + manual event + low-frequency checkpoint |
-| suggested timeline | 关闭或降低采样 |
-| rest haptics | 可保留少量 |
-| rich display | 大数字简化 |
-
-核心原则：
-
-> 电量不足时可以牺牲智能候选，不能牺牲已落盘记录、用户手动标记和可恢复同步。
-
-### 10.5 Claim Language Rules
-
-| 可以说 | 不要说 |
-| --- | --- |
-| Suggested attempts | Automatically detects every climb |
-| Helps review rest patterns | Measures fatigue accurately |
-| Records user-marked sends/fails | Knows whether you sent the route |
-| Apple Health compatible | Replaces medical or safety judgment |
-| Low-interruption training log | Hands-free full climbing coach |
-| Editable recap | AI truth engine |
-
----
-
-## 11. 算法和数据验证
-
-### 11.1 算法边界
-
-P0 算法目标不是识别动作，而是减少复盘整理成本。
-
-| 可以尝试 | 不应承诺 |
-| --- | --- |
-| climbing/resting/idle/uncertain segment candidate | hold、脚法、beta、动作类型。 |
-| possible attempt start/end | route 完成百分比。 |
-| rest duration | 疲劳医学判断。 |
-| motion intensity proxy | 精确训练负荷。 |
-| HR context | 安全建议、恢复判断或 readiness 评分。 |
-
-### 11.2 P0 规则基线
-
-| 模块 | 输入 | 输出 | 规则 |
+| 产品族 | 代表 | 已解决的问题 | LineWise 不应复制 |
 | --- | --- | --- | --- |
-| Activity burst | accelerometer/gyroscope variance | possible attempt | 运动强度超过个人 baseline 且持续一定窗口。 |
-| Rest detection | low motion + elapsed time | rest segment | 用户标记后或 activity burst 后进入 rest。 |
-| Attempt candidate | burst + rest boundary | candidate attempt | 只在 iPhone review 中展示。 |
-| Session anomaly | 长时间低 motion、超长 session | forgot-to-end hint | 结束后提示裁剪。 |
-| HR context | HR zone / post-attempt HR pattern | context only | 不下医学结论，不输出恢复/疲劳判断。 |
+| 岩馆 OS | TopLogger、Griptonite、Vertical-Life | 官方路线、换线、比赛、排行榜、反馈、定线分析 | 岩馆后台、路线库存、比赛计分 |
+| Guidebook/社区 | KAYA、Mountain Project、27 Crags | 户外路线、地图、公开解法、社交图谱 | 公共路线数据库和内容冷启动 |
+| Spray/Board | MoonBoard、Kilter、Crux | 标准墙/喷点墙、共享线路、训练记录 | 标准化硬件生态 |
+| 训练系统 | Crimpd、Lattice、训练计划 App | 课程、周期、力量训练 | 泛训练内容库和无上下文 AI 计划 |
 
-### 11.3 数据采集计划
-
-旧版设想的 150-300 attempts 不够验证产品可用性。更合理的验证拆成 alpha 和 beta：
-
-Alpha 先证明行为闭环，不把算法数据规模作为 MVP 前置门槛：
-
-| 项目 | 目标 |
-| --- | --- |
-| 用户 | 5-10 位高意愿目标用户。 |
-| sessions | 10-20 场真实抱石训练。 |
-| 重点 | 戴表、下墙标记、quick save、训练后 review、下次 reopen。 |
-
-Beta 再验证候选分段和跨设备稳定性：
-
-| 项目 | 目标 |
-| --- | --- |
-| 用户 | 30-50 位目标用户。 |
-| sessions | 60-100 场真实抱石训练。 |
-| attempts | 1000-2000 次 attempt。 |
-| ground truth | 部分 session 视频标注 + 用户 review correction。 |
-| 设备 | 至少覆盖 3-4 类 Watch 型号。 |
-| 佩戴 | 左右手、主力手/非主力手记录。 |
-| 场景 | 热身、project、社交休息、走动、喝水、擦镁粉等。 |
-
-### 11.4 标注体系
-
-| 标签 | 定义 |
-| --- | --- |
-| attempt_start | 用户开始一次明确路线尝试。 |
-| attempt_end | 用户落地、放弃或完成。 |
-| result | Try / Send / Fail / Unknown。 |
-| rest_start/end | 用户进入/结束休息。 |
-| false_activity | 走动、喝水、聊天、整理装备、擦镁粉等。 |
-| project_id | 用户确认的路线/project。 |
-| correction_type | delete、merge、split、result_change、time_adjust。 |
-
-### 11.5 算法成功指标
-
-算法不是首个 market proof，但它决定产品能不能降本。
-以下是初始 beta 假设，不是最终上线标准；需要按用户、Watch 型号、左右手、主力手/非主力手分层报告。
-
-| 指标 | 初期目标 |
-| --- | --- |
-| Rest segmentation quality | IoU / boundary tolerance 达到可用，且不显著增加 review cost |
-| Attempt candidate recall | > 80% |
-| Attempt candidate precision | > 60%，但必须可快速删除 |
-| False positives per hour | 中位可接受，目标 < 5 |
-| Review correction time | 中位 < 60 秒 |
-| User trust | 不把候选说成事实，主观信任 >= 4/5 |
-
-如果算法没过，但手动闭环过了，可以继续做 manual-first 产品。  
-如果手动闭环没过，算法再好也救不了。
-
----
-
-## 12. UI/UX 原则
-
-### 12.1 Watch 原则
-
-| 原则 | 实现 |
-| --- | --- |
-| 一眼可读 | 大数字：Session、Rest、HR、Attempts。 |
-| 休息时交互 | 攀爬中不弹窗。 |
-| 少按钮 | Try / Send / Fail / Undo 是核心。 |
-| 可撤销 | Undo 必须明显。 |
-| 长按危险操作 | End session 长按确认。 |
-| 默认静默 | 触觉提醒可开关。 |
-| 不填表 | grade/project 训练后补。 |
-| 状态清晰 | Sync pending、Saved on Watch、Low Battery。 |
-
-### 12.2 iPhone 原则
-
-| 原则 | 实现 |
-| --- | --- |
-| 先 review pending | 用户打开先看到待确认 session。 |
-| 一屏看懂 | 先 summary，再 timeline。 |
-| 修正低成本 | 合并/删除候选、改 result、绑定 project。 |
-| 长期记忆 | active projects 放在首页明显位置。 |
-| 数据可信 | 显示 source: user / suggested / confirmed。 |
-| 不堆图表 | P0 不做复杂仪表盘。 |
-
-### 12.3 P0 页面
-
-Watch:
+### 4.6 最强竞争对手仍是用户现有习惯
 
 ```text
-Start Boulder
---------------
-Active Session
-  42:18
-  Rest 02:14
-  HR 138
-  Attempts 9
-  [Try] [Send] [Fail]
-  [Undo] [Pause] [End]
---------------
-Saved
-  78 min
-  18 attempts
-  5 sends
-  Sync pending
+照片/视频 + 微信群/朋友 + Apple Workout + 记忆
 ```
 
-iPhone:
+这个组合免费、灵活、没有学习成本。LineWise 必须让用户在下一次到馆时明显感到“我真的更快想起来并做了更好的下一次尝试”，否则再完整的档案都不足以迁移习惯。
+
+### 4.7 数据可持续性也是竞争维度
+
+2026 年 Kilter Board 旧 App 的数据和服务迁移事件引发用户对多年训练记录消失的担忧。对个人训练系统而言，可导出、可迁移和离线可读不是附加功能，而是信任合同。[Climbing 对 Kilter App 事件的报道](https://www.climbing.com/news/why-the-kilter-board-app-suddenly-disappeared/)
+
+---
+
+## 5. Apple Watch 适配重新判断
+
+### 5.1 官方平台能力
+
+Apple 的 workout session 可以在后台继续运行并产生高频心率样本；系统要求开始/停止明确、保存反馈清楚，并限制后台 CPU 使用。[Running Workout Sessions](https://developer.apple.com/documentation/HealthKit/running-workout-sessions)
+
+WatchConnectivity 的接口适合不同语义：
+
+- `sendMessage`：设备可达时即时请求；
+- `updateApplicationContext`：只保留最新状态；
+- `transferUserInfo`：排队、按序、最终交付；
+- `transferFile`：照片/大文件等后台传输。
+
+Apple 明确要求 `transferUserInfo` 在真实配对设备测试，Simulator 不支持完整行为。[WatchConnectivity](https://developer.apple.com/documentation/watchconnectivity/transferring-data-with-watch-connectivity) [transferUserInfo](https://developer.apple.com/documentation/watchconnectivity/wcsession/transferuserinfo%28_%3A%29)
+
+### 5.2 Watch 的真实价值
+
+Watch 最适合：
+
+- 开始/结束 workout；
+- 自动记录时间和心率上下文；
+- 下墙后单次轻触记录结果；
+- 显示 rest timer；
+- 用轻触觉做可关闭的时间提示；
+- 手机不在旁边时本地保存事件；
+- 下一次到馆时显示一个极短的 NextSessionCue。
+
+Watch 不适合：
+
+- 选取照片、画线路或标注岩点；
+- 填写失败 taxonomy；
+- 阅读详细动作解释；
+- 浏览公开视频和社区；
+- 实时做动作指导；
+- 展示复杂趋势图。
+
+### 5.3 佩戴本身是产品门槛
+
+社区中既有长期戴表并使用保护套的用户，也有因划伤、磕碰、腕部不适、担心勾挂而拒绝佩戴的人；还有用户提到个别岩馆不允许佩戴手表或首饰。这些是用户反馈，不是普遍安全标准，但足以否定“所有目标用户都能戴表”的假设。[Bouldering smart watch 讨论](https://www.reddit.com/r/bouldering/comments/1fljsbo/does_anyone_use_fitness_trackers_smart_watches/) [是否戴表讨论](https://www.reddit.com/r/bouldering/comments/105t4kt) [Climbing watch 讨论](https://www.reddit.com/r/bouldering/comments/16kaz8n/bouldering_with_a_smart_watch/)
+
+因此必须提供三种采集模式：
+
+| 模式 | 适用用户 | 现场交互 |
+| --- | --- | --- |
+| Watch capture | 愿意戴表且场馆允许 | Fail/Send/Undo 或简化事件 |
+| iPhone quick capture | 不戴表但手机在垫区外可取 | 锁屏/大按钮/语音短记 |
+| Review-only capture | 训练中不想操作 | 结束后按路线批量记尝试与代表性失败 |
+
+核心数据模型必须兼容三种模式，不能把 Watch 事件流写死成唯一事实来源。
+
+### 5.4 传感器能做什么
+
+| 数据 | 可支持 | 不应声称 |
+| --- | --- | --- |
+| Heart rate | session 背景、粗略强度和休息趋势 | 恢复、疲劳、安全、动作质量 |
+| Accelerometer/Gyroscope | suggested active/rest window、实验性候选 | 全身技术、路线、send/fail |
+| Barometer | 绳攀或较大高度变化的实验 | 抱石 attempt 可靠计数 |
+| GPS/Location | 可选场馆回忆 | 室内线路定位、精确墙区 |
+| Workout duration | 可靠 session 边界 | 有效攀爬时间的自动真相 |
+| Energy | Apple 生态附属信息 | 精确训练负荷和付费价值 |
+
+### 5.5 Watch P0 的正确目标
+
+不是“自动识别每次攀爬”，而是：
+
+> 当用户愿意戴表时，把一次有意义的记录从十几秒降到一两秒，并且即使断连也不丢。
+
+### 5.6 Watch 不是数据孤岛，导入比排他更重要
+
+ClimbPin 已经支持 Health 中其他 App 的攀岩记录和 Garmin/COROS FIT 文件导入，并允许用户入库前预览、逐段定级。这意味着用户可能已经在多个设备上积累 workout；LineWise 若要求必须由自家 Watch App 开始记录，会人为缩小市场。[ClimbPin App Store](https://apps.apple.com/cn/app/climbpin-%E5%B2%A9%E9%92%89/id6755990150)
+
+P0/P0.5 的平台策略应是：
+
+| 来源 | 导入内容 | LineWise 补充的语义 |
+| --- | --- | --- |
+| LineWise Watch | session、事件锚点、rest、可选 HR | RouteCard、FailureEpisode、MoveCue、ProofCheck |
+| Apple Health | workout 边界、时长、可授权样本 | 训练后按路线补录，不假装拥有 attempt 真相 |
+| FIT | 设备记录的段落与生理/高度数据 | 用户预览、合并、逐段确认 |
+| Photos/视频 | 时间、地点、媒体 | 路线身份、代表性尝试、失败位置 |
+| 手动历史 | 日期、岩馆、线路、结果、笔记 | 允许不完整事实，标记来源而非强迫补齐 |
+
+Apple HealthKit 权限必须按使用场景逐项请求；健康数据不能用于广告，向第三方或第三方 AI 发送前必须取得明确同意。[HealthKit privacy](https://developer.apple.com/documentation/healthkit/protecting-user-privacy) [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
+
+---
+
+## 6. AI 读线与动作分析的能力边界
+
+### 6.1 单张照片能可靠做的层级
+
+从低到高：
+
+1. 检测可能的岩点和 volume；
+2. 按颜色/纹理形成路线候选；
+3. 标注 start/top/zone 候选；
+4. 用户校正路线集合；
+5. 基于几何与常见动作生成多个 MoveCue 假设；
+6. 结合用户身体参数、历史视频和结果进行个性化排序；
+7. 推断唯一正确解法或定线员意图。
+
+P1 最多应承诺 1-4；第 5 项只能是可编辑假设；6-7 需要大量个体与路线数据，不能作为短期承诺。
+
+### 6.2 为什么“自动读线”比看起来难
+
+照片缺失的信息包括：
+
+- 岩点真实深度、摩擦、可抓方向和遮挡；
+- 墙面倾角与透视畸变；
+- 脚点是否允许、起步规则和定线标签；
+- 用户身高、臂展、力量、柔韧、惯用侧与恐惧；
+- 动态动作的时序、速度和接触质量；
+- 定线员真实意图与替代解法。
+
+CVPR 2025 Workshop 的 `The Way Up` 只使用 22 段标注视频、940 次手脚岩点使用来研究 hold usage，并强调攀岩姿态估计仍有专门挑战。这说明公开研究正在建立基础数据集，而不是已经解决通用 AI 教练。[The Way Up](https://openaccess.thecvf.com/content/CVPR2025W/CVSPORTS/html/Maschek_The_Way_Up_A_Dataset_for_Hold_Usage_Detection_in_CVPRW_2025_paper.html)
+
+`augKlimb` 的用户中心研究也更接近“轻量记录、加速度和视频关联”，而不是从单腕或单图直接给出正确技术诊断。[augKlimb](https://arxiv.org/abs/2001.07944)
+
+### 6.3 LineWise 应先建立的数据链
 
 ```text
-Pending Review
-  78 min session
-  18 attempts suggested/confirmed
-  3 need review
-  Confirm all / Review timeline
-
-Session Detail
-  Timeline
-  Rest pattern
-  HR context
-  Attempts list
-  Bind projects
-
-Project Memory
-  Active projects
-  Last attempts
-  Next-session cue
+RoutePhoto
+  -> user-corrected RouteGroup
+  -> Attempt outcome
+  -> Failure location
+  -> MoveCue and provenance
+  -> next-attempt ProofCheck
+  -> accepted / edited / rejected
 ```
 
----
+最稀缺的数据不是路线照片本身，而是“某个建议对某个用户在下一次尝试是否有效”。这比大量没有结果标签的公开视频更接近个性化训练价值。
 
-## 13. 商业化和增长
+### 6.4 AI 输出的四级信任模型
 
-### 13.1 商业判断
-
-这个产品商业上可能成立，但不是大而全平台逻辑。
-
-| 判断 | 说明 |
-| --- | --- |
-| 小而尖可能成立 | 高频训练用户可能愿意为长期复盘和 project memory 付费，但必须通过假门验证。 |
-| 平台化不能先假设 | route/community/gym network 都需要更强分发和数据。 |
-| 订阅需谨慎 | 早期价值密度未证明前，月订阅容易被拒绝。 |
-| 一次性/终身更适合早期 | 降低心理门槛，测试付费意愿。 |
-| Pro 候选应建立在长期价值上 | 趋势、project analytics、导出、可配置 rest pattern、视频关联；是否付费要继续验证。 |
-
-### 13.2 免费/付费边界
-
-| 免费版 | Pro 版候选 |
-| --- | --- |
-| Watch 记录基础 session | 无限历史。 |
-| 最近 N 次 session | 长期趋势。 |
-| 基础 attempt/rest/send 复盘 | Project analytics。 |
-| HealthKit 写入 | 可配置 rest 提醒和 rest pattern 分析。 |
-| 基础 project | 数据导出。 |
-| 本地存储 | 视频关联、教练共享。 |
-
-### 13.3 增长路径
-
-| 渠道 | 用法 |
-| --- | --- |
-| 岩馆/教练 | 找种子用户和真实训练数据，不先卖 SaaS。 |
-| 小红书/B站/YouTube | 展示“不掏手机记录抱石训练”和训练后复盘。 |
-| Reddit/Mountain Project | 找数据控和早期 beta 用户。 |
-| App Store SEO | bouldering tracker、climbing log、Apple Watch climbing。 |
-| Apple Health/Fitness 用户 | 强调补足 Apple Workout 攀岩语义。 |
-| Creator/教练合作 | 用 project review 和训练复盘做内容。 |
-
-### 13.4 付费假门
-
-在 beta 中可测试：
-
-| 付费点 | 假门问题 |
-| --- | --- |
-| Lifetime unlock | 用户是否愿意一次性买断？ |
-| Pro yearly | 用户是否认为长期趋势值得年付？ |
-| Export | 数据控是否愿意为导出付费？ |
-| Coach share | 教练/学员是否有真实协作需求？ |
-| Video link | project 用户是否愿意把视频和 attempt timeline 绑定？ |
-
----
-
-## 14. 验证计划和 Go/No-Go
-
-### 14.1 4-6 周验证路线
-
-| 周期 | 目标 | 交付/验证 |
+| 级别 | 输出 | 产品语言 |
 | --- | --- | --- |
-| Week 1 | 访谈和需求验证 | 12-15 位 ICP 访谈，确认佩戴、标记、复盘意愿。 |
-| Week 2 | 原型验证 | Watch rest-window 操作原型，测试 3 秒标记。 |
-| Week 3 | 技术 spike | Workout、HealthKit、local save、sync prototype。 |
-| Week 4 | Internal dogfood / small alpha | 5-10 位高意愿用户，记录 10-20 场真实 session，先验证手动闭环和数据持久性。 |
-| Week 5-6 | TestFlight beta | 若 alpha 通过，再扩到 30-50 位用户，记录 60-100 场真实 session。 |
-| Week 6 | Go/No-Go | 用硬指标决定继续、pivot 或停止。 |
+| L0 | 用户事实 | `Recorded` / `Confirmed` |
+| L1 | 规则建议 | `Suggested from your last note` |
+| L2 | 模型候选 | `AI suggestion, needs review` |
+| L3 | 教练/定线员内容 | 显示作者与身份，不冒充系统真相 |
 
-### 14.2 Go/No-Go 指标
+任何 L1/L2 输出都必须保存来源、置信度、编辑和拒绝事件。
 
-以下阈值是内部 beta 假设，不是行业基准；第一次真实 beta 后需要校准。
+### 6.5 AI 产品价值不在“看起来像懂了”，而在能被证伪
 
-| 类型 | Gate | Go | Pivot | No-go |
-| --- | --- | --- | --- | --- |
-| Product | Wearability | >= 60% ICP 愿意整场戴表 | 40-60% | < 40% |
-| Product | Friction | 70% session 独立完成，<= 20 taps/hour，打断评分 >= 4/5 | 操作负担偏高但可优化 | 用户普遍觉得烦 |
-| Product | Recall | 60% session 24h 内打开，40% 下次训练前回看 | 打开但不影响行为 | 用户不看 |
-| Commercial | Retention | 4 周内 35% 用户记录 >= 4 次 | 20-35% | < 20% |
-| Commercial | WTP | 完成 >=3 次 session 用户中假门转化 >= 8% | 3-8% | < 3% |
-| Channel | Channel | 至少找到 1 条可重复 ICP 渠道 | 只有零散用户 | 无渠道 |
-| Trust | Data trust | 修正时间 < 60 秒，主观信任 >= 4/5 | 需弱化自动候选 | 用户不信 |
+路线预读实验表明，预览可减少和缩短攀爬中的停顿，但不必然提高是否完攀；经验更丰富的攀爬者也表现出不同的视觉搜索和动作规划。这给产品两个约束：[Route preview efficacy](https://pubmed.ncbi.nlm.nih.gov/20561271/) [Bouldering preview cognition](https://pubmed.ncbi.nlm.nih.gov/38740079/)
 
-### 14.3 访谈问题
+1. 不能把“生成了一条顺序”直接等同于提高 send 率；
+2. 同一个建议必须放进用户、路线、尝试和结果上下文中检验。
 
-1. 你现在如何记录抱石训练？
-2. 最近一次训练后，你还记得哪条线试了几次吗？
-3. 你是否在抱石时戴 Apple Watch？为什么戴/不戴？
-4. 下墙后你愿意花 1-3 秒点一下结果吗？
-5. 一场训练中最多愿意点多少次？
-6. 训练后你愿意花 30-60 秒确认记录吗？
-7. 什么样的 recap 会让你下次训练前打开？
-8. 你现在用 Apple Workout / Strava / 备忘录 / Excel / 照片吗？
-9. 这些工具哪里够用，哪里不够？
-10. 你是否愿意为长期 project 追踪和复盘付费？
-11. 你最怕这个 App 在训练中怎么打扰你？
-12. 如果自动识别不准但可修正，你能接受到什么程度？
-13. 你什么时候完全不想记录，为什么？
-14. 记录 attempt/send/grade 会不会让训练变得更焦虑或没意思？
-15. 什么样的提示会让你觉得是在帮你，而不是在评价你？
+所以每个 AI MoveCue 都必须回答：
+
+- 它依据了哪张照片、哪段视频、哪次失败或哪位作者？
+- 它假设了什么身高/臂展、手脚顺序或墙面条件？
+- 用户接受、编辑还是拒绝？
+- 下一次是否执行？结果是 `worked`、`no_change`、`different_problem` 还是 `not_tested`？
+
+这套可证伪结构才可能逐步形成 LineWise 的个人学习资产。
 
 ---
 
-## 15. 风险和应对
+## 7. 重新定义产品问题
 
-| 风险 | 等级 | 应对 |
+### 7.1 旧问题
+
+> 如何用 Watch 记录攀岩 session，并在手机上复盘？
+
+这个问题太接近 Redpoint、Pinnacle 和通用 logbook，也容易陷入 attempt 计数和传感器准确率。
+
+### 7.2 新问题
+
+> 如何让抱石者从一次失败中只保存最必要的信息，并在下一次尝试时取回、验证和更新，让个人对路线与身体的理解持续积累？
+
+### 7.3 核心闭环
+
+```text
+Capture meaningful attempt
+  -> compress failure into one blocker
+  -> preserve one MoveCue
+  -> retrieve before next attempt/visit
+  -> run ProofCheck
+  -> update personal climbing memory
+```
+
+### 7.4 Canonical domain chain
+
+原有领域模型仍成立，但需要强调结果层：
+
+```text
+GymVisit
+  -> RouteCard
+  -> Attempt
+  -> FailureEpisode
+  -> MoveCue
+  -> NextSessionCue
+  -> ProofCheck
+```
+
+`ProofCheck` 不是附属字段，而是 LineWise 与普通日志、视频社区之间的关键差异。
+
+### 7.5 真正可能积累的护城河
+
+不是照片数量、视频数量或 workout 数量，而是：
+
+```text
+在什么路线约束下
+什么身体与经验上下文的人
+在什么失败位置
+接受了什么来源的 MoveCue
+下一次发生了什么
+```
+
+这个“建议到结果”的图谱既能服务个人记忆，也能在用户明确同意、匿名阈值足够时支持教练和定线研究。P0 仍只构建私人单用户图谱，不宣称网络效应。
+
+---
+
+## 8. 严格需求合同
+
+### 8.1 P0 Must Have
+
+| 能力 | 具体要求 | 验证方式 |
 | --- | --- | --- |
-| 用户不愿戴表 | 极高 | 先访谈和岩馆实测，不把不戴表用户纳入 P0。 |
-| 下墙标记仍太烦 | 极高 | 压缩到 1-3 秒，减少按钮，训练后补信息。 |
-| 复盘没有 aha moment | 极高 | recap 必须指向 project 和 next-session cue。 |
-| 自动候选误报多 | 高 | Suggested only，可删可合并，manual-first 仍成立。 |
-| HealthKit/Workout 复杂 | 高 | P0 前置平台 spike，真机验证 lifecycle。 |
-| 同步丢数据 | 高 | local-first、checkpoint、ack/retry、pending state。 |
-| 电量不可接受 | 高 | essential mode，降低 motion 采样。 |
-| App Review 风险 | 中高 | 非医疗、非安全承诺，隐私和 HealthKit 用途清楚。 |
-| 付费弱 | 中高 | 早期一次性/假门，指标不过不扩 Pro。 |
-| 竞品快速复制 | 中 | 用 correction log、project memory、用户习惯建立深度。 |
+| RouteCard | 10 秒内建立最小路线锚点；可仅照片或短标签 | 真实岩馆计时 |
+| 多入口采集 | Watch、iPhone quick capture、review-only 共用事件模型 | 三种模式回放测试 |
+| Attempt | 支持有意义尝试、结果、时间和路线绑定 | 现场与复盘纠错 |
+| Local-first | 无账号、无网、无 HealthKit 仍可完成核心闭环 | 飞行模式/拒权测试 |
+| Historical entry | 训练后可选择真实日期补录，不要求实时开启 App | 历史日期/时区/跨午夜测试 |
+| Interoperability | 至少预留 Health/FIT/Photos 导入与版本化导出模型 | 导入预览、去重与往返测试 |
+| Undo/Correction | 用户能撤销、改路线、合并/拆分事件 | 用户任务测试 |
+| FailureEpisode | 一次复盘只要求一个主要阻碍 | 30 秒 review 测试 |
+| MoveCue | 文本优先，语音可作为快速输入 | 次日可理解性测试 |
+| NextSessionCue | 到馆或打开项目时自动取回一个动作 | 下一次实地测试 |
+| ProofCheck | 记录提示是否帮助、无效或需要修改 | 连续两次尝试验证 |
+| Export | 能导出用户自己的结构化记录 | JSON/CSV 验证 |
+| Trust | AI/规则/人类来源清楚，建议与事实分离 | 认知访谈 |
+| Accessible identity | 路线不只用颜色识别；支持墙区、照片、位置或编号 | 色觉模拟与用户测试 |
+
+### 8.2 Watch Must Have
+
+- 开始、暂停、结束 workout；
+- 当前 session 与 rest 时间；
+- 最少的结果按钮与 Undo；
+- 本地事件队列和幂等同步；
+- 低电量、断连和保存状态；
+- 可关闭触觉；
+- 明确提示遵守岩馆佩戴规则；
+- 不戴表时不破坏整个产品。
+
+### 8.3 Should Have
+
+- RouteCard 相似照片/日期辅助关联；
+- 语音转短 MoveCue；
+- 代表性失败视频和最好尝试对比；
+- 路线 `active / sent / gone / archived` 生命周期；
+- “该路线可能已换线”的弱提醒；
+- 同一 MoveCue 的历史 ProofCheck；
+- 私密分享给搭子或教练；
+- 用户自定义失败标签，而不是无限系统 taxonomy。
+- 可选 `ClimberContext`，只存用户主动提供的身高/臂展区间、经验和限制；
+- 导入 Apple Health、FIT 或 Photos 后先预览再入库；
+- 所有导入、建议和人工事实保留来源。
+
+### 8.4 P1 条件能力
+
+- 照片岩点候选和路线分组；
+- start/top 候选；
+- 视频自动裁剪和 attempt 对齐；
+- StickFigureCue 三帧解释；
+- SetterLens，但必须标记“系统推断”或“定线员提供”；
+- 基于重复 FailureEpisode 推荐 MicroDrill；
+- 岩馆官方路线和换线周期接入。
+
+### 8.5 Won't Have Now
+
+- 唯一正确解法；
+- 自动判断安全、恢复和受伤风险；
+- 陌生人开放匹配；
+- 岩馆后台、会员 CRM、比赛系统；
+- 泛内容 feed；
+- 强制云端；
+- 用健康数据做广告或推荐画像；
+- 自动公开用户拍摄的他人。
 
 ---
 
-## 16. 未来方向
+## 9. 关键交互设计原则
 
-### 16.1 近期方向
+### 9.1 训练中
 
-1. 把本报告转成 `climbing_bouldering_prd_v0_1.md`；
-2. 写 `data_collection_plan`，定义真实抱石采集协议；
-3. 写 `platform_contract`，明确 HealthKit、Workout、Motion、Sync、Privacy；
-4. 做 Watch 低保真原型，验证休息窗口一键标记；
-5. 找 12-15 位 ICP 做访谈；
-6. 先组织 5-10 位 small alpha，过关后再扩 30-50 位 TestFlight beta。
+- 攀爬中不弹窗、不要求确认；
+- 下墙后优先显示结果和 rest，不显示长文本；
+- 用户可以跳过普通尝试，只记关键失败或 send；
+- 所有误触一步撤销；
+- 镁粉、汗水、疲劳和单手操作要纳入实机测试；
+- 触觉是提示，不是命令。
 
-### 16.2 中期方向
+### 9.2 训练后
 
-| 方向 | 触发条件 |
-| --- | --- |
-| Project analytics | 用户持续绑定 project。 |
-| 4-week trend | 4 周留存过关。 |
-| Rest pattern display | 有足够可信 correction/HR/rest 数据；只展示模式，不输出恢复判断。 |
-| Coach sharing | 教练用户明确愿意采用。 |
-| Video linking | project 用户高频使用且愿意管理视频。 |
+Quick Review 目标在 30 秒内：
 
-### 16.3 远期方向
+1. 今天最想记住哪条线？
+2. 主要卡点是什么？
+3. 下次只试哪一个改变？
 
-| 方向 | 注意事项 |
-| --- | --- |
-| Rope mode | 需要独立研究 belay、fall、route duration、高度和安全语义。 |
-| Gym integration | 不做自建路线库，除非有明确岩馆合作。 |
-| Board integration | MoonBoard/Kilter 这类标准化路线更适合精细记录。 |
-| Social/community | 个人价值成立后再考虑分享，不先做 feed。 |
-| ML personalization | correction log 和真实数据足够后再做。 |
+Detailed Review 是可选的：视频、时间线、心率、多个 MoveCue、主观状态和训练标签不应阻塞保存。
 
----
+### 9.3 下一次到馆
 
-## 17. 阶段结论：P0 立项判断
+不要先展示统计仪表盘，先展示：
 
-这个产品应该继续，但必须非常克制。
+```text
+上次 Project
+卡点
+要试的一个动作
+[Worked] [No change] [Different problem]
+```
 
-最值得做的不是一个“攀岩大平台”，而是：
-
-> **一个面向室内抱石训练者的 Watch-first / iPhone-review session memory tool。**
-
-它的核心不是传感器识别，而是三个行为是否成立：
-
-1. 用户愿意抱石时戴表；
-2. 用户愿意下墙后低成本标记；
-3. 用户愿意训练后完成低成本 review，并在下次训练前回看。
-
-如果这三件事成立，产品可以进入 P1 探索 project analytics、长期趋势等更深能力；coach、video、训练计划需要各自独立验证。  
-如果任何一件事不成立，这个产品就不应该继续扩成平台，而应该 pivot 成更轻的 logbook、训练后 iPhone 工具，或作为其他攀岩生态的 feature。
-
-最终一句话：
-
-> **先证明“低干扰记录 + 可修正复盘 + 下次训练记忆”能替代 Apple Workout + Notes，再谈 AI、平台和商业化。**
+这才是 Recall beats Recap 的产品化表达。
 
 ---
 
-## 18. Appendix A: 第二轮循环讨论：更深层产品认知
+## 10. 岩馆合作方向，但不进入 P0
 
-这一轮讨论故意不再只问“P0 怎么收窄”，而是让 5 个 PM 带着偏见、重叠和冲突重新调研。最终结论比上一轮更宽，但也更清楚：
+### 10.1 可以探索的最轻合作
 
-> 上一版的 `session memory layer` 是对的，但还不够深。更完整的内部产品模型应该是 **Rhythm Capture + Recall Retrieval + Proof/Trust**。
+1. 岩馆官方名称、区域和换线日；
+2. 公开的路线颜色/难度/定线员；
+3. 换线前 Project 提醒；
+4. 定线员自愿发布一个官方 MoveCue；
+5. 教练课程或公开工作坊入口；
+6. 匿名、聚合后的主观难度和路线热度。
+7. 路线的颜色名称、编号/标签和可访问性说明；
+8. 教练提供的课后 MoveCue 与下一次作业。
 
-中文一句话：
+合作顺序应从最轻的数据交换开始：
 
-> **手表管节奏，手机管记忆；复盘不是终点，下次训练前能取回才是产品。**
-
-### 18.1 第二轮 PM 争论摘要
-
-| 争论 | 第一种观点 | 第二种观点 | 最终收敛 |
+| 阶段 | 岩馆投入 | 用户价值 | 停止条件 |
 | --- | --- | --- | --- |
-| `rest timer` 是不是核心？ | 休息报时和触觉锚点可能是最强现场 loop。 | Timer 极易商品化，Apple/Garmin/Strong/Hevy/Crimpd 都能做。 | Timer 不是 moat，但它是 habit wedge；要进 P0，但不能当主卖点。 |
-| `session recap` 是否足够？ | 训练后 recap 能形成价值。 | 用户更关心下次训练前能否回想上次卡点。 | Recap 是清洗层，pre-session recall 才是产品层。 |
-| 主观状态要不要做？ | 疼痛、恐惧、RPE、失败原因是深层训练变量。 | 这些很容易变成填表地狱。 | 后台按图谱设计，前台只暴露极少量高价值标签。 |
-| Watch 能否承载更多？ | Watch 可以成为训练中的 rhythm layer。 | Watch 不能做知识图谱编辑器，也不能做复杂输入。 | Watch 只产出 low-entropy anchors，iPhone 才负责 identity、meaning、memory。 |
-| 长期怎么扩？ | 继续扩 rope/outdoor/gym/community。 | 更应该扩 board/hangboard/strength 这些训练语法。 | 先扩训练语法，不先扩攀岩模式。 |
-| AI 应该做什么？ | AI 可以做训练后整理和回忆辅助。 | AI 很容易变成伪智能和不可信结论，训练中实时 AI 还有电量、延迟、隐私和后台风险。 | P0 训练中只用本地轻量规则；AI 只做训练后 review/recall，且不做事实裁判和实时教练。 |
+| A. 用户自建 | 0 | 跨馆私人记忆 | RouteCard 本身无使用价值 |
+| B. 公开元数据 | 每次换线批量导入或二维码 | 官方身份、换线日、路线不串 | 每周维护超过 15 分钟 |
+| C. 官方内容 | 定线员/教练自愿给少量 cue | 来源可信、课程承接 | 内容产出成为额外 KPI |
+| D. 匿名反馈 | 同意、阈值与治理 | 主观难度、适配和体验洞察 | 样本不足或引发对立 |
+| E. 运营转化 | 活动/课程入口 | Project 回访和课程线索 | 无法证明增量复访 |
 
-### 18.2 新的核心模型：Rhythm + Recall + Proof
+### 10.2 合作前置条件
 
-| 层 | 核心问题 | 主要设备 | 产品价值 |
-| --- | --- | --- | --- |
-| Rhythm Capture | 训练现场怎么少打断地留下锚点？ | Watch | 开始、休息、尝试结果、稀疏触觉、状态切换。 |
-| Recall Retrieval | 下次进馆前怎么取回上次最重要的信息？ | iPhone + Watch glance | 上次卡点、project cue、失败原因、下次先做什么。 |
-| Proof / Trust layer | 这些记录为什么可信、可追溯、可复用？ | iPhone / data layer | correction log、project anchor、主观状态、长期趋势、教练/导出。 |
+- 岩馆每周维护时间应接近零；
+- 用户数据默认不交给岩馆；
+- 健康数据不进入岩馆分析；
+- 负面反馈需要聚合阈值和管理机制；
+- 官方内容与 AI 推断明显区分；
+- 路线撤除后，用户个人历史仍可保留；
+- 不做安全事故自动判责或承诺。
+- 不把 send rate 直接当作线路好坏；
+- 不把用户身高、健康或视频默认提供给岩馆；
+- 不允许 AI 内容使用岩馆/定线员口吻却没有官方来源。
 
-关键变化：
+### 10.3 岩馆价值验证指标
 
-| 旧理解 | 新理解 |
+| 指标 | 意义 |
 | --- | --- |
-| 记录一次 session | 留下能跨 session 复用的训练记忆。 |
-| 训练后 recap 是价值兑现 | 训练后 review 是清洗层，下次 recall 才是价值兑现。 |
-| rest timer 是一个功能 | rest anchor 是行为入口，但不是护城河。 |
-| attempt/rest/send 是核心数据 | project anchor + blocker + next cue 才能把事件变成记忆。 |
-| AI 生成总结 | AI 帮用户找回、归档、压缩和修正线索。 |
-
-### 18.3 深层需求挖掘
-
-| 深层需求 | 表层表达 | 更深的产品解释 | 应对方式 |
-| --- | --- | --- | --- |
-| 记忆 retrieval | “我忘了上次怎么爬的” | 用户不是要归档，而是要在正确时刻取回 beta / crux / next move。 | pre-session recall、project card、next cue。 |
-| 控制感 | “我老是休息不够就上” | 训练现场会被挫败、社交、冲动和 grade 焦虑带走。 | rest anchor、稀疏 haptic、session intent。 |
-| 身份和进步证明 | “我到底有没有进步” | 不只是 grade，还是成为更会训练的 climber。 | proof graph、非 grade 进步、project continuity。 |
-| 主观状态可采纳 | “今天状态怪怪的” | 疼痛、恐惧、犹豫、皮肤、psych 不是噪声，但不能被产品诊断化。 | minimal blocker tags、session focus、optional RPE。 |
-| 训练仪式 | “我每次都乱打一场” | 固定轻流程能帮助用户从随机尝试进入训练状态。 | warmup intent、rest cue、end closure。 |
-| accountability | “我想给教练/搭子看” | 记录变成可协作、可追责、可讨论的证据。 | P1/P2 coach share、export、annotated recap。 |
-| 避免焦虑放大 | “我不想被数据羞辱” | send rate、grade、公开排名可能制造更多焦虑。 | private-by-default，不做公开 feed，不把 grade 当唯一进步语言。 |
-
-### 18.4 关于“报时 / 节奏 / 提醒”的最终判断
-
-如果这里的“报时”指普通倒计时器，它不值得单独做；如果指训练中的节奏锚点，它非常值得做。
-
-| 形态 | 是否值得做 | 原因 |
-| --- | --- | --- |
-| 普通 timer | 不作为主卖点 | 极易商品化，系统和训练 App 都能做。 |
-| Rest anchor | P0 必须做 | 抱石最稳定、最高频、最适合 Watch 的状态切换。 |
-| 稀疏 haptic cue | P0/P1 | 能减少看屏，但必须可关闭、低频。 |
-| Continuous metronome | 拒绝 | 违背攀岩注意力，也有电量、触觉、心率采集风险。 |
-| Warmup / end ritual | 可测 | 能形成训练仪式，但不能变成填表。 |
-| Ready cue | 可测 | 只能说 “ready when you are”，不能说“你恢复好了”。 |
-
-最终判断：
-
-> Rhythm 是入口，Recall 是留存，Proof 是付费资产。
-
-### 18.5 最小 P0 数据 schema
-
-第二轮讨论后，数据模型被重新压缩。后台可以按 graph 想，但 P0 前台不能像图谱编辑器。
-
-| 对象 | P0 必要字段 | 作用 |
-| --- | --- | --- |
-| `Session` | `id`, `start_at`, `end_at`, `modality=boulder_indoor`, `venue_label?`, `healthkit_workout_id?`, `review_state` | 记忆边界和 HealthKit 连接。 |
-| `ProjectAnchor` | `id`, `status`, `label?`, `grade_text?`, `color_or_set?`, `sector?`, `next_cue_text?`, `next_cue_source?` | 把 attempt 挂到持续对象上。 |
-| `Attempt` | `id`, `session_id`, `project_id?`, `start_at`, `end_at`, `outcome`, `source`, `confidence?`, `needs_review`, `blocker_tag?` | 现场最小语义单位。 |
-| `Correction` | `id`, `entity_type`, `entity_id`, `field`, `old_value`, `new_value`, `created_at` | 可信度、可追溯和后续模型学习。 |
-
-P0 暂不把 `RestBlock` 做成独立对象。  
-Rest 先从 attempt 间隔和 session timeline 推导，等需要区分正常休息、社交、排队、中断时再升级。
-
-P0 也不做通用 `Artifact` 大表。  
-P0 只支持 `label / grade_text / color_or_set / sector / next_cue_text`。照片、视频、语音、丰富素材放 P1/P2。
-
-### 18.6 P0 主观字段：只保留最少但最高信息密度
-
-| 主观字段 | P0 形式 | 进入原因 |
-| --- | --- | --- |
-| `session_focus` | `project / volume / technique / mixed` | P0 默认字段，解释 session 目标，避免所有训练都被 send 率评判。 |
-| `blocker_tag` | 每个活跃 project 可选 1 个主阻塞 | P0 可选字段，把 fail 变成下次可行动线索。 |
-| `session_rpe` | 训练后 1 个分值 | P0.5/P1 可选字段，低成本但仍需验证负担。 |
-| `mark_affected_training` | 用户主动标记“今天状态影响训练” | P1/P2；不在 P0 记录部位和强度。 |
-
-建议的 `blocker_tag` 最小枚举：
-
-| Tag | 含义 |
-| --- | --- |
-| `beta` | 读线或动作序列不清。 |
-| `technique` | 脚法、身体位置、重心、节奏问题。 |
-| `strength_power` | 纯发力不足。 |
-| `power_endurance` | 后段掉强度。 |
-| `commit_hesitation` | 不敢做、犹豫、动态动作 commit 不够。 |
-| `skin` | 皮肤状态影响。 |
-| `unknown` | 不确定。 |
-
-明确不进 P0：
-
-| 不进 P0 | 原因 |
-| --- | --- |
-| 每次 attempt 单独 RPE | 输入成本过高。 |
-| fear / confidence / motivation / mood / stress / sleep 全量问卷 | 变成填表地狱。 |
-| 每次失败写 beta 文本 | 训练现场成本太高。 |
-| 每次都上传照片/视频 | 素材管理会拖垮 MVP。 |
-| 精细 body map | 容易医疗化，且输入成本高。 |
-| route angle / hold type / style taxonomy 完整表单 | 太像路线库和训练数据库。 |
-
-### 18.7 Watch 端硬边界
-
-Watch 端不是知识图谱端，也不是训练语法端。Watch 只负责：
-
-1. 拥有 session；
-2. 稳住节奏；
-3. 留下锚点；
-4. 触发回想。
-
-硬规则：
-
-| Rule | 说明 |
-| --- | --- |
-| 主流程不超过 `1 屏 + 1-2 手势` | 任何多层输入都转 iPhone。 |
-| 任一时刻只暴露一个主对象 | 默认 active project，不做多项目浏览。 |
-| 主观输入优先离散标签 | 自由文本只做兜底，不做主流程。 |
-| Rich memory 在 iPhone resolve | Watch capture，iPhone 解释。 |
-
-Watch 可承载：
-
-| 需求 | Watch 形态 |
-| --- | --- |
-| 控制感 | Start / Rest / Resume / Send / Fail / Undo。 |
-| 节奏管理 | rest timer、稀疏 haptic、Always-On glance。 |
-| project 连续性 | 当前 active project / 最近 1-3 个 project。 |
-| 主观状态 | `Mark for review` 或少量离散标签。 |
-| pre-session recall | App 内一屏 last project cue；complication / Smart Stack 需平台 spike 后再进 P1。 |
-
-Watch 不承载：
-
-| 不承载 | 原因 |
-| --- | --- |
-| project management | 小屏不适合编辑。 |
-| 图谱浏览和编辑 | 信息密度过高。 |
-| 媒体归档 | iPhone 更适合。 |
-| 技术动作分析 | 单腕数据不足。 |
-| 连续触觉节拍 | 打扰、耗电、平台约束。 |
-
-### 18.8 AI 介入边界
-
-AI 的第一角色不是 coach，而是：
-
-> **书记员 + 索引器 + 复盘助手。**
-
-| 时机 | 可以做 | 不可以做 |
-| --- | --- | --- |
-| 训练前 | 找回 last project cue、上次 blocker、下次先做什么。 | 强行安排训练计划。 |
-| 训练中 | 本地轻量规则生成 suggested segmentation、rest cue、低置信候选、必要时 mark for review。 | 实时 AI 技术指导、强提醒、恢复判断。 |
-| 训练后 | 整理 timeline、抽取 blocker、生成待用户确认的 draft cue、提示待确认项。 | 把猜测当事实。 |
-| 跨 session | pattern mining、context-conditioned insights。 | 单一 readiness score 决定该不该练。 |
-
-AI 产品规则：
-
-1. AI in P0 is not required for the manual-first loop; if enabled, it is only for post-session recall and review, not for truth or coaching.
-2. AI 只能做 `suggested`，不能做 final judgment。
-3. `send/fail/project identity` 优先来自用户确认。
-4. 数据优先级固定为：`user correction > explicit tap > attached anchor > sensor inference > LLM summary`。
-5. 所有 AI 输出必须可编辑、可删除、可覆盖。
-
-### 18.9 更准确的路线图
-
-上一版路线图的远期方向仍然有价值，但第二轮后应该改成“先扩训练语法，不先扩攀岩模式”。
-
-| 阶段 | 产品定义 | 核心目标 |
-| --- | --- | --- |
-| P0 | Capture + Review | 成为一次室内抱石 session 的 user-confirmed source of record，并验证下次训练前是否会被重新打开。 |
-| P1 | Memory -> Decision | 加入少量主观标签、project card、pre-session cue、最近 3 次对比、简单导出/share。 |
-| P2-A | Training System | 扩 board / hangboard / accessory strength，形成 attempt/interval/rest/progression 统一训练语法。 |
-| P2-B | Coach / Accountability | athlete share、coach comments、计划对照、训练群 review。 |
-| P3 | Selective venue distribution | 只在有明确合作时做岩馆/教练分发，不做 gym OS。 |
-
-更不推荐的路线：
-
-| 路线 | 为什么不优先 |
-| --- | --- |
-| Rope-first | belay、fall、安全、route duration 是另一套语义。 |
-| Outdoor-first | topo、天气、GPS、离线、风险更重要。 |
-| Community feed | 过早做会放大比较焦虑。 |
-| Gym SaaS | 已有重玩家，且销售/运营太重。 |
-| General sports memory | 过早泛化会丢掉攀岩 wedge。 |
-
-### 18.10 新的北极星和 kill gates
-
-旧北极星“reviewed sessions”需要升级：
-
-> **产生了可复用 next-session cue，并在下一次训练前被取回的 project sessions。**
-
-新增指标：
-
-| 指标 | 含义 |
-| --- | --- |
-| `project_anchor_rate` | 有多少 attempts/session 被绑定到 project anchor。 |
-| `next_cue_created_rate` | 有多少 reviewed sessions 产生 next-session cue。 |
-| `pre_session_reopen_rate` | 下一次训练前用户是否打开查看。 |
-| `cue_used_rate` | 用户是否按 cue 回到 project 或修改训练决策。 |
-| `subjective_tag_completion` | 用户是否愿意留下最少主观标签。 |
-| `field_burden_score` | 新增字段是否让用户觉得烦。 |
-
-新的 kill gates：
-
-| Gate | No-go 触发 |
-| --- | --- |
-| Rhythm gate | 用户觉得 rest cue / haptic 打扰，或不愿在尝试后 1-2 秒标记。 |
-| Recall gate | pre-session reopen 低于 30-35%。 |
-| Project anchor gate | 多数 attempts 无法绑定到 project，导致回忆失效。 |
-| Subjective burden gate | 主观标签使 review 完成率明显下降。 |
-| Decision gate | 用户不认为 next cue 会影响下次训练。 |
-
-### 18.11 第二轮最终结论
-
-这轮讨论不是推翻上一版，而是把它往更深处推进：
-
-| 上一版 | 第二轮后 |
-| --- | --- |
-| Watch-first session memory tool | Watch-backed rhythm capture + iPhone memory retrieval。 |
-| Recap-led | Recall-led。 |
-| Attempt/rest/send/project | Project anchor / blocker / next cue / correction log。 |
-| P0 证明低干扰记录 | P0 证明低干扰锚点 + 下次可取回记忆。 |
-| 未来做 project analytics / coach / board | 未来优先扩 board/hangboard/strength 训练语法，再考虑 coach/accountability。 |
-
-最终产品口径：
-
-> **不要把产品定义成攀岩 timer，也不要定义成攀岩记录器。把它定义成 Apple Watch 驱动的 attempt-based personal climbing memory system。**
-
-最终 P0 只问三个问题：
-
-1. 我练了哪些 project？
-2. 我为什么没过，或者为什么过了？
-3. 我下次进馆先打什么、先注意什么？
-
-如果一个字段、页面、算法或提醒不能帮助回答这三个问题，就不该进入 P0。
+| Project return | 用户是否因提示回到线路/岩馆 |
+| Last-chance conversion | 换线前提醒是否带来到馆 |
+| Official cue open/use | 定线员内容是否真的被使用 |
+| Course lead | 重复失败是否转成课程咨询 |
+| Maintenance minutes | 岩馆每周需要投入多少录入时间 |
+| Feedback coverage | 有多少线路获得足够样本，而非少量极端意见 |
 
 ---
 
-## 19. Appendix B: 第三轮循环讨论：品类、可信性和长期 bets
+## 11. 商业化重新判断
 
-第三轮继续让 5 个 PM 重新调研，并把观点互相反驳。与第二轮相比，这一轮不再增加功能，而是校准三个问题：
+### 11.1 用户不会为基础记录长期付费
 
-1. 这个产品到底属于什么 category？
-2. `报时/节奏/状态切换` 在最终模型中是什么层级？
-3. 主观状态、AI、隐私、长期商业路线应该如何进入主报告而不发散？
+基础 RouteCard、attempt、HealthKit 和少量历史已经被多种产品提供。若 LineWise 订阅只解锁“更多统计”，很难形成持续价值。
 
-最终收敛：
+### 11.2 可能的付费价值
 
-> **Category 是 attempt-based training memory；time anchor 是交互原语；Proof 必须包含可信性/可采纳性；长期 bets 采用 3+2 结构。**
-
-### 19.1 第三轮 PM 交叉结论
-
-| 主题 | 争论 | 最终判断 |
+| 价值 | 付费理由 | 何时验证 |
 | --- | --- | --- |
-| Category | `climbing app`、`wearable journal`、`training OS`、`attempt-based sports memory` 哪个更准？ | 市场口径可说 Apple Watch 攀岩训练记忆 App；战略口径是 `watch-backed training memory system for attempt-based sports`。 |
-| 报时 | 是不是可以成为独立产品？ | 否。报时是基础设施，状态切换是产品，跨 session recall 才是价值。 |
-| Trust / Legitimacy | 是否应成为第四层？ | 不做 market-facing 独立层；并入 Proof，作为信任和主观状态可采纳性原则。 |
-| 数据模型 | 是否要变成通用运动记忆平台？ | 否。P0 只服务抱石，新增 `Cue`；`AIProvenance` 延后到 P0.5/P1 或仅做内部审计。 |
-| Journal Suggestions | 是否进 P0？ | 不进 P0；作为 P0.5/P1 隐私友好的 post-session enrichment。 |
-| 长期路线 | 5 个 bets 是否并列？ | 否。主报告写 `3 个核心 bets + 2 个条件 bets`。 |
+| 长期 Project memory | 跨馆、跨月、换线后仍可查 | P0/P1 |
+| 视频/尝试智能对齐 | 节省整理时间 | P1 |
+| 个性化 Proof history | 知道什么提示对自己有效 | P1 |
+| 私人 AI RouteRead | 基于个人数据而非通用答案 | P1/P2 |
+| 教练交接包 | 减少教练筛视频和问背景的时间 | P2 |
+| 可靠导出与备份 | 保护长期数据资产 | P0/P1 |
 
-### 19.2 最终层级模型
+### 11.3 商业化顺序
 
-第三轮把第二轮的 `Rhythm + Recall + Proof` 再次拆清楚：
-
-| 层级 | 名称 | 解释 | 是否用户可见 |
-| --- | --- | --- | --- |
-| Category | `attempt-based training memory` | 产品所属战略类别：为离散尝试型训练保存可取回记忆。 | 部分可见 |
-| Market wedge | `Apple Watch climbing training memory app` | 对外获客语言，用户能理解、能搜索。 | 可见 |
-| Interaction primitive | `time anchor / state transition` | Watch 侧报时、休息锚点、try/rest/review 状态切换。 | 可见但不当卖点 |
-| Value layer | `recall retrieval` | 下次训练前取回 active project、last blocker、next cue。 | 可见 |
-| Trust layer | `Proof + Legitimacy` | correction log、manual override、suggestion provenance；若启用 AI，再扩展为 AI provenance。 | 部分可见 |
-| Data implementation | `simple relational schema with future links` | P0 用简单关系模型，不做图谱系统；只保留未来可扩展关系。 | 不直接可见 |
-
-最终中文定义：
-
-> **面向离散尝试型训练的、由手表捕获低干扰锚点、由手机完成回忆取回、事实校正与可信复盘的训练记忆系统。**
-
-### 19.3 报时 / 状态切换的最终位置
-
-第三轮对“报时”的结论更硬：
-
-| 判断 | 说明 |
-| --- | --- |
-| 报时不是 category | Apple Watch 原生 timer、Custom Workout、Garmin、Strong、Hevy、SmartWOD 都能覆盖大量 timer/interval 需求。 |
-| 报时不是 moat | 用户不会为“能倒计时”长期付费。 |
-| 报时是 P0 habit wedge | 休息锚点、稀疏触觉、状态切换能让用户在现场形成使用习惯。 |
-| 状态切换才是产品 | `try -> rest -> retry -> switch project -> review -> recall` 是抱石训练的核心流程。 |
-| 跨 session recall 才是价值 | 单场节奏没有复利；能被下次取回的 cue 才形成记忆资产。 |
-
-P0 不做 timer app，而做：
-
-```text
-Start session
-  -> Try / Send / Fail
-  -> Rest anchor
-  -> Sparse cue
-  -> Review on iPhone
-  -> Pre-session recall
-```
-
-要拒绝的方向：
-
-| 拒绝 | 原因 |
-| --- | --- |
-| 连续触觉节拍器 | 打扰、耗电、破坏攀岩 flow，且平台能力不稳定。 |
-| 复杂 interval builder | Apple Custom Workout 和大量 interval apps 已覆盖。 |
-| ADHD/time-blindness 主定位 | 可借鉴外化时间原则，但不应病理化通用训练问题。 |
-| “恢复好了，可以上” | 过度权威化，可能医疗化。 |
-
-### 19.4 Trust / Legitimacy：主观状态如何进入 Proof
-
-第三轮明确：`Legitimacy` 不做外部卖点，中文对外统一写“可信性/可采纳性”；它必须成为 Proof 的子层。
-
-原因：
-
-| 问题 | 如果没有 Legitimacy |
-| --- | --- |
-| 疼痛、恐惧、皮肤、犹豫 | 会被当成噪声，或被用户理解成“我太菜了”。 |
-| AI 生成 recap | 可能变成不可追溯、不可质疑的权威结论。 |
-| grade/send 统计 | 可能放大 plateau 焦虑。 |
-| 教练分享 | 可能从自我调节工具变成监控工具。 |
-
-新的 Proof 定义：
-
-```text
-Proof = objective trace
-      + user correction
-      + suggestion provenance
-      + AI provenance when AI-generated outputs are enabled
-      + subjective admissibility
-```
-
-主观状态采集原则：
-
-| 原则 | 实现 |
-| --- | --- |
-| 只记录有后果的主观状态 | 只有影响 attempt、route choice、session end、next cue 时才记录。 |
-| 用行为词，不用人格词 | 写 `fear/commitment`、`skin`、`pain`，不写“我不行”。 |
-| event first, subjective second | 先有 attempt/project，再补一个 blocker。 |
-| 一次只允许一个主阻塞 | 防止多标签堆叠。 |
-| 默认可跳过 | 不让 review 卡在主观问题上。 |
-| 不做趋势羞辱 | 不做 anxiety trend、confidence score、mental readiness score。 |
-| 必须转成动作对象 | 主观标签要能形成 next cue、review bucket 或 coach discussion handle。 |
-| 默认私有、可撤回 | coach/share 必须 item-level opt-in。 |
-
-一句话原则：
-
-> **Subjective state is allowed only when it explains behavior and improves the next attempt.**
-
-### 19.5 P0 schema 第三轮修正
-
-第二轮 P0 schema 为 `Session / ProjectAnchor / Attempt / Correction`。第三轮建议新增两个轻对象：
-
-| 对象 | 是否进入 P0 | 理由 |
-| --- | --- | --- |
-| `Cue` | 进入 | next cue 是 recall 产品层，不应只是 `ProjectAnchor.next_cue_text` 字段。 |
-| `SuggestionProvenance` | P0 进入但很薄 | 记录规则候选来源、置信度、接受/拒绝/覆盖。 |
-| `AIProvenance` | P0.5/P1 或内部审计 | 只有 P0 真启用 AI-generated cue/recap 时才进入主 schema。 |
-| `Governance` | 不作为业务主对象 | 保留隐私设置和授权记录即可，不做治理图谱。 |
-| `JournalSuggestionArtifact` | P0.5/P1 | 作为用户显式选择的 post-session enrichment，不做事实来源。 |
-
-P0 schema 更新建议：
-
-| 对象 | 最小字段 |
-| --- | --- |
-| `Session` | `id`, `start_at`, `end_at`, `modality`, `venue_label?`, `healthkit_workout_id?`, `review_state` |
-| `ProjectAnchor` | `id`, `status`, `label?`, `grade_text?`, `color_or_set?`, `sector?` |
-| `Attempt` | `id`, `session_id`, `project_id?`, `start_at`, `end_at`, `outcome`, `source`, `confidence?`, `needs_review`, `blocker_tag?` |
-| `Cue` | `id`, `project_id?`, `session_id?`, `text`, `cue_type`, `source`, `created_at`, `superseded_by?` |
-| `Correction` | `id`, `entity_type`, `entity_id`, `field`, `old_value`, `new_value`, `created_at` |
-| `SuggestionProvenance` | `id`, `target_type`, `target_id`, `producer=rule/manual`, `input_refs`, `confidence`, `status`, `created_at` |
-
-`SuggestionProvenance.status` 只需要：
-
-```text
-suggested / accepted / rejected / superseded
-```
-
-防止 P0 变成数据平台的硬边界：
-
-| 边界 | 说明 |
-| --- | --- |
-| 不用通用对象命名 | 避免 `Event / MemoryItem / Observation / Artifact / Entity` 这类过早泛化。 |
-| 每个对象必须服务一个前台动作 | 不能回答“哪个页面/动作需要它”，就不进 P0。 |
-| 不保留原始传感器仓库 | 原始 motion window 短期保留，review 后保留派生事实和 correction。 |
-| 不做开放 ingestion | Journal Suggestions 必须用户显式附加到 session/project。 |
-| 不为长期 bets 预留大而全 schema | 只留最小 extension point。 |
-
-原始 motion window 的保留必须单独写隐私合同：默认本地短期保留、明确保留天数、默认不上云、用户可删除，debug export 必须显式开启。
-
-### 19.6 Journal Suggestions 的位置
-
-Apple Journal / Journaling Suggestions 值得写进报告，但只能写成 P0.5/P1。
-
-| 判断 | 说明 |
-| --- | --- |
-| 值得关注 | Apple 已经把 workout、location、media、reflection 组织成用户显式选择的回忆入口。 |
-| 不作为 P0 核心 | 它是 iPhone/iPad 侧补充，不是 Watch 侧现场 capture。 |
-| 不作为事实来源 | 它提供 context，不决定 attempt/send/project truth。 |
-| 隐私上有优势 | private access picker 方式比直接申请照片/位置权限更克制。 |
-
-可写入路线：
-
-```text
-P0.5: Post-session enrichment
-  -> Add context
-  -> User selects workout/location/photo/reflection suggestion
-  -> Attach to Session or ProjectAnchor
-  -> Used only as recall cue evidence
-```
-
-### 19.7 长期 bets：从 5 个并列改成 3 + 2
-
-第三轮认为 5 个 bets 不应平铺。应改成：
-
-| 类型 | Bet | 是否写主线 |
-| --- | --- | --- |
-| Core Bet 1 | `Recall wedge / state-switch product` | 是，P0 主线。 |
-| Core Bet 2 | `Trust / Apple-native proof layer` | 是，信任层。 |
-| Conditional Bet 3 | `Training syntax expansion: board / hangboard / strength` | 条件成立后做，中长期扩张。 |
-| Conditional Bet 4 | `Coach workflow / B2B2C` | 条件成立后做。 |
-| Conditional Bet 5 | `Selective hardware partnerships` | 放 future options，不进主线。 |
-
-每个 bet 的 gate：
-
-| Bet | Kill gate |
-| --- | --- |
-| Recall wedge | `pre_session_reopen_rate < 35%` 或 `project_anchor_rate < 60%`。 |
-| Proof layer | 用户不信 suggested/cue，或 suggestion override 后留存不提升。 |
-| Training syntax expansion | 第二训练模态 8 周采用率 `< 25%`，或计划完成率 `< 40%`。 |
-| Coach workflow | coach weekly review rate `< 20%`，或 athlete share opt-in `< 30%`。 |
-| Hardware partnerships | 6 个月内没有 1 个数据型 partner + 1 个分发型 partner，或 partner signal 不提升转化/留存。 |
-
-### 19.8 第三轮最终决策
-
-| 决策 | 内容 |
-| --- | --- |
-| 决策 1 | 产品不定义为 timer、interval app、wearable journal、training OS。 |
-| 决策 2 | 对外定义为 Apple Watch-backed private attempt-based climbing memory system。 |
-| 决策 3 | 报时/状态切换属于 Watch-side interaction/control layer。 |
-| 决策 4 | Watch 的价值不是会计时，而是在 try/rest/review 切换点低干扰地产生可信锚点。 |
-| 决策 5 | 将 Proof 升级为 Trust/Legitimacy，包含 correction log、manual override、subjective cue、suggestion provenance；AI provenance 延后到启用 AI 后。 |
-| 决策 6 | P0 前台暴露 `Session / ProjectAnchor / Attempt / Cue / Correction`；`SuggestionProvenance` 做薄支撑层。 |
-| 决策 7 | Cue 进入 P0，必须 next-session oriented，不做泛 AI 总结。 |
-| 决策 8 | P0 不依赖 AI；若使用 AI，只能用于训练后 review/recall，不做 truth 或 coaching。 |
-| 决策 9 | roadmap 顺序固定为 `private bouldering memory wedge -> stronger recall/trust -> training system or coach workflow -> portability/partnerships`。 |
-| 决策 10 | 新增 trust 指标：`pre_session_reopen_rate`, `cue_reuse_rate`, `project_anchor_rate`, `suggestion_accept_override_rate`, `review_completion_time`。 |
-
-第三轮压轴结论：
-
-> **报时不是这个产品的 category，也不是 moat；报时和状态切换是 Watch 侧低干扰控制层，用来为 attempt-based climbing memory 生产可信锚点。真正价值在下次训练前被重新打开的记忆，以及用户对这份记忆的信任感。**
+1. 免费验证 3-5 次真实到馆闭环；
+2. 一次性 Founder unlock 测试支付意愿；
+3. 年付 Pro 只放在持续计算/云存储/AI 或长期分析之后；
+4. 岩馆合作先做小范围数据/内容试点，不先售卖完整 SaaS；
+5. 不靠健康数据广告变现。
 
 ---
 
-## 20. Sources
+## 12. 验证计划
 
-### Apple / Platform
+### 12.1 第一阶段：需求真实性
 
-| Source | 用途 |
+样本建议：
+
+- 8-10 名每周两次以上的 Project 型抱石者；
+- 5 名新手/轻量用户；
+- 3-5 名教练；
+- 3-5 名定线员或馆长；
+- 3-5 名前台/场务或运营人员；
+- 北京、上海至少各一家连锁馆和一家独立馆。
+
+关键问题：
+
+- 最近一次忘掉的 Project 细节是什么？
+- 训练中愿意记录哪一次，为什么？
+- 你为什么不使用现有攀岩 App？
+- 你是否愿意戴表，岩馆是否允许？
+- 朋友/教练给的哪类提示最容易忘？
+- 下次到馆前会不会看旧视频或笔记？
+- 什么信息真的改变了下一次尝试？
+- 现在使用过哪些 App，为什么停用或继续？
+- 是否需要历史补录、跨设备导入或退出时导出？
+- 是否会混淆相近颜色线路，通常如何确认？
+- 对不同身高/臂展的 Beta，用户如何判断是否适合自己？
+
+岩馆访谈还要分别问：
+
+- 老板：收入结构、复访、线路投入、活动与数字化维护成本；
+- 教练：课前上下文、即时反馈、课后作业和复查；
+- 定线员：难度校准、试爬、换线、身体适配和反馈噪声；
+- 前台/场务：新手 SOP、拥挤、装备、拍摄、投诉和现场系统负担。
+
+### 12.2 第二阶段：三种采集模式对比
+
+每个用户分别试：
+
+1. Watch capture；
+2. iPhone quick capture；
+3. Review-only。
+
+记录：
+
+- 每小时操作次数；
+- 丢失/错绑事件；
+- 是否中途放弃；
+- 训练后 review 时间；
+- 次日能否说出 cue；
+- 下次是否执行 ProofCheck。
+
+### 12.3 第三阶段：AI 数据准备
+
+先收集并人工标注：
+
+- 50-100 条 RouteCard；
+- 200-500 次尝试；
+- 100 张校正后的路线照片；
+- 50 个失败位置；
+- 50 个 MoveCue；
+- 30 个跨尝试 ProofCheck；
+- 不同墙角度、光照、岩点颜色、遮挡和多人背景 badcase。
+
+只有当人工校正流程本身有价值，才开始模型开发。
+
+### 12.4 Go / Pivot / Stop
+
+| 结果 | 决策 |
 | --- | --- |
-| [Apple Support: Workout types on Apple Watch](https://support.apple.com/en-euro/105089) | 确认 Apple Watch 原生支持 Climbing workout。 |
-| [Apple Developer: HKWorkoutSession](https://developer.apple.com/documentation/HealthKit/HKWorkoutSession) | Workout lifecycle 和一次只运行一个 workout session 的平台约束。 |
-| [Apple Developer: Running workout sessions](https://developer.apple.com/documentation/healthkit/running-workout-sessions) | Workout session、builder、mirroring/recovery 等实现参考。 |
-| [Apple Developer: Authorizing access to health data](https://developer.apple.com/documentation/healthkit/authorizing-access-to-health-data) | HealthKit 权限原则。 |
-| [Apple Developer: Core Motion](https://developer.apple.com/documentation/coremotion) | 加速度/陀螺仪等 motion 数据能力。 |
-| [Apple Developer: WatchConnectivity transferUserInfo](https://developer.apple.com/documentation/watchconnectivity/wcsession/transferuserinfo%28_%3A%29) | Watch/iPhone 后台数据传输参考。 |
-| [Apple Developer: WKBackgroundModes](https://developer.apple.com/documentation/bundleresources/information-property-list/wkbackgroundmodes) | watchOS workout-processing 后台模式。 |
-| [Apple Support: Apple Watch heart rate accuracy](https://support.apple.com/en-us/105002) | 心率准确性和佩戴/运动影响。 |
-| [Apple Support: Low Power Mode](https://support.apple.com/en-nz/108320) | 低电量模式相关约束。 |
-| [Apple App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) | Health、隐私、医疗/安全声明边界。 |
-| [Apple Developer: Designing for watchOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-watchos/) | Watch 应用应短交互、glanceable、低干扰。 |
-| [Apple Developer: Always On](https://developer.apple.com/documentation/watchos-apps/designing-your-app-for-the-always-on-state) | Always-On 适合静态状态和低频更新，不适合高频动画。 |
-| [Apple Support: Smart Stack](https://support.apple.com/guide/watch/see-widgets-in-the-smart-stack-apdecf142fb9/watchos) | pre-session recall / live state 的轻入口参考。 |
-| [Apple Support: Custom workouts](https://support.apple.com/en-gb/guide/watch/apd66fcd5c5c/watchos) | work/recovery interval 已是系统能力，timer 本身不是 moat。 |
-| [Apple Developer: Watch haptics](https://developer.apple.com/documentation/watchkit/wkinterfacedevice/play%28_%3A%29) | haptic 应稀疏使用，不能做连续高频节拍。 |
-| [Apple Support: Timers on Apple Watch](https://support.apple.com/guide/watch/timers-apdf448955b2/watchos) | 纯 timer 已是系统能力，不构成独立 moat。 |
-| [Apple Support: Mark workout segments](https://support.apple.com/en-ie/guide/watch/apd72879df4d/watchos) | workout 中可标记 segment，提示状态切换能力已部分平台化。 |
-| [Apple Developer: WorkoutKit](https://developer.apple.com/documentation/WorkoutKit) | 创建、预览、同步 workout compositions 的长期平台能力；不是替代 HKWorkoutSession 的实时采集框架。 |
-| [Apple Developer: Journaling Suggestions](https://developer.apple.com/documentation/journalingsuggestions) | P0.5/P1 post-session enrichment 和隐私友好 context picker 参考。 |
-| [Apple Developer: Journaling Suggestions updates](https://developer.apple.com/documentation/updates/journalingsuggestions) | 2025 后 workout/location 等 suggestions 能力更新。 |
-| [Apple: Journal app launch](https://www.apple.com/newsroom/2023/12/apple-launches-journal-app-a-new-app-for-reflecting-on-everyday-moments/) | Apple 对 workout、location、media、reflection 组合成回忆入口的产品方向。 |
-
-### Market / Competitors
-
-| Source | 用途 |
-| --- | --- |
-| [Climbing Business Journal: Gyms and Trends 2025](https://climbingbusinessjournal.com/gyms-and-trends-2025/) | 北美攀岩馆增长与市场背景。 |
-| [Strava Supported Sport Types](https://support.strava.com/hc/en-us/articles/216919407-Supported-Sport-Types-on-Strava) | Strava 支持 Rock Climb 等活动类型。 |
-| [Garmin: Recording a Bouldering Activity](https://www8.garmin.com/manuals/webhelp/GUID-EA668398-46E4-42E4-8163-12F6CB299F0E/EN-US/GUID-584D4C5D-8E09-4EB4-89FA-7FCA1B7F0B7A.html) | Bouldering 已有 completed/attempted/rest 循环，attempt-based 不是全新范式。 |
-| [Garmin: Indoor Climbing Rest Timer](https://www8.garmin.com/manuals/webhelp/GUID-0221611A-992D-495E-8DED-1DD448F7A066/EN-AU/GUID-D67857E8-04FB-44CA-9D58-B77AB8D50F83.html) | 攀岩中的 rest timer / 状态切换已是硬件厂商明确支持的模式。 |
-| [Redpoint App Store](https://apps.apple.com/us/app/redpoint-bouldering-climbing/id1324072645?platform=watch) | Watch 攀岩记录、HealthKit、ML/barometer、订阅参考。 |
-| [Pinnacle Climb Log](https://pinnacleclimb.com/) | Apple Watch 攀岩 log、离线 Watch 同步、attempt/undo 等参考。 |
-| [Climb Meter](https://apps.apple.com/us/app/climb-meter-for-rock-climbing/id1592555877) | Apple Watch 自动 climb counting 和 grade logging 参考。 |
-| [KAYA](https://kayaclimb.com/) | 路线、beta、社区、guidebook 竞品。 |
-| [Mountain Project App Store](https://apps.apple.com/us/app/mountain-project/id452308783) | 户外路线库和 logbook 竞品。 |
-| [Vertical-Life](https://www.vertical-life.info/) | 户外/室内/gym 生态竞品。 |
-| [Crimpd](https://www.crimpd.com/) | 攀岩训练计划、计时和训练内容生态竞品。 |
-| [TopLogger](https://toplogger.nu/) | 室内岩馆路线、ranking、gym 生态参考。 |
-| [Griptonite](https://griptonite.io/) | 岩馆路线管理和 climber app 参考。 |
-| [GoClimbr](https://goclimbr.com/) | 轻量 climbing logbook / achievement 竞品。 |
-| [CrushLog App Store](https://apps.apple.com/us/app/crushlog/id6743440929) | 轻量攀岩 logbook 和 lifetime pricing 参考。 |
-| [SendLog](https://www.sendlog.at/) | offline-first climbing notes/logbook、project tracking 参考。 |
-| [SendSage](https://www.send-sage.com/) | logbook analytics / AI insight 参考。 |
-| [MoonBoard](https://us.moonclimbing.com/pages/explore-the-moonboard) | 标准化训练板生态参考。 |
-| [Kilter Board](https://kilterboard.io/) | 标准化训练板生态参考。 |
-| [Hevy rest timer](https://www.hevyapp.com/features/workout-rest-timer/) | 力量训练中 set/rest/progression 与 Watch 记录习惯参考。 |
-| [Strong Apple Watch workout](https://help.strongapp.io/article/224-workout-on-apple-watch) | Watch 端 set logging / rest timer / workout completion 参考。 |
-| [Intervals Pro](https://intervalspro.com/index.html) | hands-free interval execution / haptics / Health 集成参考，说明 interval execution 是成熟品类。 |
-| [WHOOP Journal](https://support.whoop.com/s/article/WHOOP-Journal-Overview) | 主观行为日志和生理数据关联参考。 |
-| [WHOOP Coach](https://support.whoop.com/s/article/How-to-Use-the-AI-Powered-WHOOP-Coach) | wearable AI coach 方向参考，提醒不要做泛 AI 总结。 |
-| [Oura Tags](https://support.ouraring.com/hc/en-us/articles/360038676993-Using-Tags) | 主观标签和生理数据关联参考。 |
-| [TrainingPeaks workout logs](https://www.trainingpeaks.com/blog/workout-logs-track-training/) | 训练日志、计划和复盘的成熟形态参考。 |
-| [TrainerRoad](https://www.trainerroad.com/) | adaptive training / training OS 参照，但不是当前阶段 category。 |
-| [Future](https://future.co/about) | coach-led fitness platform 参照，coach workflow 应为条件 bet。 |
-| [Lattice Training](https://support.latticetraining.com/which-plan) | 攀岩训练计划、教练和订阅模式参考。 |
-
-### Research / Personal Informatics / Training Monitoring
-
-| Source | 用途 |
-| --- | --- |
-| [Li et al.: A Stage-Based Model of Personal Informatics Systems](https://www.cs.cmu.edu/~jhm/Readings/2010-ianli-chi-stage-based-model.pdf) | personal informatics 的准备、采集、整合、反思、行动模型。 |
-| [Epstein et al.: A Lived Informatics Model of Personal Informatics](https://pmc.ncbi.nlm.nih.gov/articles/PMC12435389/) | 个人数据如何在生活场景中形成意义。 |
-| [Technology-Assisted Reconstruction](https://arxiv.org/abs/1207.1821) | 数字痕迹辅助回忆和复盘的研究脉络。 |
-| [Supporting Human Memory by Reconstructing Personal Episodic Narratives](https://cdn.aaai.org/ojs/19306/19306-28-23319-1-2-20220531.pdf) | episodic memory / narrative reconstruction 与产品 recall 设计参考。 |
-| [Saw et al.: Subjective self-reported measures in athlete monitoring](https://pmc.ncbi.nlm.nih.gov/articles/PMC4789708/) | 主观状态在训练监测中的价值。 |
-| [Session-RPE review](https://pmc.ncbi.nlm.nih.gov/articles/PMC5673663/) | session RPE 作为低成本训练负荷指标的参考。 |
-| [HRV-guided training review](https://pmc.ncbi.nlm.nih.gov/articles/PMC8507742/) | HRV/readiness 能力和边界参考。 |
-| [Climbing anxiety scale CAS-20](https://www.sciencedirect.com/science/article/pii/S1469029224000463) | 攀岩焦虑具有运动特异性，不宜用泛心理标签简化。 |
-| [Anxiety levels and physiological responses during climbing](https://pmc.ncbi.nlm.nih.gov/articles/PMC12859972/) | 攀岩心理/生理压力与表现、风险感知相关。 |
-| [Route preview and climbing visual perception](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2022.903518/full) | route preview 本身包含记忆和 movement sequence 解释。 |
-| [Deliberate practice review](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2019.02396/full) | 刻意练习需要具体问题、反馈和下一轮练习方法。 |
-| [Habit formation](https://transformationweightcontrol.com/wp-content/uploads/2024/12/Lally-2010-How-Habits-are-Formed.pdf) | 稳定情境和重复对训练习惯形成的影响。 |
-| [Exercise identity and behavior](https://pmc.ncbi.nlm.nih.gov/articles/PMC7901813/) | exercise identity 与行为维持相关，proof 不应只做 grade scoreboard。 |
-| [Time perception in adult ADHD review](https://pmc.ncbi.nlm.nih.gov/articles/PMC9962130/) | time blindness 方向用于借鉴“外化时间”原则，不用于产品主定位。 |
+| 用户保存并在下次使用 cue | 继续 Gym Visit Memory + Proof |
+| 用户只看/整理视频，不用 cue | 转向私人视频工作流，重新评估与磕磕差异 |
+| Watch 使用率低但 review 有价值 | 保留 Watch companion，主产品转 iPhone-first |
+| RouteCard 创建持续太慢 | 改成照片/视频先行，路线身份后补 |
+| 用户不回看、不验证 | 停止扩展 AI、训练和岩馆合作 |
+| 岩馆维护成本高 | 放弃官方路线接入，保持消费者自建 |
 
 ---
 
-## 21. Final Consensus After Five-PM Line Review
+## 13. 量化门槛
 
-基于五位 PM 对上一版主报告逐行审查后的 veto 和二次投票，最终共识是：
+这些是 alpha 决策阈值，不是行业标准：
 
-> **方向继续，但 P0 必须降回 manual-first 的 capture -> review -> recall 行为闭环。**
-
-### 21.1 统一定位
-
-对外统一说：
-
-> **面向室内抱石用户的 Apple Watch-backed bouldering training memory app。**
-
-内部模型可以继续使用 `Rhythm Capture + Recall Retrieval + Proof/Trust`，但它只解释产品为什么成立，不作为外部品类名。
-
-### 21.2 P0 硬边界
-
-| P0 保留 | P0 不做 |
+| Gate | 目标 |
 | --- | --- |
-| Watch 开始 Boulder session。 | Rope / outdoor / gym route database。 |
-| 用户下墙后一键 `Try / Send / Fail / Undo`。 | 自动判断 send/fail/flash。 |
-| Rest timer、柔和触觉、低干扰状态锚点。 | 连续触觉节拍、强制休息建议。 |
-| HealthKit workout + App 私有 attempt timeline。 | 用 HealthKit 推断路线结果。 |
-| iPhone quick save + 可选 detailed review。 | 训练中复杂输入。 |
-| 用户确认后的 project cue。 | AI coach、训练处方、实时技术指导。 |
-| `Session / ProjectAnchor / Attempt / Cue / Correction / SuggestionProvenance`。 | P0 主 schema 中引入 AIProvenance、照片、视频、Smart Stack、复杂 proof graph。 |
+| Minimal RouteCard | 中位 <= 10 秒；P90 <= 20 秒 |
+| Meaningful capture | 每次到馆至少保存 2 条真正想继续的路线 |
+| Quick Review | 中位 <= 30 秒 |
+| NextSessionCue | >= 50% reviewed visits 产生 cue |
+| Recall | >= 50% 下一次到馆打开或接收 cue |
+| ProofCheck | >= 30% cue 在下一次被明确评价 |
+| Platform save | >= 99% 核心事件本地保存；同步可延迟但不重复 |
+| Watch burden | 使用 Watch 的用户中，干扰评分 <= 3/10 |
+| Watch eligibility | 单独记录愿意佩戴、场馆允许、保护方案；不设为全产品硬门槛 |
+| Trust | 用户能分辨事实、建议和教练内容；误认率接近 0 |
+| Export | 100% 用户可导出自己的核心数据 |
+| Historical entry | 100% 可补录真实日期；跨时区/跨午夜不串日 |
+| Import review | 外部 workout/FIT/Photos 未经用户确认不写入 canonical Attempt |
+| Correction burden | 自动建议的中位修正时间必须短于完全手工建立 |
+| Accessibility | 路线即使不依赖颜色，也能通过至少两种锚点重新找到 |
 
-### 21.3 必须验证的核心假设
+---
 
-| 假设 | 验证方式 |
+## 14. 风险清单
+
+| 风险 | 早期信号 | 应对 |
+| --- | --- | --- |
+| 竞品快速复制 | 视频/社区产品加入 Watch 或 cue | 深化 Proof history 和个人数据可迁移性 |
+| Watch 佩戴受限 | 用户不愿戴、岩馆禁止 | 三模式采集，不将 Watch 写死为前提 |
+| 记录负担 | 第二次到馆停止使用 | 只记 meaningful attempts，批量补录 |
+| AI 错误 | 颜色、岩点、动作建议频繁错 | 先检测/分组，再建议；默认可编辑 |
+| 数据太少 | 模型只能记住单个用户/岩馆 | 不急于训练；先证明人工链路价值 |
+| 视频隐私 | 拍到他人或儿童 | 默认私有、裁剪/模糊、明确同意 |
+| 健康误导 | 用户把 HR 当恢复结论 | 降级为上下文，不给处方 |
+| 岩馆依赖 | 官方线路维护中断 | 用户自建 RouteCard 始终可用 |
+| 数据锁定 | 服务迁移导致历史丢失 | 本地优先、版本化导出、迁移文档 |
+| 产品过宽 | 同时做搭子、AI、课程、SaaS | 所有模块必须回到 ProofCheck 闭环 |
+| 功能同质化 | 竞品已覆盖 Watch、AI、姿态和火柴人 | 不以功能数量定位，持续验证学习闭环 |
+| 历史/同步错误 | 日期错、重复、删除残留、Watch 状态不清 | 来源、幂等、导入预览、审计和恢复测试 |
+| 身体适配偏见 | AI 把单一 Beta 当标准答案 | 可选 ClimberContext、多假设、ProofCheck |
+| 色觉与路线混淆 | 只靠颜色造成错线、错记录 | 颜色名称 + 墙区 + 起点位置 + 照片/编号 |
+| 岩馆反馈误伤 | 低 send 率被误解为坏线 | 分层样本、定性原因、阈值和申诉机制 |
+
+---
+
+## 15. 最终产品方向
+
+### 15.1 一句话定位
+
+> **LineWise 帮助室内抱石者记住一次失败真正值得保留的东西，并在下一次上墙时验证它。**
+
+它不是“功能最全的攀岩 App”，而是“把一次尝试变成个人学习证据的 App”。
+
+### 15.2 P0 产品
+
+```text
+Private Route Memory
++ Multi-mode Capture
++ FailureEpisode
++ MoveCue
++ NextSessionCue
++ ProofCheck
+```
+
+### 15.3 Watch 的角色
+
+> Apple Watch 是低干扰 capture accelerator，不是产品存在的唯一理由，也不是每个用户必须佩戴的硬件。
+
+### 15.4 AI 的角色
+
+> AI 先减少整理和标注成本，再生成多个可校正假设；它不代替用户、教练或定线员定义真相。
+
+### 15.5 岩馆的角色
+
+> 岩馆先是验证场景和分发渠道，之后才可能成为官方路线、换线信息、教练服务与匿名反馈的合作方。
+
+### 15.6 最值得做的下一步
+
+先做一个不依赖生产代码的真实岩馆实验：连续三次到馆，分别使用 Watch、iPhone quick capture、review-only，验证同一条 Project 的 `FailureEpisode -> MoveCue -> NextSessionCue -> ProofCheck`。
+
+如果这个闭环不能帮助用户做出更好的下一次尝试，就不应继续扩展 AI 读线、搭子、课程或岩馆合作。
+
+### 15.7 本轮重新调研后的决策清单
+
+| 决策 | 状态 |
 | --- | --- |
-| 用户愿意抱石时戴表 | 访谈 + small alpha + 真实训练佩戴率。 |
-| 用户愿意下墙后 1-3 秒标记 | Watch 原型和 alpha 训练 session。 |
-| 用户愿意训练后 quick review | 30 秒 quick save 完成率。 |
-| 用户会在下次训练前 reopen | `pre_session_reopen_rate`。 |
-| next cue 有行动价值 | `cue_used_rate`、returned project、用户自报。 |
-| 商业化有空间 | 完成 >=3 次 session 用户的付费假门。 |
+| 保留 LineWise / 线感 | 保留，名称仍贴合“读线与形成线感” |
+| P0 做私人学习闭环 | 确认 |
+| Watch 为可选采集器 | 确认，并增加 Health/FIT/Photos 导入策略 |
+| 火柴人、姿态、重心作为差异化 | 否决，已有直接竞品 |
+| AI 自动读线直接进入 MVP | 否决，先建立可校正路线与 ProofCheck 数据 |
+| P0 做搭子和社区 | 否决，先区分 AI 私人伴侣与真人匹配 |
+| P0 做岩馆 SaaS | 否决，先用户自建，再测低维护元数据合作 |
+| 新增历史补录与数据来源 | 确认，是可靠性硬需求 |
+| 新增个体差异与可访问性 | 确认，P0 做路线冗余身份，P1 做可选 ClimberContext |
+| 核心指标采用记录量 | 否决，采用 cue recall、ProofCheck 和修正成本 |
 
-所有百分比阈值都只是 beta 假设，不是行业基准。
+---
 
-### 21.4 最终 Go / No-Go
+## 16. 核心资料
 
-如果 P0 不能证明 `戴表 -> 低干扰标记 -> quick review -> 下次 recall`，产品不应扩成 AI、coach、video、平台或训练 OS。  
-如果 P0 成立，再进入 P1 探索 project cards、4-week trend、rest pattern display、review reminders 和可选导出。  
-如果 P1 仍成立，再分别验证 board/hangboard/strength、coach workflow、hardware partnership 等条件方向。
+### 中国市场与岩馆
+
+- [2024 中国攀岩行业发展报告介绍](https://www.datastory.com.cn/details/1219.html)
+- [中华全国体育总会：岩点经济](https://www.sport.org.cn/shouye/tycy/2026/0611/698997.html)
+- [Banana Climbing](https://bananaclimbing.com/)
+- [上海市政府：香蕉攀岩上海第二家门店](https://english.shanghai.gov.cn/en-Fitness/20250721/e484c72d3646431cb5a8201eb2ba0dfc.html)
+- [GB 19079.4-2025 国家标准](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=7610EFE44A5347A8E0F6102B7D748C42)
+- [体育总局：攀岩场馆安全管理](https://www.sport.gov.cn/dszx/n5414/c29427787/content.html)
+- [36 氪：攀岩馆商业模式、教练与定线投入](https://36kr.com/p/3721557299689861)
+- [岩馆群访：线路、空间、女性适配与试爬](https://www.sohu.com/a/989252629_121124646)
+- [小宇宙：香蕉攀岩经营、教练与定线讨论](https://www.xiaoyuzhoufm.com/episode/67d5a44b0766616acd30cc9e)
+- [视觉障碍岩馆可访问性清单](https://climbingbusinessjournal.com/justin-salas-on-visual-impairment-accessibility-in-climbing-gyms-checklist-included/)
+
+### 当前竞品
+
+- [磕磕 App Store](https://apps.apple.com/hk/app/%E7%A3%95%E7%A3%95-%E6%94%80%E5%B2%A9%E8%AE%B0%E5%BD%95%E4%B8%8E-beta-%E7%A4%BE%E5%8C%BA/id6760823408)
+- [攀岩么 App Store](https://apps.apple.com/tw/app/%E6%94%80%E5%B2%A9%E4%B9%88/id6775133615)
+- [攀岩科学 App Store](https://apps.apple.com/cn/app/%E6%94%80%E5%B2%A9%E7%A7%91%E5%AD%A6/id6738903694)
+- [ClimbPin 岩钉 App Store](https://apps.apple.com/cn/app/climbpin-%E5%B2%A9%E9%92%89/id6755990150)
+- [GoTop App Store](https://apps.apple.com/cn/app/gotop/id6757733784)
+- [壁记 App Store](https://apps.apple.com/cn/app/%E5%A3%81%E8%AE%B0-%E8%AE%B0%E5%BD%95%E4%BD%A0%E7%9A%84%E6%AF%8F%E4%B8%80%E6%AC%A1%E6%94%80%E7%99%BB/id6749840034)
+- [岩究生 App Store](https://apps.apple.com/cn/app/%E5%B2%A9%E7%A9%B6%E7%94%9F/id6740552981)
+- [攀岩笔记 App Store](https://apps.apple.com/cn/app/%E6%94%80%E5%B2%A9%E7%AC%94%E8%AE%B0/id6471394121)
+- [Redpoint Reviews](https://apps.apple.com/us/app/redpoint-bouldering-climbing/id1324072645?platform=watch&see-all=reviews)
+- [Pinnacle Climb Log](https://apps.apple.com/us/app/pinnacle-climb-log/id1271954104)
+- [TopLogger for Gym Owners](https://toplogger.nu/gym-owners)
+- [Griptonite Route Manager](https://griptonite.io/gyms/route-manager/)
+- [Crux Official Climbs](https://docs.cruxapp.ca/documentation-for-gym-staff/about-crux/optional-feature-gym-set-climbs)
+
+### Apple 平台
+
+- [Apple: Running workout sessions](https://developer.apple.com/documentation/HealthKit/running-workout-sessions)
+- [Apple: WatchConnectivity](https://developer.apple.com/documentation/watchconnectivity/transferring-data-with-watch-connectivity)
+- [Apple: Health and Fitness apps](https://developer.apple.com/health-fitness/)
+- [Apple: App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
+- [Apple: HealthKit privacy](https://developer.apple.com/documentation/healthkit/protecting-user-privacy)
+- [Apple: Core Motion](https://developer.apple.com/documentation/coremotion/)
+
+### 研究与用户反馈
+
+- [The Way Up: Hold Usage Detection](https://openaccess.thecvf.com/content/CVPR2025W/CVSPORTS/html/Maschek_The_Way_Up_A_Dataset_for_Hold_Usage_Detection_in_CVPRW_2025_paper.html)
+- [augKlimb](https://arxiv.org/abs/2001.07944)
+- [Efficacy of route visual inspection](https://pubmed.ncbi.nlm.nih.gov/20561271/)
+- [Embodied planning in climbing](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2024.1337878/full)
+- [Cognitive-behavioural processes during boulder previewing](https://pubmed.ncbi.nlm.nih.gov/38740079/)
+- [On-sight and red-point route-finding ability](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2020.00902/full)
+- [Climbing journal and logger discussion](https://www.reddit.com/r/climbharder/comments/1kydfn6)
+- [Smart watches during bouldering](https://www.reddit.com/r/bouldering/comments/1fljsbo/does_anyone_use_fitness_trackers_smart_watches/)
+- [Bouldering with colour blindness](https://www.reddit.com/r/bouldering/comments/1119n3k/bouldering_with_colour_blindness/)
+- [Kilter App data continuity incident](https://www.climbing.com/news/why-the-kilter-board-app-suddenly-disappeared/)

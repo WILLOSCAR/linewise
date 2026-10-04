@@ -49,6 +49,13 @@ struct LineSpotlight: View {
 }
 
 extension Line {
+    /// 首页卡片只画一个掉落点，和卡上的字对得上：有提醒时是提醒来源那一次，否则是“上次掉在”那一次。
+    var cardFallMarks: [FallMark] {
+        let source = reminderText?.isEmpty == false ? sessions.first { $0.id == reminderSessionID } : lastFallSession
+        guard let id = source?.fallHoldID else { return [] }
+        return [FallMark(holdID: id, count: 1, recency: 1)]
+    }
+
     /// 历史掉落点 → 标记。`sessions` 允许传入筛选后的子集。
     func fallMarks(from sessions: [Session]? = nil) -> [FallMark] {
         let list = (sessions ?? orderedSessions).filter { $0.fallHoldID != nil }

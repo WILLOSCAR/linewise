@@ -1,25 +1,28 @@
 # AGENTS.md
 
-## Agent Skills
+## Agent skills
 
-### Issue Tracker
+### Issue tracker
 
-This project is GitHub-backed as the public `WILLOSCAR/linewise` repo. Product and implementation work should be tracked in GitHub Issues once the PRD and validation gates are settled. See `docs/agents/issue-tracker.md`.
+This project is GitHub-backed as the public `WILLOSCAR/linewise` repo. Track product and implementation work in GitHub Issues. See `docs/agents/issue-tracker.md`.
 
-### Triage Labels
+### Triage labels
 
-Use the five Matt workflow states as local issue status values: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Use the five Matt workflow labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
-### Domain Docs
+### Domain docs
 
-This is a single-context project. Read `CONTEXT.md` first, then ADRs in `docs/adr/` when product direction, platform claims, data model, or release gates matter. See `docs/agents/domain.md`.
+This is a single-context project. Read `CONTEXT.md` first, then the PRD (`docs/linewise_prd_v2_0.md`) and ADRs in `docs/adr/` when product direction, data model, or release gates matter. See `docs/agents/domain.md`.
 
-## Development Workflow
+## Development workflow
 
-- Stay in requirements discussion until the P0 contract is settled.
-- Start fuzzy product work with `ask-matt` style routing and use `grill-with-docs` style questioning against the active docs before writing a PRD.
-- For multi-session work, use `to-prd` -> `to-issues` -> one fresh `implement` run per issue.
-- Use `prototype` only to answer a specific open question, such as the RouteCard state model or a Watch/iPhone UI flow. Mark prototype code as throwaway.
+- The PRD is the contract and the app exists in `app/`. Build in PRD v2.0 Demo order (A → D); a demo is done only when its exit criteria and a real gym visit are met.
+- Change product behaviour by editing the PRD section and adding a §17 row in the same change.
+- In this repo, start bounded fuzzy work with `grill-with-docs` against the active docs; use `ask-matt` only when the route is unclear.
+- For multi-session work, keep `grill-with-docs -> to-spec -> to-tickets` in one context, then clear context and start one fresh `implement` run per frontier ticket.
+- Use `wayfinder` only when the product effort is too large and foggy to settle in one session; when its decision map is clear, return to `to-spec`.
+- Use `handoff -> prototype -> handoff` only to answer a specific runnable question, such as the RouteCard state model or a Watch/iPhone UI flow. Write the prototype as throwaway code, retain it as evidence, and carry the decision back.
 - For Apple platform details, verify against official Apple docs before implementation.
-- For risky logic, use `tdd` before implementation and `review` before merging.
+- For a hard bug use `diagnosing-bugs`. `implement` drives `tdd`, project verification, and `code-review` before commit.
+- Use `triage` only for raw incoming bugs and requests; tickets created by `to-tickets` are already agent-ready.
 - Do not mix this climb project with badminton or RallyMate implementation code.

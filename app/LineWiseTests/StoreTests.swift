@@ -378,6 +378,86 @@ struct StoreReminderCheckTests {
         #expect(line.reminderSessionID == a.id)
     }
 
+    @Test("记这一次里回答：新记录有内容时提醒换新，验证和旧提醒原文留在新记录上")
+    func commitWithCheckKeepsProof() throws {
+        let (line, _, b) = try lineWithReminderAndFollowUp()
+        let old = try #require(line.reminderText)
+        let ordered = HoldNumbering.ordered(line.holds)
+        let draft = SessionDraft(attemptCount: 3, fallHoldID: ordered[2].id, reason: .body, note: "贴墙再翻", check: .noChange)
+        f.store.commit(draft, to: b, line: line, date: b.date, checking: old)
+        #expect(b.check == .noChange)
+        #expect(b.reminderSnapshot == old)
+        #expect(line.reminderText == "掉在 ③ · 身体 · 贴墙再翻")
+        #expect(line.reminderSessionID == b.id)
+        #expect(line.pendingCheckSession == nil)
+    }
+
+    @Test("记这一次里答“有用”且没写新内容：旧提醒保留并标 ✓")
+    func commitWorkedWithoutContent() throws {
+        let (line, a, b) = try lineWithReminderAndFollowUp()
+        let old = try #require(line.reminderText)
+        f.store.commit(SessionDraft(attemptCount: 2, sent: true, check: .worked), to: b, line: line, date: b.date, checking: old)
+        #expect(b.check == .worked)
+        #expect(b.reminderSnapshot == old)
+        #expect(line.reminderText == old)
+        #expect(line.reminderSessionID == a.id)
+        #expect(line.reminderVerified)
+        #expect(line.pendingCheckSession == nil)
+    }
+
+    @Test("问了但没回答：不写验证，提醒照常换新")
+    func commitSkippedCheck() throws {
+        let (line, _, b) = try lineWithReminderAndFollowUp()
+        let old = try #require(line.reminderText)
+        f.store.commit(SessionDraft(attemptCount: 1, reason: .fear), to: b, line: line, date: b.date, checking: old)
+        #expect(b.check == nil)
+        #expect(b.reminderSnapshot == nil)
+        #expect(line.reminderText == "不敢")
+        #expect(line.reminderSessionID == b.id)
+    }
+
+    @Test("表单没出现验证问句时，草稿里的回答不写进记录")
+    func commitWithoutPromptIgnoresCheck() throws {
+        let (line, _, b) = try lineWithReminderAndFollowUp()
+        f.store.commit(SessionDraft(attemptCount: 1, check: .worked), to: b, line: line, date: b.date)
+        #expect(b.check == nil)
+        #expect(line.reminderVerified == false)
+    }
+
+    @Test("线路页兜底回答也记下被验证的提醒原文；撤销一起恢复")
+    func answerCheckWritesSnapshot() throws {
+        let (line, _, b) = try lineWithReminderAndFollowUp()
+        let undo = f.store.answerCheck(b, line: line, check: .notTested)
+        #expect(b.reminderSnapshot == "掉在 ① · 脚 · xxx")
+        undo()
+        #expect(b.reminderSnapshot == nil)
+    }
+
+    @Test("教练几句只在有新记录等回答时说“还没回答”")
+    func coachNagsOnlyWhenPending() throws {
+        let (line, _, b) = try lineWithReminderAndFollowUp()
+        #expect(CoachSummary.sentences(for: line.digest()).contains { $0.contains("还没回答") })
+        b.reason = .power
+        f.store.commitSession(b, line: line, fallLabel: nil)
+        #expect(line.reminderSessionID == b.id)
+        #expect(!CoachSummary.sentences(for: line.digest()).contains { $0.contains("还没回答") })
+    }
+
+    @Test("首页卡片只画一个掉落点：提醒来源那次；没提醒时是上次掉的那次")
+    func cardFallMarks() throws {
+        let (line, a, b) = try lineWithReminderAndFollowUp()
+        #expect(line.cardFallMarks.map(\.holdID) == [a.fallHoldID!])
+        let ordered = HoldNumbering.ordered(line.holds)
+        b.fallHoldID = ordered[3].id
+        f.store.commitSession(b, line: line, fallLabel: line.label(for: b.fallHoldID))
+        #expect(line.cardFallMarks.map(\.holdID) == [ordered[3].id])
+        f.store.updateReminder(line, text: "")
+        #expect(line.cardFallMarks.map(\.holdID) == [ordered[3].id])
+        b.fallHoldID = nil
+        b.reason = .power
+        #expect(line.cardFallMarks.isEmpty)
+    }
+
     @Test("updateReminder：改字、清空")
     func updateReminder() throws {
         let (line, _, _) = try lineWithReminderAndFollowUp()

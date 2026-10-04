@@ -81,10 +81,11 @@ enum HomeCardText {
     }
 
     /// 第二行：第 N 次来 · 上次掉在 ⑤ · 身体。没来过 → nil（由引导句代替）。
-    static func visitLine(visitCount: Int, lastFall: String?) -> String? {
+    /// 有提醒时不再带“上次掉在”：提醒里已有掉哪 · 原因，图上也画了掉落点。
+    static func visitLine(visitCount: Int, lastFall: String?, hasReminder: Bool = false) -> String? {
         guard visitCount > 0 else { return nil }
         var parts = ["第 \(visitCount) 次来"]
-        if let lastFall, !lastFall.isEmpty { parts.append(lastFall) }
+        if !hasReminder, let lastFall, !lastFall.isEmpty { parts.append(lastFall) }
         return parts.joined(separator: " · ")
     }
 

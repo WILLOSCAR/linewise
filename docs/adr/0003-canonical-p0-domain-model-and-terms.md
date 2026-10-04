@@ -1,6 +1,7 @@
 # ADR 3: Canonical P0 Domain Model And Terms
 
 Date: 2026-07-01
+Status: Superseded by ADR 4 (2026-09). Term mapping: PRD v1.1 §16.
 
 ## Decision
 

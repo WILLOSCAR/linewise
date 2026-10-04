@@ -51,6 +51,43 @@ struct ReminderTests {
     }
 }
 
+@Suite("记这一次 · 要不要问上次提醒")
+struct ReminderCheckPromptTests {
+    private let today = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+    private let source = UUID()
+
+    private func day(_ offset: Int) -> Date {
+        Calendar.current.date(byAdding: .day, value: offset, to: today)!
+    }
+
+    private func ask(reminder: String? = "掉在 ① · 脚", sourceDate: Date?, editing: [UUID] = [], target: Date) -> Bool {
+        ReminderCheckPrompt.shouldAsk(reminder: reminder, reminderSessionID: source, reminderSessionDate: sourceDate,
+                                      editingSessionIDs: editing, targetDate: target)
+    }
+
+    @Test("更早记录留下的提醒：新建或改之后的记录时问")
+    func asksForLaterSession() {
+        #expect(ask(sourceDate: day(-3), target: today))
+        #expect(ask(sourceDate: day(-3), editing: [UUID()], target: today))
+    }
+
+    @Test("同一天（比如新一轮）按日期比较，不看时刻")
+    func sameDay() {
+        #expect(ask(sourceDate: today.addingTimeInterval(20 * 3600), target: today))
+    }
+
+    @Test("改的就是提醒来源、日期早于来源、没有提醒或找不到来源：不问")
+    func skips() {
+        #expect(!ask(sourceDate: day(-3), editing: [source], target: today))
+        #expect(!ask(sourceDate: day(-3), target: day(-5)))
+        #expect(!ask(reminder: "  ", sourceDate: day(-3), target: today))
+        #expect(!ask(reminder: nil, sourceDate: day(-3), target: today))
+        #expect(!ask(sourceDate: nil, target: today))
+        #expect(!ReminderCheckPrompt.shouldAsk(reminder: "x", reminderSessionID: nil, reminderSessionDate: day(-3),
+                                               editingSessionIDs: [], targetDate: today))
+    }
+}
+
 @Suite("状态机")
 struct StatusMachineTests {
     @Test func transitions() {

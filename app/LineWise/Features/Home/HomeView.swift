@@ -239,6 +239,7 @@ struct LineCard: View {
             // 自动取景：把这条线的包围盒（留 35% 余量）放大到卡片里，整条线完整可见；
             // 顶栏与底部文字区留白。随横滑做 15% 视差，让卡片有层次。已上的线亮一点。
             LineSpotlight(line: line, fill: false, maxPixel: Self.maxPixel, showNumbers: false,
+                          fallMarks: line.cardFallMarks,
                           dim: line.status == .sent ? 0.52 : 0.66,
                           focus: SpotlightGeometry.focusRect(for: line.holds, padding: 0.35, minSize: 0.45))
                 .saturation(line.status == .gone ? 0.5 : 1)
@@ -277,7 +278,8 @@ struct LineCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .truncationMode(.tail)
-            if let visit = HomeCardText.visitLine(visitCount: line.visitCount, lastFall: line.lastFallLine) {
+            if let visit = HomeCardText.visitLine(visitCount: line.visitCount, lastFall: line.lastFallLine,
+                                                  hasReminder: line.reminderText?.isEmpty == false) {
                 Text(visit)
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.72))

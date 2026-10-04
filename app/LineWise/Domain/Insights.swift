@@ -11,6 +11,18 @@ enum ReminderComposer {
     }
 }
 
+/// 记这一次里要不要问“上次这句有用吗？”（PRD 5.7 第 0 步）。
+/// 只问更早记录留下的提醒：正在改或将要写进的记录就是提醒来源时不问，日期早于提醒来源时也不问。
+enum ReminderCheckPrompt {
+    static func shouldAsk(reminder: String?, reminderSessionID: UUID?, reminderSessionDate: Date?,
+                          editingSessionIDs: [UUID], targetDate: Date, calendar: Calendar = .current) -> Bool {
+        guard let reminder, !reminder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let reminderSessionID, let reminderSessionDate else { return false }
+        guard !editingSessionIDs.contains(reminderSessionID) else { return false }
+        return calendar.startOfDay(for: targetDate) >= calendar.startOfDay(for: reminderSessionDate)
+    }
+}
+
 /// 一次记录的摘要，供纯逻辑使用（与存储层解耦）。
 struct SessionDigest: Hashable, Sendable {
     var date: Date
@@ -28,6 +40,7 @@ struct LineDigest: Hashable, Sendable {
     var sessions: [SessionDigest]
     var reminder: String?
     var reminderVerified: Bool
+    /// 提醒之后没有在等回答的记录（已回答，或还没有新记录）。
     var reminderAnswered: Bool
     var status: LineStatus
     var cycle: Int

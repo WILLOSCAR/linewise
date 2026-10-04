@@ -34,6 +34,41 @@ final class CoreFlowTests: XCTestCase {
         add(shot)
     }
 
+    /// 演示数据里“仰角墙 · 紫”有 3 天前留下的提醒，今天只点过 +1，所以线路页也挂着兜底问句；
+    /// 表单打开后只能点屏幕上真正可见的那一组。
+    @MainActor
+    func testCheckAnsweredInRecordSurvivesNewReminder() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting", "-seedDemo", "-openLine", "紫"]
+        app.launch()
+        let record = app.buttons["记这一次"]
+        XCTAssertTrue(record.waitForExistence(timeout: 15))
+        record.tap()
+        XCTAssertTrue(app.buttons["保存"].waitForExistence(timeout: 5))
+        XCTAssertNotNil(visible(app.staticTexts, "上次这句有用吗？"))
+        try XCTUnwrap(visible(app.buttons, "没变化")).tap()
+        try XCTUnwrap(visible(app.buttons, "身体")).tap()
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "record-with-check"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["保存"].tap()
+
+        let answered = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "对上次提醒的回答：没变化")).firstMatch
+        XCTAssertTrue(answered.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["上次这句有用吗？"].exists)
+
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        record.tap()
+        XCTAssertTrue(app.buttons["保存"].waitForExistence(timeout: 5))
+        XCTAssertNil(visible(app.staticTexts, "上次这句有用吗？"))
+    }
+
+    private func visible(_ query: XCUIElementQuery, _ label: String) -> XCUIElement? {
+        query.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { $0.isHittable }
+    }
+
     @MainActor
     func testSequenceDragAppendsAndUndoRestores() throws {
         continueAfterFailure = false

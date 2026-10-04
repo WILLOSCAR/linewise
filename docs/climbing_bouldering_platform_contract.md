@@ -1,7 +1,7 @@
 # LineWise Platform Contract
 
-Date: 2026-07-01  
-Status: Active Apple Watch / iPhone / HealthKit contract for P0
+Date: 2026-07-13
+Status: Historical for the current iPhone-only scope (PRD v1.1). Re-read before Watch or HealthKit work (PRD Demo 5).
 
 ## 1. Purpose
 
@@ -13,8 +13,8 @@ It is written to prevent a common failure mode: building a product that looks sm
 
 | Surface | Owns | Does Not Own |
 | --- | --- | --- |
-| Apple Watch | Start/end session, workout capture, try/send/fail/undo, rest timer, sparse haptic | Route editing, photo annotation, AI route reading, long text, social flow |
-| iPhone | RouteCard, review, MoveCue, NextSessionCue, photo/annotation, export, privacy controls | Real-time on-wall coaching |
+| Apple Watch | Optional start/end workout capture, try/send/fail/undo, rest timer, sparse haptic | Product eligibility, route editing, photo annotation, AI route reading, long text, social flow |
+| iPhone | RouteCard, quick/review/history capture, import preview, MoveCue, NextSessionCue, ProofCheck, photo/annotation, export, privacy controls | Real-time on-wall coaching |
 | HealthKit | System workout record, heart rate/time/energy support | Route, attempt, send/fail, failure reason, movement truth |
 | Core Motion | Suggested timeline evidence and future experiments | Guaranteed attempt detection |
 | WatchConnectivity | Eventual sync between Watch and iPhone | Strong real-time truth layer |
@@ -36,6 +36,8 @@ Watch must support:
 - local persistence when iPhone is absent;
 - eventual sync to iPhone.
 
+Watch is an optional capture mode. The same product loop must remain available through iPhone quick capture or review-only entry when the user does not own a Watch, does not want to wear it, or the gym does not permit it.
+
 Watch should avoid:
 
 - scroll-heavy forms;
@@ -49,7 +51,7 @@ Watch should avoid:
 
 ## 4. Session Ownership
 
-P0 session owner should be Apple Watch.
+In `watch_capture` mode, the workout session owner should be Apple Watch.
 
 Rationale:
 
@@ -58,7 +60,20 @@ Rationale:
 - iPhone may be away, locked, or in a bag;
 - HealthKit climbing workout is best represented as a Watch workout.
 
-iPhone may mirror state, but Watch must be able to record locally and sync later.
+iPhone may mirror state, but Watch must be able to record locally and sync later. In `iphone_quick_capture` and `review_only` modes, iPhone owns the local GymVisit and no Watch workout is required.
+
+## 4.1 Wearability Contract
+
+LineWise must not claim that wearing an Apple Watch while bouldering is universally safe or accepted.
+
+Requirements:
+
+- tell users to follow gym rules and their own comfort;
+- allow the Watch mode to be disabled without losing product value;
+- do not market a case, band, or sweatband as eliminating snag, impact, or breakage risk;
+- test taps with chalk, sweat, fatigue, screen lock, gloves/tape, and different bands;
+- record wearability separately from software usability in field studies;
+- never encourage screen use while the user is on the wall or in a fall zone.
 
 ## 5. HealthKit Contract
 
@@ -85,6 +100,8 @@ Permission behavior:
 - Denying HealthKit must not block local RouteCard and attempt recording.
 - Permission copy must explain exactly what data is used for.
 - Failed HealthKit writes should preserve the app session and allow retry.
+- Read permissions should be requested only when the user enters an import/review flow that needs them.
+- Health records must not be sent to a third-party service or AI without a separate, explicit consent for that destination and purpose.
 
 ## 6. Heart Rate Contract
 
@@ -123,6 +140,8 @@ Motion data must be treated as:
 - insufficient for full-body movement truth.
 
 Any motion-derived result must be labeled as `suggested`.
+
+No Core Motion result may be required to create an Attempt, FailureEpisode, MoveCue, or ProofCheck.
 
 ## 8. Core Location Contract
 
@@ -164,6 +183,37 @@ Rules:
 - cloud AI requires explicit opt-in;
 - video is optional and never required for the memory loop.
 
+## 9.1 Historical Entry And Import Contract
+
+LineWise must support records that did not originate in its own Watch app.
+
+Allowed sources:
+
+- `manual_history`;
+- `health_import`;
+- `fit_import`;
+- `photo_import`;
+- future partner imports with explicit provenance.
+
+Every imported or historical object must preserve:
+
+- source type;
+- external source identifier or stable content hash when available;
+- original timestamp and timezone if known;
+- import timestamp;
+- user review state;
+- whether it is suggested, user-confirmed, edited, or rejected.
+
+Rules:
+
+- show an import preview before canonical commit;
+- imported workout segments may suggest a timeline but cannot confirm Attempt, Send, Fail, FailureEpisode, or MoveCue;
+- duplicate detection must be deterministic and reversible;
+- re-import must be idempotent;
+- import undo must remove only objects created by that import transaction;
+- historical entry must allow partial truth and never invent missing sensor data;
+- export must preserve provenance and correction history.
+
 ## 10. WatchConnectivity Contract
 
 WatchConnectivity is an eventual sync layer.
@@ -176,6 +226,8 @@ Must support:
 - duplicate prevention;
 - replay after disconnect;
 - clear sync status in debug/review.
+
+Canonical events must have app-generated durable IDs so Watch, iPhone quick capture, and review-only entry can share one idempotent model.
 
 Must not assume:
 
@@ -231,6 +283,9 @@ P0 red lines:
 - no advertising use of health data;
 - no open social feed;
 - no account requirement unless deletion/export are designed.
+- no silent import or automatic conversion from workout segment to confirmed climbing event;
+- no color-only route identity;
+- no inferred body/health profile from photos or video in P0/P0.5.
 
 ## 14. Required Disclaimers
 
@@ -256,6 +311,10 @@ Must test on real paired Watch/iPhone:
 - local save after crash or app termination;
 - battery drain over a full gym visit;
 - haptic usefulness and annoyance.
+- actual willingness to wear the Watch and any gym policy restrictions;
+- no-Watch fallback completing the same RouteCard-to-ProofCheck loop.
+- historical date, timezone, import preview, repeated import, undo, and export round-trip;
+- route retrieval using non-color anchors.
 
 ## 16. Official Apple Sources
 

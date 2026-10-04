@@ -12,11 +12,13 @@ struct SessionDraft: Equatable, Sendable {
     var fallText: String = ""
     /// 展开“记每一次”时的逐次记录；未展开为空。
     var attempts: [AttemptRecord] = []
+    /// 对上次提醒的回答（只在表单里出现了验证问句时才会写回记录）。
+    var check: ReminderCheck?
 
     var trimmedNote: String { note.trimmingCharacters(in: .whitespacesAndNewlines) }
     var trimmedFallText: String { fallText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// 把这份草稿并进目标日期上已有的记录：次数相加、上了取或、掉哪/原因以草稿为先、一句话拼接。
+    /// 把这份草稿并进目标日期上已有的记录：次数相加、上了取或、掉哪/原因/验证以草稿为先、一句话拼接。
     func merged(into existing: SessionDraft) -> SessionDraft {
         var out = existing
         out.attemptCount = existing.attemptCount + attemptCount
@@ -27,6 +29,7 @@ struct SessionDraft: Equatable, Sendable {
         }
         if !trimmedFallText.isEmpty { out.fallText = trimmedFallText }
         if let reason { out.reason = reason }
+        if let check { out.check = check }
         let notes = [existing.trimmedNote, trimmedNote].filter { !$0.isEmpty }
         out.note = notes.joined(separator: "；")
         if !existing.attempts.isEmpty || !attempts.isEmpty {
@@ -69,6 +72,14 @@ enum SessionSavePlan: Equatable {
     case mergeInto(UUID, removing: UUID?)
     /// 目标日期没有记录：新建。
     case create
+
+    /// 这次保存会写进的已有记录；新建时为 nil。
+    var targetSessionID: UUID? {
+        switch self {
+        case .overwrite(let id), .mergeInto(let id, _): id
+        case .create: nil
+        }
+    }
 
     /// - baseID: 正在编辑的记录（新建且没有预填时为 nil）
     /// - day: 用户选的日期（本地零点）

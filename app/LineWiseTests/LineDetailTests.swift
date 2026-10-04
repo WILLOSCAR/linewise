@@ -126,6 +126,14 @@ struct SessionSavePlanTests {
         #expect(plan == .mergeInto(other.id, removing: nil))
     }
 
+    @Test("targetSessionID：写回或并入的那条；新建为 nil")
+    func targetSessionID() {
+        let a = UUID(), b = UUID()
+        #expect(SessionSavePlan.overwrite(a).targetSessionID == a)
+        #expect(SessionSavePlan.mergeInto(b, removing: a).targetSessionID == b)
+        #expect(SessionSavePlan.create.targetSessionID == nil)
+    }
+
     @Test("不同轮次的同一天不算冲突；日期按本地零点比较")
     func cycleAndDayNormalization() {
         let oldCycle = FakeSession(date: daysAgo(1), cycle: 1)
@@ -137,6 +145,12 @@ struct SessionSavePlanTests {
 
 @Suite("草稿合并")
 struct SessionDraftMergeTests {
+    @Test("验证以草稿为先；草稿没答时保留原记录的回答")
+    func mergeKeepsCheck() {
+        #expect(SessionDraft(attemptCount: 1, check: .worked).merged(into: SessionDraft(check: .noChange)).check == .worked)
+        #expect(SessionDraft(attemptCount: 1).merged(into: SessionDraft(check: .noChange)).check == .noChange)
+    }
+
     @Test("次数相加、上了取或、掉哪与原因以草稿为先、一句话拼接")
     func merge() {
         let holdA = UUID(), holdB = UUID()

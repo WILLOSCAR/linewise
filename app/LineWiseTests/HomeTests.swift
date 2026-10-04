@@ -19,6 +19,12 @@ struct HomeCardTextTests {
         #expect(HomeCardText.visitLine(visitCount: 1, lastFall: nil) == "第 1 次来")
     }
 
+    @Test("有提醒时第二行不再重复掉哪 · 原因")
+    func visitLineWithReminder() {
+        #expect(HomeCardText.visitLine(visitCount: 3, lastFall: "上次掉在 ⑤ · 身体", hasReminder: true) == "第 3 次来")
+        #expect(HomeCardText.visitLine(visitCount: 0, lastFall: nil, hasReminder: true) == nil)
+    }
+
     @Test("页码只在多于一张时显示")
     func pageLabel() {
         #expect(HomeCardText.pageLabel(index: 0, count: 1) == nil)

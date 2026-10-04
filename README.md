@@ -1,120 +1,52 @@
-# LineWise Climb Watch App
+# 线感 LineWise
 
-Date: 2026-07-01  
-Status: Climbing/bouldering project directory, currently in requirements-settlement mode with a Matt-style local workflow scaffold
+Date: 2026-10-03
+Status: Direction reset to PRD v2.0 (on-device line reading, simulation, playback). The iOS app implements the v1.x feature set and is green in the simulator; it has not run on a physical iPhone or in a real gym. Next: Demo A (hold contours with SAM 2.1 Tiny).
 
-## Naming
+`抱石` in English is **Bouldering**. The folder is called `climb` because the wider lane is climbing; the product is indoor bouldering only.
 
-`抱石` in English is **Bouldering**.
+## What It Is
 
-This directory is named `climb` because the broader product lane is climbing. The current working product name is **LineWise**. The Chinese working name is **线感**. The current MVP opportunity is specifically indoor bouldering.
+> 拍一面墙，扫一下，整面墙的岩点被抠出来；点一个，同色的整条线亮起来；按自己的身材把动作摆一遍、播一遍；爬完记住掉在哪、下次试什么。
 
-`LineWise` means the product is not only a workout recorder. It should eventually become a bouldering companion for route memory, line reading, movement explanation, training, and partner workflows.
+Everything runs on the phone with one lightweight model (SAM 2.1 Tiny, 80 MB, downloaded on first use). Competitors already ship stick-figure beta, 3D walls and video AI; LineWise competes on seconds-fast editable line reading on device, simulation scaled to your own body and linked to your own falls, and the feel of the interaction.
 
-## Current Product Thesis
-
-The current external product thesis is:
-
-> LineWise is a bouldering companion: use Apple Watch to capture low-interruption attempt/rest anchors, use iPhone to remember routes and movement cues, and eventually help the user read lines, understand movement, train deliberately, and climb with better partners.
-
-The internal model remains useful, but should not replace the user-facing category:
-
-> Rhythm Capture + Recall Retrieval + Proof/Trust: Watch owns low-interruption rhythm anchors; iPhone owns project memory, correction, and next-session recall.
-
-The broader product vision now has five pillars:
-
-1. 攀岩搭子: first as an AI/private companion, later maybe human partner workflows.
-2. 自动读线: photo-based route reading and editable movement suggestions.
-3. 趣味交互: stick-figure movement overlays and playful movement explanation.
-4. 定线解析: routesetter-lens interpretation of movement, key difficulty, wall style, and training intent.
-5. 教学与训练: route-failure-driven videos, drills, and functional training paths.
-
-P0 remains deliberately narrower:
-
-> Prove the manual-first `capture -> quick review -> next-session recall` loop before adding AI route reading, automated photo analysis, Smart Stack, video, coach workflows, or training-platform expansion.
-
-## Active Docs
+## Docs
 
 | File | Role |
 | --- | --- |
-| `CONTEXT.md` | Concise single-context product and domain source of truth for future agents |
-| `docs/project_background.md` | Project background, market gap, strategy, and product principles |
-| `docs/climbing_bouldering_prd_v0_1.md` | Active P0/P0.5 requirements contract |
-| `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and field validation metrics |
-| `docs/climbing_bouldering_data_collection_plan.md` | Real-gym data collection and annotation protocol |
-| `docs/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
-| `docs/product_initialization_v0.md` | Latest initialization note: product name, expanded pillars, dataset strategy, and next-step recommendations |
-| `docs/adr/0002-linewise-expanded-product-vision.md` | Durable decision: use LineWise / 线感 as the broader working frame while preserving Gym Visit Memory as P0 |
-| `docs/adr/0003-canonical-p0-domain-model-and-terms.md` | Durable decision: canonical P0 entities, event vocabulary, and term aliases |
-| `docs/adr/0001-gym-visit-memory-system.md` | Durable product decision: start from route/project-centered gym visit memory, not generic session logging |
+| `CONTEXT.md` | Domain language and product rules; read first |
+| `docs/linewise_prd_v2_0.md` | Product contract (v2.0) |
+| `docs/linewise_prd_v1_0.md` | v1.1; still the detail spec for the memory loop that v2.0 §5.4 cites |
+| `docs/linewise_ui_spec_v1.md` | Visual and interaction spec |
+| `docs/linewise_status_2026-09-13.md` | Implementation state, build and test commands, known gaps |
+| `docs/linewise_takeover_2026-09-13.md` | Last verification record |
+| `docs/linewise_hold_segmentation_proposal_2026-09-13.md` | Segmentation prototype evidence behind v2.0 |
+| `docs/adr/` | Durable decisions; ADR 4 (line-first model) and ADR 5 (on-device reading and simulation) are current |
+| `docs/climbing_bouldering_research_report_v1.md` | July 2026 competitor and needs research (evidence) |
 
-## Historical Research
+Everything else in `docs/` is history: the v0.1 PRD with its gate, platform and data-collection docs, the project background, and the earlier research reports. It does not override the documents above.
 
-These files are source material. They do not override `CONTEXT.md`, the active PRD, or ADRs.
-
-| File | Role |
-| --- | --- |
-| `docs/bouldering_field_research_v2.md` | Field-observation-oriented V2 research; reframed the product from training recorder to gym visit memory system |
-| `docs/climbing_bouldering_research_report_v1.md` | Primary expanded five-PM research and product-direction report |
-| `docs/bouldering_industry_history_business_report.md` | Bouldering industry history, Beijing/Shanghai brand landscape, business model, coaching mode, and trend report |
-| `docs/bouldering_market_mvp_report.md` | Original broad market research and MVP opportunity report, kept as source material |
-
-## Agent Workflow
-
-This project uses a lightweight local adaptation of the Matt workflow:
-
-- read `AGENTS.md` and `CONTEXT.md` before product or implementation work;
-- use `docs/adr/` for decisions that should survive across sessions;
-- track implementation issues in GitHub Issues after the PRD and validation gates are settled;
-- move from requirements discussion to `to-prd` only after route/project memory, Watch capture, iPhone review, and next-session recall are settled;
-- do not start implementation before the PRD and validation gates exist.
-
-## Directory Layout
+## Layout
 
 | Directory | Purpose |
 | --- | --- |
-| `docs/` | Product research, PRD, data collection plan, MVP gates |
-| `docs/agents/` | Local Matt-style workflow configuration |
-| `docs/adr/` | Durable product and architecture decisions |
-| `app/` | Future climbing Watch/iPhone implementation |
-| `ui/` | Future climbing-specific Watch and iPhone UI design |
-| `tests/` | Future simulator, real-device, field-test, and data-quality validation |
+| `app/` | iOS app (XcodeGen `project.yml`, SwiftUI, SwiftData, no third-party dependencies) and its tests |
+| `docs/` | Product, decisions, research |
+| `docs/field-notes/` | One note per gym visit (PRD §10.4); created with the first visit |
 
-## Project Boundary
+## Build
 
-Climbing owns:
+```sh
+cd app && xcodegen generate
+xcodebuild -project LineWise.xcodeproj -scheme LineWise \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -parallel-testing-enabled NO test
+```
 
-- bouldering attempt/rest/send/fail/project semantics;
-- climbing market and competitor research;
-- climbing-specific Watch/iPhone UX;
-- climbing-specific HealthKit/Core Motion data collection plan;
-- future climbing PRD, validation gate, and implementation plan.
+Demo data and deep-link launch arguments are listed in the status doc.
 
-Climbing does not own:
+## Boundaries
 
-- existing badminton `ShuttleCoachSpike` code;
-- badminton overhead-drill algorithm;
-- badminton release gate or coach-share promise.
-
-## Shared Learnings From Badminton
-
-Reusable:
-
-- local-first recording before sync;
-- uncertainty routes to review;
-- motion data needs timestamp discipline and replay fixtures;
-- HealthKit success must be explicit, not assumed;
-- Watch UI must stay low-interruption.
-
-Not reusable directly:
-
-- rep counting;
-- set boundary detection;
-- high-clear drill copy;
-- badminton validation metrics.
-
-## Next Project Docs To Create
-
-| Next Doc | Purpose |
-| --- | --- |
-| `docs/climbing_bouldering_implementation_plan.md` | Break the MVP into independently verifiable tasks |
+- Do not mix this project with the badminton `ShuttleCoachSpike` or RallyMate code.
+- Real wall photos never go into this public repo.

@@ -1,6 +1,7 @@
 # ADR 2: Use LineWise as the Working Product Frame
 
 Date: 2026-06-30
+Status: Name still valid. "Gym Visit Memory as P0" is replaced by ADR 4's line-first spotlight memory.
 
 ## Decision
 

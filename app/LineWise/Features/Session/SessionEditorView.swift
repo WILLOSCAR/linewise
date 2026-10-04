@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// 记这一次（PRD §6.4）：上半屏点“掉在哪”，下半屏五行表单，保存后展示拼好的提醒。
+/// 记这一次（PRD §6.4）：上半屏点“掉在哪”，下半屏按价值排序的表单，保存后展示拼好的提醒。
 /// 传入 `session` 时为编辑已有记录；否则新建（今天已有记录时预填）。
 struct SessionEditorView: View {
     let line: Line
@@ -75,6 +75,18 @@ struct SessionEditorView: View {
         SessionSavePlan.resolve(baseID: effectiveBaseID, day: date, cycle: line.cycle, sessions: line.sessions)
     }
 
+    /// 这次要问“有用吗”的提醒：只问更早记录留下的那句（PRD 5.7 第 0 步）。
+    private var reminderToCheck: String? {
+        let rid = line.reminderSessionID
+        let ask = ReminderCheckPrompt.shouldAsk(
+            reminder: line.reminderText, reminderSessionID: rid,
+            reminderSessionDate: line.sessions.first { $0.id == rid }?.date,
+            editingSessionIDs: [effectiveBaseID, savePlan.targetSessionID].compactMap { $0 },
+            targetDate: date
+        )
+        return ask ? line.reminderText : nil
+    }
+
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
@@ -94,12 +106,13 @@ struct SessionEditorView: View {
                     ScrollViewReader { scroll in
                         ScrollView {
                             VStack(spacing: 12) {
-                                dateRow
-                                countRow
+                                checkRow
                                 sentRow
                                 reasonRow
                                 noteRow.id("note")
+                                countRow
                                 attemptsSection
+                                dateRow
                             }
                             .padding(16)
                         }
@@ -277,7 +290,37 @@ struct SessionEditorView: View {
         )
     }
 
-    // MARK: 五行
+    // MARK: 表单
+
+    /// 上次这句有用吗：回答记在这条记录上，保存时先记验证、再换提醒。
+    @ViewBuilder private var checkRow: some View {
+        if let reminder = reminderToCheck {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("上次这句有用吗？")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                Text(reminder)
+                    .font(.footnote)
+                    .foregroundStyle(Color.subtle)
+                    .lineLimit(2)
+                ChipFlow {
+                    ForEach(ReminderCheck.allCases, id: \.self) { check in
+                        Chip(title: check.title, selected: draft.check == check, compact: true) {
+                            if check == .worked, draft.check != .worked { Haptics.success() } else { Haptics.selection() }
+                            draft.check = draft.check == check ? nil : check
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("上次提醒：\(reminder)。有用吗？")
+        }
+    }
 
     private var dateRow: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -392,13 +435,13 @@ struct SessionEditorView: View {
     private var noteRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("一句话")
+                Text("下次试什么")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 micButton
             }
-            TextField("下次要试什么？", text: $draft.note, axis: .vertical)
+            TextField("比如：右脚先踩高再出手", text: $draft.note, axis: .vertical)
                 .lineLimit(2...4)
                 .font(.body)
                 .foregroundStyle(.white)
@@ -577,6 +620,8 @@ struct SessionEditorView: View {
         if dictation.isRecording { dictation.stop() }
         let store = Store(context)
         let day = Calendar.current.startOfDay(for: date)
+        // 合并时可能先删掉原记录并清掉提醒来源，所以在动数据前取。
+        let checking = reminderToCheck
         var final = draft
         if !trackEach { final.attempts = [] }
         if line.hasPhoto {
@@ -606,7 +651,7 @@ struct SessionEditorView: View {
         }
 
         // 写入 + 提醒：点的编号优先，无照片线用 fallText。
-        store.commit(final, to: target, line: line, date: day)
+        store.commit(final, to: target, line: line, date: day, checking: checking)
         Haptics.success()
 
         let reminder = target.hasContent ? line.reminderText : nil
