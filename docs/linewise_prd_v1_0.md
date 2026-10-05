@@ -597,7 +597,7 @@ projecting ───────────► sent ─────────
 
 ### 10.0 当前位置（2026-09-23）
 
-- Demo 0–3 的功能已在 iOS App 里实现，模拟器 156 项单元测试 + 2 条 UI 测试通过（`docs/linewise_status_2026-09-13.md`）。
+- Demo 0–3 的功能已在 iOS App 里实现，模拟器 156 项单元测试 + 2 条 UI 测试通过（`docs/archive/2026-09/linewise_status_2026-09-13.md`）。
 - **但没有一次真实馆访，也没上过真机。** 按本章规则，没有一个 Demo 的退出标准被满足。
 - 因此：**功能冻结**。在 Demo 1 的现场退出标准达成前，不开新功能，只做两类改动：① 修正核心闭环（拍墙 → 记这一次 → 提醒 → 验证）上的错误；② 为上真机、上馆必须补的工程项。
 - 下一个 Sprint 是 §10.3 的现场验证，而不是 Demo 4。
@@ -667,7 +667,7 @@ Demo 2、3 没过退出标准时，对应功能降级而不是继续打磨：教
 
 ### 10.6 实现策略
 
-- 代码在 `app/`（XcodeGen + SwiftUI + SwiftData，无第三方依赖）；构建与测试命令见 `docs/linewise_status_2026-09-13.md` §2。
+- 代码在 `app/`（XcodeGen + SwiftUI + SwiftData，无第三方依赖）；构建与测试命令见 `docs/archive/2026-09/linewise_status_2026-09-13.md` §2。
 - 聚光灯与火柴人都画在共享的 `SpotlightImage` 里；新界面不自己画点。
 - 每个 Sprint 结束：Demo 录屏 30 秒 + 馆访反馈 + 更新本文档 §17。
 
@@ -796,7 +796,7 @@ v1.1 删去：与 §5 场景和 §10.2"要回答的问题"重复。章节号保�
 
 - `CONTEXT.md`（领域语言，已按本文档更新）
 - `docs/linewise_ui_spec_v1.md`（视觉与交互规范）
-- `docs/linewise_status_2026-09-13.md`（实现状态、构建与测试命令）
+- `docs/archive/2026-09/linewise_status_2026-09-13.md`（实现状态、构建与测试命令）
 - `docs/adr/0004-line-first-spotlight-memory.md`（为什么从 GymVisit 改成按线组织）
-- `docs/climbing_bouldering_research_report_v1.md`（2026-07 竞品与需求调研，差异化依据；其中的产品建议以本文为准）
-- `docs/climbing_bouldering_prd_v0_1.md` 及 gate / 平台 / 数据采集文档（历史；Watch 回来时再读平台文档）
+- `docs/research/climbing_bouldering_research_report_v1.md`（2026-07 竞品与需求调研，差异化依据；其中的产品建议以本文为准）
+- `docs/archive/legacy/climbing_bouldering_prd_v0_1.md` 及 gate / 平台 / 数据采集文档（历史；Watch 回来时再读平台文档）

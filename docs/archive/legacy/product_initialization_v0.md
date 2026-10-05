@@ -278,8 +278,8 @@ Open questions before PRD:
 
 ## 8. Next Recommended Work
 
-1. Write `docs/climbing_bouldering_prd_v0_1.md` around P0 and P0.5 only.
-2. Write `docs/climbing_bouldering_data_collection_plan.md` for the user's next 3-5 gym visits.
+1. Write `docs/archive/legacy/climbing_bouldering_prd_v0_1.md` around P0 and P0.5 only.
+2. Write `docs/archive/legacy/climbing_bouldering_data_collection_plan.md` for the user's next 3-5 gym visits.
 3. Define the first RouteCard schema and photo annotation model.
 4. Prototype the iPhone route photo capture + manual hold tapping flow.
 5. Prototype the Watch attempt/rest capture flow.

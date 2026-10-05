@@ -1,0 +1,13 @@
+# Local private fixtures and generated outputs; source and aggregate metrics only.
+data/
+models/
+out/
+ui/data/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.webm
+*.mlpackage/
+*.mlmodelc/

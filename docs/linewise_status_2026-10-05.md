@@ -38,7 +38,7 @@
 
 ## 4. 分割与交互原型：已经做了什么
 
-原型位于本机 `.scratch/hold-seg-proto/`，模型位于 `.scratch/models/`；均被 Git 忽略，当前远端分支不包含这些源码、模型、照片或产物。它们是实验结果，不是已经接入 App 的功能。
+可复用原型源码已整理到 [experiments/hold-segmentation](../experiments/hold-segmentation/README.md)，包含构建与运行说明和汇总指标。原始私人输入、照片与输出仍在被忽略的 `.scratch/hold-seg-proto/`，模型仍在 `.scratch/models/`。这些是实验材料，尚未集成进 App。
 
 ### 单点分割对照
 
@@ -81,13 +81,15 @@
 
 ## 6. 工程、分支和任务管理
 
+以下是本次审计开始时的快照；随后清理的结果见 §10，当前任务入口见 [路线图](roadmap.md)。
+
 - 本次检查开始时工作区干净。此前 13 份遗留文档与 ADR 草稿已在最新提交中完成归位，不再是未提交的遗留工作。
 - 刷新远端后，`feat/ios-app-v1` 与 `origin/feat/ios-app-v1` 同为 `6c92054`，领先／落后为 `0 / 0`。
 - `origin/main` 仍为 `390bd5d`（7 月文档基线）；本次核对时当前开发分支有 5 个后续提交，尚未合并 main。
 - GitHub PR 查询为空；Issues #1–11 全部仍开放、最后更新在 8 月，属于旧 GymVisit / Watch / Review Inbox 等路线。当前缺少 Demo A–D 对应的新任务拆分，旧标签不能当成当前执行顺序。本次没有修改或关闭 Issues。
 - 远端另有 `work/full-product-foundation`（最后 9/5）、五个 `worktree-wf_*` 保存分支（最后 9/12）、`prototype/watch-fatigue-attempt-model`（最后 8/11）。它们保留旧体系工作，没有比当前分支更新的提交；本次未切换、合并或重新测试这些历史实现。
 - 当前只有一个本地 worktree。没有 `.github` CI 配置；测试证据来自本地执行。
-- 原型可复现性仍欠一步：应将不含照片和权重的脚本、说明及汇总指标单独整理进 Git；实际照片、模型和媒体输出继续留在本机。
+- 清理前原型源码仅在忽略目录中；§10 已记录源码、构建说明和汇总指标的归档结果。
 
 ## 7. 本次验证
 
@@ -95,7 +97,7 @@
 
 - **169 项单元／集成测试，38 个 suite，通过。**
 - **3 条原生 XCUITest，通过**：旧提醒回答随新记录保留；无照片掉落位置保存后重开；真实触摸拖动追加步骤再撤销。
-- **Release 模拟器构建通过。** Xcode 27 仍报告 `LineInfoEditorSheet.swift` 和 `ReminderEditSheet.swift` 使用 `ModelContext` 时未显式导入 SwiftData 的警告；另有无 AppIntents 依赖而跳过元数据提取的提示。本次为进度核对，没有顺带修改功能源码。
+- **Release 模拟器构建通过。** Xcode 27 仍报告 `LineInfoEditorSheet.swift` 和 `ReminderEditSheet.swift` 使用 `ModelContext` 时未显式导入 SwiftData 的警告；另有无 AppIntents 依赖而跳过元数据提取的提示。审计时未修改功能源码；随后的清理已补齐两处导入并复跑 Release，见 §10。
 - 产物在本地 `.scratch/progress-2026-10-05/tests.xcresult`、`tests.log`、`release.log`，均不进入公开仓库。
 - 本次未做：模型推理重跑、iPhone 真机运行、相机／中文语音／OCR 识别率、真实馆访、网页完整交互／视频导出验收、历史分支测试、TestFlight 发布。
 
@@ -111,12 +113,9 @@ xcodebuild -project app/LineWise.xcodeproj -scheme LineWise \
 
 ## 8. 下一步执行顺序
 
-1. **推进 Demo A 的最小完整流程**：先固定旧数据迁移基线，接入 Tiny 单点分割和轮廓存储，使建线、首页、线路页、顺序及分享共用轮廓渲染；下载中与失败时继续使用圆圈。
-2. **用 iPhone 测实数**：编码、单点完整响应、内存、首次编译；用手机原图和至少三面墙验证，记录一次馆访。达不到门槛就按 PRD 降级。
-3. **把原型证据和 Demo A 任务整理成可接手资产**：分离代码与私人照片，明确候选通过率、人工轮廓质量和点击稳定性的不同口径；替换旧 Issues 执行顺序。
-4. A 通过后推进 B 的整墙／颜色组，再推进 C；暂不同时展开四个 Demo。
+[Demo A–D 路线图](roadmap.md) 是当前唯一任务入口。先做 A 的数据迁移基线、Tiny 单点分割、轮廓共享渲染和下载/失败回退，再补 iPhone 测速、三面真实墙及馆访证据。A 通过后才推进 B、C、D。
 
-另需产品契约补充：单张墙照目前没有确定的真实长度标尺，网页模拟用可调比例换算厘米；未来“差多少厘米”需先说明尺度来源与误差，不能把画面缩放值当成准确测量。
+原型源码和任务重整已完成，不能计作 Demo A 实现完成。单张墙照的真实长度标尺仍未确定；Demo C 的“差多少厘米”需先补尺度来源与误差契约。
 
 ## 9. 核对范围和来源
 
@@ -126,3 +125,12 @@ xcodebuild -project app/LineWise.xcodeproj -scheme LineWise \
 - 全部远端分支头、GitHub Issues / PR、当前 worktree 和工作区；当前 App 的实际测试与构建。
 
 本记录修正旧状态文档的过时口径，不改变 PRD 行为契约，也不代表完成了分割功能集成。
+
+## 10. 2026-10-05 清理结果
+
+- 文档入口统一为 [文档索引](README.md) 与 [执行路线](roadmap.md)。9 份旧路线/交接文档移入 `archive/`，4 份研究移入 `research/`；保留原文及历史语境，并修正路径。
+- `CONTEXT.md` 收敛为术语；`AGENTS.md` 移除失效的技能依赖，修正 PRD 变更记录章节为 §15。
+- 分割原型的 Swift / 网页源码、构建脚本和汇总指标进入 `experiments/hold-segmentation/`。抽出原先重复的共享 Swift 文件；三个命令行程序编译通过，网页脚本语法检查通过。未重跑模型推理或声明网页交互验收。
+- 新任务为 [Demo A #12](https://github.com/WILLOSCAR/linewise/issues/12)、[B #13](https://github.com/WILLOSCAR/linewise/issues/13)、[C #14](https://github.com/WILLOSCAR/linewise/issues/14)、[D #15](https://github.com/WILLOSCAR/linewise/issues/15)。只有 A 可开始工程实现，B–D 等待前置验收；旧 #1–11 以路线替代归档，不代表完成。
+- `LineInfoEditorSheet` 与 `ReminderEditSheet` 仅新增 `import SwiftData`；Release 模拟器构建通过，相关警告消失，仅保留无 AppIntents 依赖的元数据提取提示。169 + 3 项测试结果沿用本日清理前已通过的功能代码验证，没有将其写成清理后重跑。
+- 清理本次审计生成的约 519 MiB 临时 DerivedData，保留测试结果包、日志、照片、模型、实验产物和全部历史分支。清理验证日志位于忽略目录 `.scratch/cleanup-*.log`。

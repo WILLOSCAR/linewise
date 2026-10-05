@@ -453,10 +453,10 @@ These questions should be resolved by prototype or field testing:
 
 ## 16. References
 
-- `docs/project_background.md`
-- `docs/climbing_bouldering_mvp_gate.md`
-- `docs/climbing_bouldering_data_collection_plan.md`
-- `docs/climbing_bouldering_platform_contract.md`
+- `docs/archive/legacy/project_background.md`
+- `docs/archive/legacy/climbing_bouldering_mvp_gate.md`
+- `docs/archive/legacy/climbing_bouldering_data_collection_plan.md`
+- `docs/archive/legacy/climbing_bouldering_platform_contract.md`
 - `CONTEXT.md`
 - `docs/adr/0001-gym-visit-memory-system.md`
 - `docs/adr/0002-linewise-expanded-product-vision.md`

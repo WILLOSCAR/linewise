@@ -2,9 +2,9 @@
 
 Date moved into project: 2026-05-24  
 Project: `climb`  
-Naming note: `抱石` 的英文是 **Bouldering**。This file was moved from the old root `baoshi.md` to `climb/docs/bouldering_market_mvp_report.md`.
+Naming note: `抱石` 的英文是 **Bouldering**。This file was moved from the old root `baoshi.md` to `climb/docs/research/bouldering_market_mvp_report.md`.
 
-> Status update, 2026-05-24: This is the original broad market/MVP report. The current primary multi-agent review and product-direction report is `docs/climbing_bouldering_research_report_v1.md`. Use that file first for the latest scope, risks, MVP gates, and next-step decisions.
+> Status update, 2026-05-24: This is the original broad market/MVP report. The current primary multi-agent review and product-direction report is `docs/research/climbing_bouldering_research_report_v1.md`. Use that file first for the latest scope, risks, MVP gates, and next-step decisions.
 
 > 目标：设计一款**接近可上线标准、真正有市场价值**的攀岩 Apple Watch App，而不是泛泛堆功能。你的原始需求明确要求覆盖市场调研、用户需求、竞品、Apple Watch 数据能力、产品定位、MVP、风险和验证，并回答“只做一个 MVP 应该做什么”这个核心问题。
 > 结论先行：**最值得做的 MVP 是「Attempt Copilot」——一个面向室内抱石与训练型攀岩者的 Apple Watch 低干扰训练记录与复盘助手。**

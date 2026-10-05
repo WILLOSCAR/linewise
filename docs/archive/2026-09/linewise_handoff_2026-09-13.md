@@ -6,7 +6,7 @@
 分支：`feat/ios-app-v1`。最后一次干净提交：`a0f939f`（MVP/M1/M2 功能齐全，134 测全绿）。
 工作区有**未提交的第二轮打磨半成品**（约 +2200/−1150），四个并行 Agent 已中断，**未做编译/测试验收**。先 `xcodegen generate && xcodebuild test`，红了再决定保留或回退到 `a0f939f`。
 
-四个 Agent 因额度中断（不是干净汇报）：[Home+Builder](8701286b-a701-4b59-b4af-90c252cea90b)、[Detail+Session](8bf882fd-8d8b-41b9-b584-40451bcd6d81)、[Sequence](f6726142-d45c-4127-9cd9-0474933cdfe8)、[Share+Settings](c0b3956b-2b30-4866-8329-2b7148f20593)。不要 resume 这四个 ID；下一轮开新会话按本文清单做。
+四个 Agent 因额度中断（不是干净汇报）：Home+Builder（历史 Agent ID：`8701286b-a701-4b59-b4af-90c252cea90b`）、Detail+Session（历史 Agent ID：`8bf882fd-8d8b-41b9-b584-40451bcd6d81`）、Sequence（历史 Agent ID：`f6726142-d45c-4127-9cd9-0474933cdfe8`）、Share+Settings（历史 Agent ID：`c0b3956b-2b30-4866-8329-2b7148f20593`）。不要 resume 这四个 ID；下一轮开新会话按本文清单做。
 
 演示：`-seedDemo -demoPhotosDir /tmp/linewise-demo-photos`；真实照不进仓库。直达：`-openLine 黄|白`、`-openBuilder`、`-openSequenceEditor`、`-openSettings`。
 
@@ -100,7 +100,7 @@ P2 发布：
 
 ## 不要动
 
-- 会话开始前就脏的 13 个文档：`AGENTS.md`、`CONTEXT.md`、`README.md`、`docs/adr/0001|0003`、`docs/agents/*`、`docs/climbing_bouldering_*`、`docs/project_background.md`，以及未跟踪的 `docs/adr/0004-*.md`。本轮没改它们。
+- 会话开始前就脏的 13 个文档：`AGENTS.md`、`CONTEXT.md`、`README.md`、`docs/adr/0001|0003`、`docs/agents/*`、`docs/climbing_bouldering_*`、`docs/archive/legacy/project_background.md`，以及未跟踪的 `docs/adr/0004-*.md`。本轮没改它们。
 - 真实墙照片不要进公开仓库。
 - 不要和羽毛球 / RallyMate 混代码。
 

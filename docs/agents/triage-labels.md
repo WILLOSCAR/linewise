@@ -1,6 +1,6 @@
 # Triage Labels
 
-Use these Matt workflow states for GitHub Issues in `WILLOSCAR/linewise`:
+Use these workflow states for GitHub Issues in `WILLOSCAR/linewise`:
 
 | Role | Status |
 | --- | --- |

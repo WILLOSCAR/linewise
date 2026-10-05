@@ -1,12 +1,12 @@
 # 线感 LineWise · 实现状态与待办（2026-09-13 收尾记录）
 
-> **历史记录。当前进度请读 [2026-10-05 全量进度核对](linewise_status_2026-10-05.md)**。下文保留 9 月实现和后续增补，不能把旧的“未做／下一步”直接当作 PRD v2.0 计划。
+> **历史记录。当前进度请读 [2026-10-05 全量进度核对](../../linewise_status_2026-10-05.md)**。下文保留 9 月实现和后续增补，不能把旧的“未做／下一步”直接当作 PRD v2.0 计划。
 
 分支 `feat/ios-app-v1`。本文记录 iOS App 第一轮实现 + 第二轮 UI 打磨收尾时的状态：做了什么、没做什么、下一步从哪接。
 
 > 当天下午已接手第二轮打磨并修复回归；当前验证与优先级以 [接手验收](linewise_takeover_2026-09-13.md) 为准。
 
-> 9 月 13 日代码提交 `2e3a964`：156 项单元／集成测试与 2 条原生 UI 测试通过，Release 模拟器构建通过。当时新增讨论的[岩点分割提案](linewise_hold_segmentation_proposal_2026-09-13.md)尚未实现；后续原型进展见该文档及最新进度记录。
+> 9 月 13 日代码提交 `2e3a964`：156 项单元／集成测试与 2 条原生 UI 测试通过，Release 模拟器构建通过。当时新增讨论的[岩点分割提案](../../linewise_hold_segmentation_proposal_2026-09-13.md)尚未实现；后续原型进展见该文档及最新进度记录。
 
 > **2026-10-03**：产品方向改为 PRD v2.0（读线、模拟、回放；端侧 SAM 2.1 Tiny），功能冻结解除，下一步是 Demo A（抠轮廓）。下面 09-23 条目中关于"冻结"和"移入不做"的说法已过时。
 
@@ -46,7 +46,7 @@ xcodebuild -project LineWise.xcodeproj -scheme LineWise -destination "platform=i
 
 ## 4. 第二轮 UI 打磨（收尾时状态）
 
-规范见 `docs/linewise_ui_spec_v1.md`。凌晨四个方向中断时的状态见 `docs/linewise_handoff_2026-09-13.md`；下午接手后的集成与验收见 `docs/linewise_takeover_2026-09-13.md`。
+规范见 `docs/linewise_ui_spec_v1.md`。凌晨四个方向中断时的状态见 `docs/archive/2026-09/linewise_handoff_2026-09-13.md`；下午接手后的集成与验收见 `docs/archive/2026-09/linewise_takeover_2026-09-13.md`。
 
 ## 5. 未做（明确留到下一步）
 

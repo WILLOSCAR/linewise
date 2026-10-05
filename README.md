@@ -1,53 +1,37 @@
 # 线感 LineWise
 
-Date: 2026-10-05
-Status: PRD v2.0 targets on-device line reading, simulation and playback. The current iOS app implements the v1.x core flow; 169 unit/integration tests and 3 native UI tests passed again on October 5. Segmentation and upgraded interaction exist as local Mac/web prototypes and are not integrated into the app. Physical iPhone and real-gym validation remain outstanding. Next: Demo A (hold contours with SAM 2.1 Tiny). See the [current progress audit](docs/linewise_status_2026-10-05.md).
+拍墙、读线、摆动作、回放；爬完记住掉在哪、下次试什么。面向室内抱石的 iPhone App。
 
-`抱石` in English is **Bouldering**. LineWise focuses on indoor bouldering.
+**当前：v1.x 记忆与手动顺序流程已实现；v2.0 读线和模拟仍在原型阶段。下一步是 Demo A。** 2026-10-05 验证通过 169 项单元／集成测试及 3 条原生 UI 测试；真机与馆访验收仍待完成。
 
-## What It Is
+## 入口
 
-> 拍一面墙，扫一下，整面墙的岩点被抠出来；点一个，同色的整条线亮起来；按自己的身材把动作摆一遍、播一遍；爬完记住掉在哪、下次试什么。
+- [执行路线与任务](docs/roadmap.md)：Demo A → D，当前只推进 A。
+- [当前进度与证据](docs/linewise_status_2026-10-05.md)：App、原型、测试、缺口。
+- [产品契约 v2.0](docs/linewise_prd_v2_0.md) · [UI 规范](docs/linewise_ui_spec_v1.md) · [术语](CONTEXT.md)。
+- [全部文档](docs/README.md)：当前规范、研究、历史归档。
+- [分割实验源码](experiments/hold-segmentation/README.md)：Mac 命令行与网页原型。
 
-The v2.0 design runs on the phone with one lightweight model (SAM 2.1 Tiny, about 80 MB, to be downloaded on first use). Model download and inference are not yet in the app. Competitors already ship stick-figure beta, 3D walls and video AI; LineWise aims to compete on seconds-fast editable line reading on device, simulation scaled to your own body and linked to your own falls, and the feel of the interaction.
+## 目录
 
-## Docs
-
-| File | Role |
+| 目录 | 用途 |
 | --- | --- |
-| `CONTEXT.md` | Domain language and product rules; read first |
-| `docs/linewise_prd_v2_0.md` | Product contract (v2.0) |
-| `docs/linewise_prd_v1_0.md` | v1.1; still the detail spec for the memory loop that v2.0 §5.4 cites |
-| `docs/linewise_ui_spec_v1.md` | Visual and interaction spec |
-| `docs/linewise_status_2026-10-05.md` | Current implementation/prototype audit, tests, branches, known gaps and next steps |
-| `docs/linewise_status_2026-09-13.md` | Historical implementation log with September updates |
-| `docs/linewise_takeover_2026-09-13.md` | September 13 takeover verification record |
-| `docs/linewise_hold_segmentation_proposal_2026-09-13.md` | Segmentation prototype evidence behind v2.0 |
-| `docs/adr/` | Durable decisions; ADR 4 (line-first model) and ADR 5 (on-device reading and simulation) are current |
-| `docs/climbing_bouldering_research_report_v1.md` | July 2026 competitor and needs research (evidence) |
+| `app/` | SwiftUI / SwiftData iOS App、XcodeGen 配置和测试 |
+| `experiments/` | 原型源码与汇总证据；未集成到 App |
+| `docs/` | 活跃产品文档；`research/` 为研究，`archive/` 为历史 |
+| `.scratch/` | 被忽略的私人输入、模型、实验输出和本机验证日志 |
 
-Everything else in `docs/` is history: the v0.1 PRD with its gate, platform and data-collection docs, the project background, and the earlier research reports. It does not override the documents above.
+## 构建与测试
 
-## Layout
-
-| Directory | Purpose |
-| --- | --- |
-| `app/` | iOS app (XcodeGen `project.yml`, SwiftUI, SwiftData, no third-party dependencies) and its tests |
-| `docs/` | Product, decisions, research |
-| `docs/field-notes/` | One note per gym visit (PRD §10.4); created with the first visit |
-
-## Build
+需要 Xcode 和 XcodeGen。在仓库根目录执行：
 
 ```sh
-cd app && xcodegen generate
-xcodebuild -project LineWise.xcodeproj -scheme LineWise \
+(cd app && xcodegen generate)
+xcodebuild -project app/LineWise.xcodeproj -scheme LineWise \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO test
+xcodebuild -project app/LineWise.xcodeproj -scheme LineWise \
+  -configuration Release -destination 'generic/platform=iOS Simulator' build
 ```
 
-Demo data and deep-link launch arguments are listed in the status doc.
-
-## Boundaries
-
-- Do not mix this project with the badminton `ShuttleCoachSpike` or RallyMate code.
-- Real wall photos never go into this public repo.
+当前验证环境为 Xcode 27.0、iOS Simulator 26.5。设备名需与本机模拟器一致。真实墙照不进入公开仓库；馆访记录格式见 [v1.1 §10.4](docs/linewise_prd_v1_0.md#104-馆访反馈模板)。

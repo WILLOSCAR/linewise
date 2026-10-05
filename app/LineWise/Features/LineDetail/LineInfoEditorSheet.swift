@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 /// 改名 / 难度与主观难度 / 墙区与角度。
 struct LineInfoEditorSheet: View {

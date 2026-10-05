@@ -1,53 +1,45 @@
-# Climb Context
+# LineWise domain vocabulary
 
-**线感 / LineWise** is an iPhone app for indoor bouldering. You photograph a wall; the phone segments every hold; you tap one and the whole same-colour line lights up (the spotlight). You can then pose a stick figure scaled to your body on the line, play the moves back, and keep where you fell, why, and what to try next. The product contract is `docs/linewise_prd_v2_0.md`. Visuals and interaction follow `docs/linewise_ui_spec_v1.md`.
+**LineWise / 线感** — 面向室内抱石（Bouldering）的个人读线、模拟与记忆工具。
 
-## Product Rules
+**岩馆（Gym）** — 用户命名的攀爬场所。
 
-- `抱石` in English is **Bouldering**. `LineWise` / `线感` is a working name, not a trademark or App Store conclusion.
-- Scope: indoor bouldering, one person, iPhone, local-first, no account, no network needed. Not rope, outdoor, coaches, gyms, community, or video.
-- Everything is organised by **line**. There is no day or gym-visit view; dates are a field and a history filter.
-- The spotlight is the only visual motif. Every screen is that image plus one thing. Holds are drawn as their real contours; a hold that could not be segmented falls back to a circle.
-- A line's identity is its lit holds on a wall photo. Colour is only how the user picks them. Lines without a photo are allowed but lose the spotlight and sequence.
-- Only on-device models of 100 MB or less (currently SAM 2.1 Tiny, Core ML). No cloud inference, no uploads, no account.
-- The system suggests, never scores: detected holds, colour groups, start/finish and move drafts are editable suggestions. The simulation respects body size and joint limits and may show a reach gap, but never says whether a route is climbable.
-- Summaries quote only the user's own records on that line. Nothing is inferred about the user's ability from photos or body size. Weight is never asked.
-- Operation budget is a hard requirement: build a colour line in ≤ 10 s, log a session in ≤ 4 taps, zero taps needed while climbing.
-- Motion explains cause and effect: animations start from the user's finger, waiting is carried by the scan band, and reduce-motion is respected. No button panels to move limbs; no side-by-side split in portrait.
-- Work follows PRD v2.0 Demo order A → D, each with a real gym visit. Apple Watch, imports, video analysis, scoring, cloud AI, search and iPad layouts are out of scope.
+**墙（Wall）** — 岩馆内承载线路的一面墙，可关联一张照片、区域名和角度。
 
-## Language
+**线（Line）** — 墙上由用户选定的一组岩点，包含起步、结束、难度、状态和周期。Avoid: RouteCard。
 
-| Term | Code | Meaning |
-| --- | --- | --- |
-| 岩馆 | `Gym` | A name. No GPS. |
-| 墙 | `Wall` | One wall photo (optional) in a gym, with optional area name and angle. Can carry many lines. |
-| 线 | `Line` | A set of lit holds on a wall, with start, finish, grade text, felt grade, status and cycle. |
-| 点 | `Hold` | One hold on the line: normalised position and radius, plus an optional contour polygon and hand/foot anchor. Numbered bottom to top as ①…; the shared language for fall point, sequence and notes. |
-| 识别出的岩点 | `DetectedHold` | A hold found by whole-wall segmentation on a wall photo (polygon, centre, colour). Lines pick from these. |
-| 颜色组 | `colorGroup` | The set of detected holds sharing the tapped hold's colour. Saturated colours expand automatically; white, black and grey do not. |
-| 读线 | — | Photograph → scan → contours → tap one → colour group lights up → correct → start/finish. |
-| 记录 / 记这一次 | `Session` | One day on one line: attempts, sent, fall point (or fall text), one reason, and 下次试什么. `source` is `in_gym`, `after` or `backfill`. |
-| 尝试 | `AttemptRecord` | Optional per-attempt row inside a session. |
-| 为什么掉 | `FailReason` | One of 顺序 / 脚 / 身体 / 时机 / 够不着 / 不敢 / 没力 / 不知道. |
-| 下次试什么 | `Session.note` | The user's own sentence. Replaces the old terms MoveCue and beta. |
-| 提醒 | `Line.reminderText` | Built from the most recent session with content: 掉哪 · 原因 · 下次试什么. Editable. |
-| 验证 | `Session.check` | 有用 / 没变化 / 问题变了 / 没试, stored on the next session with `reminderSnapshot` (the reminder text it judged). Asked in 记这一次. |
-| 顺序 / 快照 | `ClimbSequence` | Stick-figure steps dragged onto holds, kept as a plan and an actual; played back with smooth interpolation. |
-| 体型 | `BodyProfile` | Height (asked once), arm span and optional leg ratio. Only used to draw and pose the figure. |
-| 分享图 | ShareCard | A rendered 1080×1920 image. Exported, never uploaded. |
-| 状态 | `LineStatus` | `projecting` / `sent` / `dropped` / `gone`; 再磕一轮 starts a new cycle. |
+**点（Hold）** — 一条线中的岩点；可用圆圈或轮廓表示。编号是掉落位置、顺序与备注的共同参照。
 
-Old terms (GymVisit, RouteCard, FailureEpisode, MoveCue, NextSessionCue, ProofCheck, capture modes) map to these in PRD §16. Use the new terms in new docs, code and issues.
+**轮廓（Polygon）** — 岩点外缘在墙照中的归一化多边形。
 
-## Docs
+**手脚落点（Anchor）** — 肢体与岩点接触的位置，与岩点轮廓中心是不同概念。
 
-- Active: `CONTEXT.md`, the PRD v2.0, the UI spec, `docs/linewise_status_2026-09-13.md` (implementation state, build and test commands), `docs/linewise_hold_segmentation_proposal_2026-09-13.md` (segmentation evidence), `docs/adr/`.
-- Evidence: `docs/climbing_bouldering_research_report_v1.md` (July 2026 competitor and needs research; its product recommendations are superseded by the PRD).
-- History: `docs/linewise_prd_v1_0.md` (v1.1; v2.0 still cites its memory-loop sections), `docs/climbing_bouldering_prd_v0_1.md`, `…_mvp_gate.md`, `…_platform_contract.md`, `…_data_collection_plan.md`, `docs/project_background.md`, `docs/product_initialization_v0.md`, and the older research reports. Read the platform contract again when Watch or HealthKit come back.
+**识别出的岩点（DetectedHold）** — 整墙识别产生的候选岩点，供用户选入线路。
 
-## Validation
+**颜色组（Color Group）** — 以所点岩点为种子、按颜色相似性形成的候选集合。
 
-- Product questions are answered in real gyms, not in the simulator. Each gym visit ends with the PRD §10.4 field note in `docs/field-notes/YYYY-MM-DD.md`.
-- Simulator tests cover logic and UI flows. Camera, OCR, speech, share and performance still need a physical iPhone.
-- Real wall photos stay out of the public repo (people appear in them).
+**读线** — 从墙照中找岩点、选同色组、校正并指定起步和结束的过程。
+
+**聚光灯（Spotlight）** — 保留线路岩点亮区、压暗墙照其余部分的视觉表达。
+
+**记录 / 记这一次（Session）** — 同一天在同一条线上的尝试、完成情况、掉落位置、原因与下次打算；可以现场记、离场后记或补记。Avoid: GymVisit、FailureEpisode。
+
+**尝试（AttemptRecord）** — 一次 Session 内可选的单次尝试明细。
+
+**为什么掉（FailReason）** — 用户自选的原因：顺序、脚、身体、时机、够不着、不敢、没力或不知道。
+
+**下次试什么** — 用户为下一次尝试留下的一句话。Avoid: MoveCue、beta。
+
+**提醒（Reminder）** — 某条线下一次打开时带回的“掉哪 · 原因 · 下次试什么”。Avoid: NextSessionCue。
+
+**验证（Check）** — 对上次提醒的回答：有用、没变化、问题变了或没试；回答关联当时的提醒原文（reminderSnapshot）。Avoid: ProofCheck。
+
+**顺序（ClimbSequence）** — 肢体逐步落在岩点上的姿态序列；计划和实际是两份可比较的顺序。
+
+**体型（BodyProfile）** — 用于模拟的身高、臂展与可选腿长比例。
+
+**分享图（Share Card）** — 将线路与用户记录渲染为可导出的静态图片。
+
+**线路状态（LineStatus）** — 在磕（projecting）、上了（sent）、先放下（dropped）或已换线（gone）。
+
+**周期（Cycle）** — 同一条线“再磕一轮”后开启的新一轮记录。

@@ -164,12 +164,12 @@ The second bet is:
 
 | Document | Purpose |
 | --- | --- |
-| `docs/climbing_bouldering_prd_v0_1.md` | Main P0/P0.5 product requirements |
-| `docs/climbing_bouldering_research_report_v1.md` | Active July 2026 market, user, gym, Watch, AI, and capability research refresh |
-| `docs/project_background.md` | Project context and strategic framing |
-| `docs/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and validation metrics |
-| `docs/climbing_bouldering_data_collection_plan.md` | Real gym visit data collection protocol |
-| `docs/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
+| `docs/archive/legacy/climbing_bouldering_prd_v0_1.md` | Main P0/P0.5 product requirements |
+| `docs/research/climbing_bouldering_research_report_v1.md` | Active July 2026 market, user, gym, Watch, AI, and capability research refresh |
+| `docs/archive/legacy/project_background.md` | Project context and strategic framing |
+| `docs/archive/legacy/climbing_bouldering_mvp_gate.md` | Go/No-Go gates and validation metrics |
+| `docs/archive/legacy/climbing_bouldering_data_collection_plan.md` | Real gym visit data collection protocol |
+| `docs/archive/legacy/climbing_bouldering_platform_contract.md` | Apple Watch, iPhone, HealthKit, privacy, and claim boundaries |
 | `CONTEXT.md` | Canonical product language |
 | `docs/adr/` | Durable decisions |
 

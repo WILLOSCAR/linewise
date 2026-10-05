@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>线感 · 读线与模拟 原型</title>
+<style>
+  :root { --acc: #FFD12E; --coral: #FF7361; --ink: #0D0D12; --panel: #1C1C24; --sub: rgba(255,255,255,.55); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; min-height: 100vh; background: #050507; color: #fff; display: flex; flex-direction: column; align-items: center;
+         font: 15px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; user-select: none; }
+  #dev { display: flex; gap: 8px; align-items: center; padding: 12px; color: var(--sub); font-size: 13px; flex-wrap: wrap; justify-content: center; }
+  #dev button, #dev select { background: #1C1C24; color: #fff; border: 1px solid #333; border-radius: 8px; padding: 6px 10px; font: inherit; }
+  #phone { position: relative; width: 390px; height: 844px; border-radius: 52px; overflow: hidden; background: var(--ink);
+           box-shadow: 0 0 0 10px #18181c, 0 30px 80px rgba(0,0,0,.6); margin-bottom: 24px; touch-action: none; }
+  #scene { position: absolute; inset: 0; width: 390px; height: 844px; }
+  .glass { background: rgba(28,28,36,.62); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+  #top { position: absolute; top: 54px; left: 16px; right: 16px; height: 40px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+  #top > * { pointer-events: auto; }
+  .round { width: 40px; height: 40px; border-radius: 20px; border: 0; color: #fff; font-size: 20px; display: grid; place-items: center; cursor: pointer; }
+  #title { font-weight: 600; font-size: 16px; opacity: .95; }
+  .chip { height: 32px; border-radius: 16px; border: 0; color: #fff; padding: 0 12px; font: 600 13px inherit; cursor: pointer; }
+  #capsule { position: absolute; top: 106px; left: 50%; transform: translate(-50%, -16px); opacity: 0; transition: transform .3s cubic-bezier(.2,1.4,.4,1), opacity .25s;
+             display: flex; align-items: center; gap: 6px; height: 40px; border-radius: 20px; padding: 0 6px; pointer-events: none; white-space: nowrap; }
+  #capsule.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  #capsule .sw { width: 14px; height: 14px; border-radius: 7px; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+  #capsule .lab { font-weight: 600; padding: 0 4px; }
+  #capsule .nav { width: 28px; height: 28px; border-radius: 14px; border: 0; background: rgba(255,255,255,.08); color: #fff; cursor: pointer; font-size: 15px; }
+  #capsule .more { display: none; height: 28px; border-radius: 14px; border: 0; background: var(--acc); color: var(--ink); font-weight: 600; padding: 0 10px; cursor: pointer; }
+  #hint { position: absolute; left: 24px; right: 24px; bottom: 200px; text-align: center; font-size: 15px; color: rgba(255,255,255,.88);
+          opacity: 0; transform: translateY(8px); transition: opacity .35s, transform .35s; pointer-events: none; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
+  #hint.on { opacity: 1; transform: none; }
+  #shutter { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); width: 76px; height: 76px; border-radius: 38px; border: 4px solid #fff;
+             background: transparent; cursor: pointer; display: grid; place-items: center; }
+  #shutter::after { content: ''; width: 60px; height: 60px; border-radius: 30px; background: #fff; transition: transform .12s; }
+  #shutter:active::after { transform: scale(.9); }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  .primary { position: absolute; left: 24px; right: 24px; bottom: 44px; height: 54px; border-radius: 27px; border: 0; background: var(--acc); color: var(--ink);
+             font: 600 17px inherit; cursor: pointer; transition: transform .3s cubic-bezier(.2,1.4,.4,1), opacity .25s; }
+  .hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(24px) !important; }
+  #toast { position: absolute; left: 50%; bottom: 112px; transform: translate(-50%, 20px); opacity: 0; transition: transform .25s, opacity .25s; border-radius: 22px;
+           display: flex; gap: 14px; align-items: center; padding: 10px 10px 10px 18px; font-size: 14px; pointer-events: none; white-space: nowrap; }
+  #toast.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  #toast button { border: 0; background: rgba(255,255,255,.12); color: var(--acc); font: 600 14px inherit; border-radius: 16px; padding: 6px 12px; cursor: pointer; }
+  #menu { position: absolute; min-width: 168px; border-radius: 14px; overflow: hidden; transform-origin: top left; transform: scale(.85); opacity: 0;
+          transition: transform .22s cubic-bezier(.2,1.3,.4,1), opacity .18s; pointer-events: none; }
+  #menu.on { transform: none; opacity: 1; pointer-events: auto; }
+  #menu button { display: block; width: 100%; text-align: left; padding: 12px 16px; border: 0; background: transparent; color: #fff; font: 15px inherit; cursor: pointer; }
+  #menu button + button { border-top: 1px solid rgba(255,255,255,.08); }
+  #menu button.danger { color: var(--coral); }
+  #simbar { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 0 30px; transition: transform .4s cubic-bezier(.2,1.1,.4,1), opacity .3s; }
+  #scrubrow { display: flex; align-items: center; gap: 10px; padding: 0 16px 8px; }
+  #play { width: 40px; height: 40px; border-radius: 20px; border: 0; background: #fff; color: var(--ink); font-size: 15px; cursor: pointer; flex: none; }
+  #scrub { flex: 1; height: 28px; position: relative; cursor: pointer; }
+  #scrub .track { position: absolute; left: 0; right: 0; top: 13px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.18); }
+  #scrub .fill { position: absolute; left: 0; top: 13px; height: 3px; border-radius: 2px; background: var(--acc); }
+  #scrub .knob { position: absolute; top: 6px; width: 17px; height: 17px; border-radius: 9px; background: #fff; margin-left: -8px; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  #scrub .tick { position: absolute; top: 11px; width: 2px; height: 7px; background: rgba(255,255,255,.35); margin-left: -1px; }
+  #scrub .tick.fall { background: var(--coral); height: 11px; top: 9px; width: 3px; }
+  #export { height: 40px; border-radius: 20px; border: 0; color: #fff; padding: 0 14px; font: 600 14px inherit; cursor: pointer; flex: none; }
+  #film { display: flex; gap: 8px; overflow-x: auto; padding: 4px 16px 6px; scroll-behavior: smooth; scrollbar-width: none; }
+  #film::-webkit-scrollbar { display: none; }
+  .cell { flex: none; width: 64px; cursor: pointer; transition: opacity .2s; animation: slidein .3s cubic-bezier(.2,1.3,.4,1); }
+  .cell canvas { width: 64px; height: 80px; border-radius: 10px; display: block; box-shadow: 0 0 0 1.5px rgba(255,255,255,.12); }
+  .cell.cur canvas { box-shadow: 0 0 0 2px var(--acc); }
+  .cell.ghost { opacity: .4; }
+  .cell.fall canvas { box-shadow: 0 0 0 2px var(--coral); }
+  .cell .cap { font-size: 11px; text-align: center; color: var(--sub); margin-top: 4px; white-space: nowrap; }
+  .cell.cur .cap { color: #fff; }
+  @keyframes slidein { from { transform: translateX(40px) scale(.8); opacity: 0; } }
+  #sheet { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 28px 28px 0 0; padding: 22px 24px 40px; transform: translateY(105%);
+           transition: transform .45s cubic-bezier(.2,1.05,.35,1); }
+  #sheet.on { transform: none; }
+  #sheet h3 { margin: 0 0 4px; font-size: 20px; }
+  #sheet p { margin: 0 0 18px; color: var(--sub); font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+  .row label { width: 72px; color: rgba(255,255,255,.85); }
+  .row input { flex: 1; accent-color: var(--acc); }
+  .row output { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+  #sheet .primary { position: static; width: 100%; margin-top: 10px; }
+  #card { position: absolute; left: 20px; right: 20px; bottom: 210px; border-radius: 20px; padding: 16px 18px; transform: translateY(16px); opacity: 0;
+          transition: transform .35s cubic-bezier(.2,1.2,.4,1), opacity .25s; pointer-events: none; }
+  #card.on { transform: none; opacity: 1; pointer-events: auto; }
+  #card .k { color: var(--coral); font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  #card .v { color: var(--acc); font-size: 17px; }
+  #card .s { color: var(--sub); font-size: 12px; margin-top: 8px; }
+  #vid { position: absolute; inset: 0; background: rgba(0,0,0,.85); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  #vid.on { display: flex; }
+  #vid video { width: 300px; border-radius: 16px; }
+  #vid button { border: 0; background: #fff; color: var(--ink); border-radius: 18px; padding: 8px 18px; font: 600 14px inherit; cursor: pointer; }
+  #notes { max-width: 760px; color: var(--sub); font-size: 13px; line-height: 1.6; padding: 0 20px 40px; }
+</style>
+</head>
+<body>
+<div id="dev">
+  <span>墙</span>
+  <select id="wallSel"><option value="wall-yellow">直壁（彩色点）</option><option value="wall-white">大斜板（白 / 紫）</option></select>
+  <label><input type="checkbox" id="reduce"> 减弱动态效果</label>
+  <button id="restart">从拍照重来</button>
+</div>
+<div id="phone">
+  <canvas id="scene"></canvas>
+  <div id="flash"></div>
+  <div id="top">
+    <button class="round glass" id="back" title="返回">‹</button>
+    <div id="title"></div>
+    <button class="chip glass" id="bodyChip" style="visibility:hidden">体型</button>
+  </div>
+  <div id="capsule" class="glass">
+    <button class="nav" id="prevGroup">‹</button>
+    <span class="sw"></span><span class="lab"></span>
+    <button class="more" id="similar">找相似</button>
+    <button class="nav" id="nextGroup">›</button>
+  </div>
+  <div id="hint"></div>
+  <button id="shutter" title="拍照"></button>
+  <button class="primary hidden" id="done">完成 · 开始模拟</button>
+  <div id="toast" class="glass"><span></span><button>撤销</button></div>
+  <div id="menu" class="glass"></div>
+  <div id="card" class="glass"><div class="k"></div><div class="v"></div><div class="s">点任意处继续</div></div>
+  <div id="simbar" class="hidden">
+    <div id="scrubrow">
+      <button id="play">▶</button>
+      <div id="scrub"><div class="track"></div><div class="fill"></div><div class="knob"></div></div>
+      <button id="export" class="glass">导出</button>
+    </div>
+    <div id="film"></div>
+  </div>
+  <div id="sheet" class="glass">
+    <h3>你的体型</h3>
+    <p>只用来画火柴人，不会用来判断你能不能爬。</p>
+    <div class="row"><label>身高</label><input type="range" id="hIn" min="145" max="200" value="170"><output id="hOut">170 cm</output></div>
+    <div class="row"><label>臂展</label><input type="range" id="aIn" min="140" max="210" value="170"><output id="aOut">170 cm</output></div>
+    <div class="row"><label>和墙比例</label><input type="range" id="kIn" min="60" max="160" value="100"><output id="kOut">100%</output></div>
+    <button class="primary" id="sheetGo">放到墙上</button>
+  </div>
+  <div id="vid"><video loop muted playsinline></video><button>关闭</button></div>
+</div>
+<div id="notes">
+  一次性原型（2026-10-03）。岩点轮廓由 SAM 2.1 Tiny 在 Mac 上预先算好（按颜色差异找候选点，约 3 秒一面墙），浏览器里只做渲染和交互。
+  点没有轮廓的地方会画圆圈（App 里会先在点击处单独抠形）。"和墙比例"是照片尺度的临时校准，App 里需要更好的办法。掉落定格用的是演示数据。
+</div>
+<script src="scene.js"></script>
+<script src="read.js"></script>
+<script src="sim.js"></script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+{
+  "experiment_date": "2026-10-03",
+  "audited_date": "2026-10-05",
+  "platform": "Mac; historical saved outputs, not rerun",
+  "limitations": [
+    "Candidate counts are not correct-hold counts or recall.",
+    "21/24 is contour-filter acceptance, not ground-truth accuracy.",
+    "0.76 IoU measures tap-jitter stability, not segmentation accuracy.",
+    "iPhone latency, memory and ground-truth quality remain unverified."
+  ],
+  "single_point_record": {
+    "tiny_accepted_contours": 21,
+    "total_taps": 24,
+    "tiny_tap_jitter_mean_iou": 0.76,
+    "circle_tap_jitter_mean_iou": 0.6,
+    "source": "../../docs/linewise_hold_segmentation_proposal_2026-09-13.md"
+  },
+  "whole_wall_saved_outputs": [
+    {
+      "wall": "white",
+      "strategy": "grid",
+      "seconds": 15.638471961021423,
+      "prompts": 1414,
+      "candidates": 74
+    },
+    {
+      "wall": "white",
+      "strategy": "hybrid",
+      "seconds": 7.658514976501465,
+      "prompts": 616,
+      "candidates": 64
+    },
+    {
+      "wall": "white",
+      "strategy": "saliency",
+      "seconds": 4.042722940444946,
+      "prompts": 191,
+      "candidates": 58
+    },
+    {
+      "wall": "yellow",
+      "strategy": "grid",
+      "seconds": 18.847302079200745,
+      "prompts": 1510,
+      "candidates": 71
+    },
+    {
+      "wall": "yellow",
+      "strategy": "hybrid",
+      "seconds": 8.24810802936554,
+      "prompts": 650,
+      "candidates": 65
+    },
+    {
+      "wall": "yellow",
+      "strategy": "saliency",
+      "seconds": 3.825837016105652,
+      "prompts": 186,
+      "candidates": 55
+    }
+  ]
+}

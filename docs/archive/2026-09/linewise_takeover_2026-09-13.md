@@ -4,7 +4,7 @@
 
 ## 当前范围
 
-产品以 [PRD v1.0](linewise_prd_v1_0.md) 和 [UI 规范](linewise_ui_spec_v1.md) 为准：iPhone、本地优先、按线组织，照片点亮 → 记录掉在哪 → 提醒与复盘 → 手动计划／实际顺序 → 分享。旧 `CONTEXT.md` 和 v0.1 的 GymVisit／Watch 叙述尚未同步，不能用它们覆盖 v1.0 已确定的产品形态。
+产品以 [PRD v1.0](../../linewise_prd_v1_0.md) 和 [UI 规范](../../linewise_ui_spec_v1.md) 为准：iPhone、本地优先、按线组织，照片点亮 → 记录掉在哪 → 提醒与复盘 → 手动计划／实际顺序 → 分享。旧 `CONTEXT.md` 和 v0.1 的 GymVisit／Watch 叙述尚未同步，不能用它们覆盖 v1.0 已确定的产品形态。
 
 本次收尾已有打磨，修复回归并建立可重复验收；搜索、识别、iCloud 和 Watch 等后续功能不在本次集成范围。
 
