@@ -4,6 +4,7 @@ import UIKit
 
 /// 建线流程里跨屏共享的草稿：照片、点、难度、墙区、角度。
 @Observable
+@MainActor
 final class BuilderModel {
     /// 已降采样（长边 ≤ 2048）的照片，直接给 `SpotlightImage` 用。
     private(set) var image: UIImage?
@@ -13,7 +14,9 @@ final class BuilderModel {
     /// 照片选定的时间；用于统计建线时长。
     private(set) var photoSelectedAt: Date?
 
-    var draft = LightUpDraft()
+    var draft = LightUpDraft() { didSet { resumeSegmentation() } }
+    let segmentation: HoldSegmentationSession
+    let modelManager: HoldModelManager
     var gradeText: String = ""
     var gradeSource: GradeSource?
     var areaName: String = ""
@@ -23,8 +26,10 @@ final class BuilderModel {
 
     @ObservationIgnored private var ocrTask: Task<Void, Never>?
 
-    init(areaName: String? = nil) {
+    init(areaName: String? = nil, segmenter: (any HoldPointSegmenting)? = nil, modelManager: HoldModelManager? = nil) {
         self.areaName = areaName ?? ""
+        self.segmentation = HoldSegmentationSession(segmenter: segmenter ?? SAMPointSegmenter())
+        self.modelManager = modelManager ?? .shared
     }
 
     var hasPhoto: Bool { image != nil }
@@ -52,6 +57,7 @@ final class BuilderModel {
         image = nil
         existingWall = nil
         photoSelectedAt = nil
+        segmentation.configure(image: nil)
         draft = LightUpDraft()
         if gradeSource == .ocr {
             gradeText = ""
@@ -65,8 +71,26 @@ final class BuilderModel {
         self.aspect = max(aspect, 0.05)
         self.existingWall = wall
         self.photoSelectedAt = .now
+        self.segmentation.configure(image: image?.cgImage)
         self.draft = LightUpDraft()
     }
+
+    func resumeSegmentation() {
+        guard modelManager.state == .ready, let directory = modelManager.directory else { return }
+        segmentation.submit(holds: draft.holds, directory: directory) { [weak self] expected, suggestion in
+            guard let self else { return false }
+            return self.draft.applyContour(suggestion.contour, anchor: suggestion.anchor,
+                                          version: suggestion.modelVersion, to: expected)
+        }
+    }
+
+    func retrySegmentation(id: UUID? = nil) {
+        segmentation.retry(id: id)
+        if let id { draft.preferCircle(id: id, false) }
+        resumeSegmentation()
+    }
+
+    func preferCircle(id: UUID) { draft.preferCircle(id: id, true) }
 
     // MARK: 难度
 

@@ -43,9 +43,9 @@ final class ShareDebugLauncher: NSObject {
 
     @MainActor
     private static func openStore() -> (ModelContainer, [Line])? {
-        let schema = Schema([Gym.self, Wall.self, Line.self, Session.self])
+        let schema = LineWisePersistence.schema
         let config = ModelConfiguration("LineWise", schema: schema, isStoredInMemoryOnly: false)
-        guard let container = try? ModelContainer(for: schema, configurations: [config]) else { return nil }
+        guard let container = try? ModelContainer(for: schema, migrationPlan: LineWiseMigrationPlan.self, configurations: [config]) else { return nil }
         let context = container.mainContext
         let d = FetchDescriptor<Line>(predicate: #Predicate { $0.deletedAt == nil && $0.mergedIntoLineID == nil },
                                       sortBy: [SortDescriptor(\.createdAt)])

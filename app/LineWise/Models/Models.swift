@@ -32,6 +32,8 @@ final class Wall {
     var angleRaw: String
     var shotAt: Date
     var resetAt: Date?
+    /// Model revision used for accepted hold contours; nil for legacy/manual walls.
+    var segmentationVersion: String?
     @Relationship(deleteRule: .cascade, inverse: \Line.wall) var lines: [Line]
 
     init(id: UUID = UUID(), gym: Gym?, photoFileName: String?, imageWidth: Int, imageHeight: Int,

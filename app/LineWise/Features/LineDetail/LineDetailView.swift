@@ -24,6 +24,8 @@ struct LineDetailView: View {
     @State private var titleCollapsed = false
     /// +1 / 今天 N 次 的跳动触发器。
     @State private var plusBump = 0
+    @State private var contourUpgrade = LineContourUpgrade()
+    @State private var holdModels = HoldModelManager.shared
 
     private static let scrollSpace = "lineDetailScroll"
     /// 取景：线的包围盒向外扩 30%，最小占图 50%；底部再留一段给叠在图上的标题。
@@ -78,6 +80,9 @@ struct LineDetailView: View {
                             recordPanel.id("record")
                             coachPanel.id("coach")
                             SequencePanel(line: line).id("sequence")
+                            if line.hasPhoto && line.holds.contains(where: { $0.contour == nil && !$0.prefersCircle }) {
+                                contourPanel
+                            }
                             historyPanel.id("history")
                             morePanel.id("more")
                         }
@@ -105,6 +110,7 @@ struct LineDetailView: View {
             ToolbarItem(placement: .topBarTrailing) { moreMenu }
         }
         .swipeBackEnabled()
+        .onDisappear { contourUpgrade.cancel() }
         .fullScreenCover(isPresented: $showViewer) {
             FullscreenSpotlightViewer(line: line, fallMarks: fallMarks, onClose: closeViewer)
                 .presentationBackground(.clear)
@@ -158,12 +164,51 @@ struct LineDetailView: View {
 
     // MARK: 头图
 
+    private var contourPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if holdModels.state == .ready {
+                HStack {
+                    Text("把圆圈换成岩点轮廓").font(.subheadline.weight(.medium))
+                    Spacer()
+                    Button(contourUpgrade.isRunning ? "停止" : "转换") {
+                        if contourUpgrade.isRunning { contourUpgrade.cancel() }
+                        else if let directory = holdModels.directory {
+                            contourUpgrade.start(line: line, directory: directory, store: store, undoCenter: undoCenter)
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold)).tint(.accent)
+                    .accessibilityIdentifier("line-contour-upgrade")
+                }
+                if contourUpgrade.loadingPhoto {
+                    ProgressView("正在读取照片").font(.caption)
+                } else if contourUpgrade.photoUnavailable {
+                    Text("照片暂时无法读取，圆圈已保留").font(.caption).foregroundStyle(Color.subtle)
+                } else if contourUpgrade.segmentation.phase == .idle {
+                    Text(contourUpgrade.convertedCount > 0 ? "已转换 \(contourUpgrade.convertedCount) 个点，未识别的点保留圆圈" : "记录和顺序保留；转换后可以撤销")
+                        .font(.caption).foregroundStyle(Color.subtle)
+                } else {
+                    HoldModelControls(manager: holdModels, phase: contourUpgrade.segmentation.phase) {
+                        if let directory = holdModels.directory {
+                            contourUpgrade.start(line: line, directory: directory, store: store, undoCenter: undoCenter)
+                        }
+                    }
+                }
+            } else {
+                HoldModelControls(manager: holdModels)
+            }
+        }
+        .padding(14)
+        .background(Color.panel, in: RoundedRectangle(cornerRadius: 16))
+    }
+
     /// - stretch: 下拉时的额外高度（已加进 `height`）
     /// - collapse: 上滑时已经滚出去的距离
     private func hero(height: CGFloat, collapse: CGFloat) -> some View {
         let progress = min(1, max(0, collapse / max(1, height * 0.75)))
         return ZStack(alignment: .bottomLeading) {
-            LineSpotlight(line: line, fill: false, maxPixel: 1600, showNumbers: true, fallMarks: fallMarks, focus: heroFocus)
+            LineSpotlight(line: line, fill: false, maxPixel: 1600, showNumbers: true, fallMarks: fallMarks, focus: heroFocus,
+                          transitionHoldID: contourUpgrade.segmentation.transitionHoldID,
+                          contourTransition: contourUpgrade.segmentation.contourTransition)
                 .saturation(line.status == .gone ? 0.6 : 1)
                 .overlay {
                     if !line.hasPhoto { noPhotoPlaceholder }

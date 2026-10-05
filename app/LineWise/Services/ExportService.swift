@@ -26,6 +26,7 @@ enum ExportService {
         var angle: String
         var shotAt: Date
         var resetAt: Date?
+        var segmentationVersion: String?
         var lines: [LineDTO]
     }
 
@@ -64,6 +65,7 @@ enum ExportService {
         var reason: String?
         var note: String?
         var check: String?
+        var reminderSnapshot: String?
         var source: String
         var cycle: Int
         var createdAt: Date
@@ -76,12 +78,13 @@ enum ExportService {
         return Bundle(
             exportedAt: .now,
             appVersion: version,
-            schemaVersion: 1,
+            schemaVersion: 2,
             gyms: gyms.map { gym in
                 GymDTO(id: gym.id, name: gym.name, createdAt: gym.createdAt, walls: gym.walls.map { wall in
                     WallDTO(
                         id: wall.id, photoFileName: wall.photoFileName, imageWidth: wall.imageWidth, imageHeight: wall.imageHeight,
                         areaName: wall.areaName, angle: wall.angleRaw, shotAt: wall.shotAt, resetAt: wall.resetAt,
+                        segmentationVersion: wall.segmentationVersion,
                         lines: wall.lines.map { line in
                             LineDTO(
                                 id: line.id, name: line.name, holds: line.holds, startHoldIDs: line.startHoldIDs,
@@ -95,7 +98,7 @@ enum ExportService {
                                     SessionDTO(
                                         id: s.id, date: s.date, attemptCount: s.attemptCount, sent: s.sent,
                                         fallHoldID: s.fallHoldID, fallStepIndex: s.fallStepIndex, fallText: s.fallText, reason: s.reasonRaw,
-                                        note: s.note, check: s.checkRaw, source: s.sourceRaw, cycle: s.cycle,
+                                        note: s.note, check: s.checkRaw, reminderSnapshot: s.reminderSnapshot, source: s.sourceRaw, cycle: s.cycle,
                                         createdAt: s.createdAt, updatedAt: s.updatedAt, attempts: s.attempts
                                     )
                                 }

@@ -2,6 +2,24 @@ import XCTest
 
 final class CoreFlowTests: XCTestCase {
     @MainActor
+    func testPhotoLineCanSaveBeforeModelDownload() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting", "-seedDemo", "-openBuilder", "-builderDemo"]
+        app.launch()
+        XCTAssertTrue(app.buttons["hold-model-download"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["已点 6 个"].exists)
+        XCTAssertTrue(app.buttons["完成"].isEnabled)
+        let initial = XCTAttachment(screenshot: app.screenshot())
+        initial.name = "manual-circles-before-model-download"
+        initial.lifetime = .keepAlways
+        add(initial)
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.buttons["记这一次"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["hold-model-download"].exists)
+    }
+
+    @MainActor
     func testNoPhotoRecordKeepsFallLocation() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

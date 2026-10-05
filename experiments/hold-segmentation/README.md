@@ -51,4 +51,6 @@ Open `http://127.0.0.1:8765`. This preview loads saved segmentation JSON; its sc
 
 ## Evidence boundary
 
+The current App inference core has a separate [native check](../../docs/demo-a-implementation.md#验证): `bash native-check.sh <private-cases.json> <Tiny-models-directory>`. It compiles the App's actual domain and inference sources, validates bounded contours and emits aggregate Mac timings. It needs private inputs and weights; no network download occurs. The current iOS Simulator decoder limitation is documented with the Demo A evidence.
+
 The saved metrics are Mac observations from two compressed wall photos, not an iPhone acceptance test. 21/24 counts contours that survived click/area filtering; jitter IoU compares perturbed clicks, not manual ground truth. Whole-wall counts are candidates, not validated holds. For the current delivery gate use [Demo A](../../docs/roadmap.md).

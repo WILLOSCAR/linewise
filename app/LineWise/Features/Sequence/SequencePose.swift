@@ -94,8 +94,8 @@ enum SequenceHitTesting {
     static func nearestSnapHold(to limbView: CGPoint, holds: [Hold], geo: SpotlightGeometry, minThreshold: CGFloat) -> Hold? {
         var nearest: (hold: Hold, distance: CGFloat)?
         for hold in holds {
-            let c = geo.point(hold)
-            let d = hypot(c.x - limbView.x, c.y - limbView.y)
+            let c = geo.contactPoint(hold)
+            let d = hold.contour == nil ? hypot(c.x - limbView.x, c.y - limbView.y) : geo.distance(to: hold, from: limbView)
             guard d <= max(geo.radius(hold) * 2, minThreshold) else { continue }
             if nearest == nil || d < nearest!.distance { nearest = (hold, d) }
         }
@@ -106,7 +106,7 @@ enum SequenceHitTesting {
 extension SpotlightGeometry {
     /// 不依赖实例的 `toIso`：把归一化点转到等比空间（y ∈ 0…1，x ∈ 0…aspect）。
     static func isoPoint(of hold: Hold, aspect: Double) -> CGPoint {
-        CGPoint(x: hold.x * aspect, y: hold.y)
+        CGPoint(x: hold.contactPoint.x * aspect, y: hold.contactPoint.y)
     }
 
     /// 视图坐标 → 等比空间（不裁掉越界，调用方自行夹取）。

@@ -50,9 +50,9 @@ final class SequenceDebugLauncher: NSObject {
               var top = window.rootViewController else { return false }
         while let presented = top.presentedViewController { top = presented }
 
-        let schema = Schema([Gym.self, Wall.self, Line.self, Session.self])
+        let schema = LineWisePersistence.schema
         let config = ModelConfiguration("LineWise", schema: schema, isStoredInMemoryOnly: false)
-        guard let container = try? ModelContainer(for: schema, configurations: [config]) else { return false }
+        guard let container = try? ModelContainer(for: schema, migrationPlan: LineWiseMigrationPlan.self, configurations: [config]) else { return false }
         let context = container.mainContext
         let lines = (try? context.fetch(FetchDescriptor<Line>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
         let args = CommandLine.arguments

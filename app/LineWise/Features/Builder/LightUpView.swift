@@ -36,7 +36,8 @@ struct LightUpView: View {
         .inkBackground()
         .sheet(isPresented: $showGradeSheet) { GradeSheet(model: model) }
         .sheet(isPresented: $showAreaSheet) { AreaSheet(model: model, suggestions: areaSuggestions) }
-        .onDisappear { longPressTask?.cancel() }
+        .task(id: model.modelManager.state == .ready) { model.resumeSegmentation() }
+        .onDisappear { longPressTask?.cancel(); model.segmentation.cancel() }
     }
 
     // MARK: 顶栏
@@ -74,7 +75,9 @@ struct LightUpView: View {
                     finishHoldID: model.draft.finishHoldID,
                     highlightedHoldID: menuHoldID,
                     fill: false,
-                    showNumbers: true
+                    showNumbers: true,
+                    transitionHoldID: model.segmentation.transitionHoldID,
+                    contourTransition: model.segmentation.contourTransition
                 )
                 .scaleEffect(transform.scale, anchor: .center)
                 .offset(transform.offset)
@@ -117,6 +120,9 @@ struct LightUpView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 12) {
+            HoldModelControls(manager: model.modelManager, phase: model.segmentation.phase,
+                              onRetry: { model.retrySegmentation() })
+                .padding(.horizontal, 16)
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
                     MetaChip(
@@ -220,6 +226,9 @@ struct LightUpView: View {
                         menuHoldID = nil
                     }
                 },
+                canSegment: model.modelManager.state == .ready,
+                onUseCircle: { model.preferCircle(id: id) },
+                onSegment: { model.retrySegmentation(id: id) },
                 onClose: { withAnimation(.snappy) { menuHoldID = nil } }
             )
             .padding(.horizontal, 12)
@@ -352,6 +361,9 @@ struct HoldMenuCard: View {
     var onToggleFinish: () -> Void
     var onRadius: (Double) -> Void
     var onDelete: () -> Void
+    var canSegment: Bool = false
+    var onUseCircle: () -> Void = {}
+    var onSegment: () -> Void = {}
     var onClose: () -> Void
 
     var body: some View {
@@ -378,6 +390,15 @@ struct HoldMenuCard: View {
                 Chip(title: isStart ? "取消起步" : "设为起步", selected: isStart, systemImage: "circle.circle", action: onToggleStart)
                 Chip(title: isFinish ? "取消结束" : "设为结束", selected: isFinish, systemImage: "flag.fill", action: onToggleFinish)
                 Spacer(minLength: 0)
+            }
+            if hold.contour != nil || canSegment {
+                HStack(spacing: 8) {
+                    Chip(title: "改用圆圈", selected: hold.prefersCircle, systemImage: "circle", action: onUseCircle)
+                    if canSegment {
+                        Chip(title: "抠这个点", selected: false, systemImage: "sparkles", action: onSegment)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
             HStack(spacing: 8) {
                 Text("半径").font(.footnote).foregroundStyle(Color.subtle)

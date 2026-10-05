@@ -7,16 +7,49 @@ struct Hold: Codable, Hashable, Identifiable, Sendable {
     var x: Double
     var y: Double
     var r: Double
+    var polygon: [NormalizedPoint]?
+    var anchor: NormalizedPoint?
+    var segmentationVersion: String?
+    var prefersCircle: Bool
 
     static let defaultRadius: Double = 0.04
     static let minRadius: Double = 0.02
     static let maxRadius: Double = 0.09
 
-    init(id: UUID = UUID(), x: Double, y: Double, r: Double = Hold.defaultRadius) {
+    init(id: UUID = UUID(), x: Double, y: Double, r: Double = Hold.defaultRadius,
+         polygon: [NormalizedPoint]? = nil, anchor: NormalizedPoint? = nil, segmentationVersion: String? = nil,
+         prefersCircle: Bool = false) {
         self.id = id
         self.x = min(max(x, 0), 1)
         self.y = min(max(y, 0), 1)
         self.r = min(max(r, Hold.minRadius), Hold.maxRadius)
+        self.polygon = HoldContour(points: polygon ?? [])?.points
+        self.anchor = anchor
+        self.segmentationVersion = self.polygon == nil ? nil : segmentationVersion
+        self.prefersCircle = prefersCircle
+    }
+
+    var contour: HoldContour? { polygon.flatMap { HoldContour(points: $0) } }
+
+    /// Hand/foot contact is independent of the contour's centre and the original tap.
+    var contactPoint: NormalizedPoint {
+        guard let contour else { return .init(x: x, y: y) }
+        if let anchor, contour.contains(anchor) { return anchor }
+        return contour.closestPoint(to: .init(x: x, y: y))
+    }
+
+    mutating func clearContour() { polygon = nil; anchor = nil; segmentationVersion = nil }
+
+    private enum CodingKeys: String, CodingKey { case id, x, y, r, polygon, anchor, segmentationVersion, prefersCircle }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id), x: try c.decode(Double.self, forKey: .x),
+                  y: try c.decode(Double.self, forKey: .y), r: try c.decode(Double.self, forKey: .r),
+                  polygon: try? c.decodeIfPresent([NormalizedPoint].self, forKey: .polygon),
+                  anchor: try? c.decodeIfPresent(NormalizedPoint.self, forKey: .anchor),
+                  segmentationVersion: try? c.decodeIfPresent(String.self, forKey: .segmentationVersion),
+                  prefersCircle: (try? c.decodeIfPresent(Bool.self, forKey: .prefersCircle)) ?? false)
     }
 }
 

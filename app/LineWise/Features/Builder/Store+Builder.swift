@@ -18,6 +18,7 @@ extension Store {
     }
 
     /// 把建线草稿写进库：需要时新建 Wall，再建 Line。
+    @MainActor
     func commitBuild(_ model: BuilderModel, gym: Gym, name: String? = nil) throws -> Line {
         let area = model.areaName.trimmingCharacters(in: .whitespaces)
         let wall: Wall
@@ -29,6 +30,7 @@ extension Store {
         } else {
             wall = try createWall(gym: gym, image: model.image, areaName: area.isEmpty ? nil : area, angle: model.angle)
         }
+        if let version = model.draft.holds.compactMap(\.segmentationVersion).first { wall.segmentationVersion = version }
         let grade = model.gradeText.trimmingCharacters(in: .whitespaces)
         return createLine(
             wall: wall,

@@ -14,6 +14,8 @@ struct LineSpotlight: View {
     /// 归一化关注区域（放大局部）；nil 为整图。
     var focus: CGRect? = nil
     var ringWidth: CGFloat = 2
+    var transitionHoldID: UUID?
+    var contourTransition: Double = 1
 
     @State private var image: UIImage?
 
@@ -34,7 +36,9 @@ struct LineSpotlight: View {
             dim: dim,
             reveal: reveal,
             ringWidth: ringWidth,
-            focus: focus
+            focus: focus,
+            transitionHoldID: transitionHoldID,
+            contourTransition: contourTransition
         )
         .task(id: "\(line.wall?.photoFileName ?? "")#\(maxPixel)") {
             guard let name = line.wall?.photoFileName else { image = nil; return }

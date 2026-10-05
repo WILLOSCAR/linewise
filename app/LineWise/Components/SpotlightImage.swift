@@ -36,8 +36,14 @@ struct SpotlightGeometry {
         guard let first = holds.first else { return nil }
         var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
         for h in holds {
-            minX = min(minX, h.x - h.r); maxX = max(maxX, h.x + h.r)
-            minY = min(minY, h.y - h.r); maxY = max(maxY, h.y + h.r)
+            if let contour = h.contour {
+                let b = contour.bounds
+                minX = min(minX, b.minX); maxX = max(maxX, b.maxX)
+                minY = min(minY, b.minY); maxY = max(maxY, b.maxY)
+            } else {
+                minX = min(minX, h.x - h.r); maxX = max(maxX, h.x + h.r)
+                minY = min(minY, h.y - h.r); maxY = max(maxY, h.y + h.r)
+            }
         }
         var w = maxX - minX
         var h = maxY - minY
@@ -65,6 +71,46 @@ struct SpotlightGeometry {
 
     func radius(_ hold: Hold) -> CGFloat { hold.r * shortSide }
 
+    func contactPoint(_ hold: Hold) -> CGPoint { point(hold.contactPoint.x, hold.contactPoint.y) }
+
+    func outline(_ hold: Hold, pop: CGFloat = 1, padding: CGFloat = 0) -> Path {
+        guard let contour = hold.contour else {
+            let c = point(hold), r = radius(hold) * pop + padding
+            return Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
+        let b = bounds(hold), c = CGPoint(x: b.midX, y: b.midY)
+        let sx = pop + 2 * padding / max(b.width, 1), sy = pop + 2 * padding / max(b.height, 1)
+        var path = Path()
+        for (i, p) in contour.points.enumerated() {
+            let v = point(p.x, p.y), expanded = CGPoint(x: c.x + (v.x - c.x) * sx, y: c.y + (v.y - c.y) * sy)
+            if i == 0 { path.move(to: expanded) } else { path.addLine(to: expanded) }
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    func bounds(_ hold: Hold) -> CGRect {
+        if let contour = hold.contour {
+            let b = contour.bounds, a = point(b.minX, b.minY), z = point(b.maxX, b.maxY)
+            return CGRect(x: a.x, y: a.y, width: z.x - a.x, height: z.y - a.y)
+        }
+        let c = point(hold), r = radius(hold)
+        return CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
+    }
+
+    /// Distance to the visible shape; long contours stay tappable away from their centre.
+    func distance(to hold: Hold, from p: CGPoint) -> CGFloat {
+        guard let contour = hold.contour else { return max(0, hypot(point(hold).x - p.x, point(hold).y - p.y) - radius(hold)) }
+        if outline(hold).contains(p) { return 0 }
+        let vertices = contour.points.map { point($0.x, $0.y) }
+        return vertices.indices.map { i in
+            let a = vertices[i], b = vertices[(i + 1) % vertices.count]
+            let dx = b.x - a.x, dy = b.y - a.y, length = dx * dx + dy * dy
+            let t = length > 0 ? min(1, max(0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length)) : 0
+            return hypot(p.x - a.x - dx * t, p.y - a.y - dy * t)
+        }.min() ?? .infinity
+    }
+
     func normalized(_ p: CGPoint) -> CGPoint? {
         guard rect.width > 0, rect.height > 0 else { return nil }
         let x = (p.x - rect.minX) / rect.width
@@ -78,7 +124,7 @@ struct SpotlightGeometry {
         for h in holds {
             let c = point(h)
             let d = hypot(c.x - p.x, c.y - p.y)
-            if d <= radius(h) + slop, best == nil || d < best!.1 { best = (h, d) }
+            if distance(to: h, from: p) <= slop, best == nil || d < best!.1 { best = (h, d) }
         }
         return best?.0
     }
@@ -89,7 +135,7 @@ struct SpotlightGeometry {
     }
 
     func toIso(_ hold: Hold, aspect: Double) -> CGPoint {
-        CGPoint(x: hold.x * aspect, y: hold.y)
+        CGPoint(x: hold.contactPoint.x * aspect, y: hold.contactPoint.y)
     }
 }
 
@@ -101,7 +147,7 @@ struct FallMark: Hashable {
 }
 
 /// 聚光灯图：暗墙 + 亮点。所有屏幕共用。
-struct SpotlightImage: View {
+struct SpotlightImage: View, Animatable {
     var image: UIImage?
     var aspect: Double
     var holds: [Hold]
@@ -125,6 +171,14 @@ struct SpotlightImage: View {
     /// 拖动肢体时突出吸附目标，其余点略暗；集中在同一个 Canvas 绘制。
     var dragEmphasis: CGFloat = 0
 
+    /// Only the newly accepted hold crossfades from its immediate circle feedback.
+    var transitionHoldID: UUID?
+    var contourTransition: Double = 1
+    var animatableData: Double {
+        get { contourTransition }
+        set { contourTransition = newValue }
+    }
+
     private static let coral = Color(red: 1.0, green: 0.45, blue: 0.38)
 
     var body: some View {
@@ -136,13 +190,18 @@ struct SpotlightImage: View {
             let bandY = geo.rect.maxY - geo.rect.height * reveal
             let revealed = holds.filter { reveal >= 1 || geo.point($0).y >= bandY }
 
-            // 蒙版（挖掉已亮起的点）
-            var mask = Path(CGRect(origin: .zero, size: size))
+            // Reveal each clipped shape over a dark wall. Overlapping holds stay bright.
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(Color(red: 0.02, green: 0.02, blue: 0.04).opacity(dim)))
             for h in revealed {
-                let r = geo.radius(h) * popScale(for: h, geo: geo, bandY: bandY)
-                mask.addEllipse(in: circleRect(geo.point(h), r))
+                for (shape, alpha) in shapes(for: h, geo: geo, bandY: bandY) where alpha > 0 {
+                    ctx.drawLayer { layer in
+                        layer.opacity = alpha
+                        layer.clip(to: shape)
+                        drawBase(ctx: &layer, geo: geo, size: size)
+                    }
+                }
             }
-            ctx.fill(mask, with: .color(Color(red: 0.02, green: 0.02, blue: 0.04).opacity(dim)), style: FillStyle(eoFill: true))
 
             // 暗角：视线落到亮点上
             if image != nil {
@@ -155,27 +214,24 @@ struct SpotlightImage: View {
                 ctx.fill(Path(geo.rect), with: .radialGradient(vignette, center: center, startRadius: 0, endRadius: radius))
             }
 
-            // 光晕：每个亮点是一个光源
+            // The glow follows the same polygon used by the mask and sharp outline.
             for h in revealed {
-                let c = geo.point(h)
-                let r = geo.radius(h) * popScale(for: h, geo: geo, bandY: bandY)
-                let glow = Gradient(stops: [
-                    .init(color: .accent.opacity(0.30), location: 0),
-                    .init(color: .accent.opacity(0.10), location: 0.45),
-                    .init(color: .accent.opacity(0), location: 1),
-                ])
-                ctx.fill(Path(ellipseIn: circleRect(c, r * 2.2)),
-                         with: .radialGradient(glow, center: c, startRadius: r * 0.95, endRadius: r * 2.2))
+                for (shape, alpha) in shapes(for: h, geo: geo, bandY: bandY) where alpha > 0 {
+                    ctx.drawLayer { layer in
+                        layer.opacity = alpha
+                        layer.addFilter(.blur(radius: 5 * scale))
+                        layer.stroke(shape, with: .color(.accent.opacity(0.30)), lineWidth: 9 * scale)
+                    }
+                }
             }
 
             if dragEmphasis > 0 {
                 for h in revealed {
-                    let c = geo.point(h)
                     if h.id == highlightedHoldID {
-                        ctx.stroke(Path(ellipseIn: circleRect(c, geo.radius(h) + ringWidth + 12)),
+                        ctx.stroke(geo.outline(h, padding: ringWidth + 12),
                                    with: .color(.white.opacity(0.35 * dragEmphasis)), lineWidth: 6)
                     } else {
-                        ctx.fill(Path(ellipseIn: circleRect(c, geo.radius(h) + ringWidth * 3)),
+                        ctx.fill(geo.outline(h, padding: ringWidth * 3),
                                  with: .color(.black.opacity(0.30 * dragEmphasis)))
                     }
                 }
@@ -186,34 +242,36 @@ struct SpotlightImage: View {
                 drawBand(ctx: &ctx, geo: geo, y: bandY)
             }
 
-            // 亮点描边、编号、起步、结束
+            // Outlines and markers use the same contour across all feature screens.
             for h in revealed {
-                let c = geo.point(h)
-                let scale = popScale(for: h, geo: geo, bandY: bandY)
-                let r = geo.radius(h) * scale
+                let pop = popScale(for: h, geo: geo, bandY: bandY)
                 let isHighlighted = highlightedHoldID == h.id
-                // 双层描边：外软内锐
-                ctx.stroke(Path(ellipseIn: circleRect(c, r + ringWidth * 1.4)), with: .color(.accent.opacity(0.45)), lineWidth: ringWidth * 2)
-                ctx.stroke(Path(ellipseIn: circleRect(c, r + ringWidth / 2)), with: .color(isHighlighted ? .white : .accent), lineWidth: isHighlighted ? ringWidth + 1 : ringWidth * 0.75)
-                // 刚被扫过：闪一下
+                for (shape, alpha) in shapes(for: h, geo: geo, bandY: bandY) where alpha > 0 {
+                    var layer = ctx
+                    layer.opacity = alpha
+                    layer.stroke(shape, with: .color(.accent.opacity(0.45)), lineWidth: ringWidth * 2)
+                    layer.stroke(shape, with: .color(isHighlighted ? .white : .accent),
+                                 lineWidth: isHighlighted ? ringWidth + 1 : ringWidth * 0.75)
+                }
                 let flash = flashAlpha(for: h, geo: geo, bandY: bandY)
                 if flash > 0 {
-                    ctx.stroke(Path(ellipseIn: circleRect(c, r + ringWidth * 3)), with: .color(.white.opacity(0.6 * flash)), lineWidth: 2 * scale)
+                    ctx.stroke(geo.outline(h, pop: pop, padding: ringWidth * 3),
+                               with: .color(.white.opacity(0.6 * flash)), lineWidth: 2 * scale)
                 }
-                if isHighlighted {
-                    ctx.stroke(Path(ellipseIn: circleRect(c, r + ringWidth + 6 * scale)), with: .color(.white.opacity(0.9)), lineWidth: 1.5 * scale)
+                if isHighlighted || startHoldIDs.contains(h.id) {
+                    ctx.stroke(geo.outline(h, pop: pop, padding: ringWidth + 5 * scale),
+                               with: .color(isHighlighted ? .white.opacity(0.9) : .accent.opacity(0.95)), lineWidth: 1.5 * scale)
                 }
-                if startHoldIDs.contains(h.id) {
-                    ctx.stroke(Path(ellipseIn: circleRect(c, r + ringWidth + 6 * scale)), with: .color(.accent.opacity(0.95)), lineWidth: 1.5 * scale)
-                }
+                let bounds = geo.bounds(h)
                 if finishHoldID == h.id {
-                    drawFlag(ctx: &ctx, at: CGPoint(x: c.x, y: c.y - r - ringWidth - 4 * scale), height: max(12 * scale, r * 0.7))
+                    drawFlag(ctx: &ctx, at: CGPoint(x: bounds.midX, y: bounds.minY - ringWidth - 4 * scale),
+                             height: max(12 * scale, min(bounds.width, bounds.height) * 0.35))
                 }
                 if showNumbers, let n = numbers[h.id] {
                     let label = Text(HoldLabel.circled(n))
                         .font(.system(size: max(11, min(16, geo.shortSide * 0.045 / scale)) * scale, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
-                    let pos = CGPoint(x: c.x + r * 0.72 + 6 * scale, y: c.y - r * 0.72 - 6 * scale)
+                    let pos = CGPoint(x: bounds.maxX + 3 * scale, y: bounds.minY - 3 * scale)
                     ctx.drawLayer { layer in
                         layer.addFilter(.shadow(color: .black.opacity(0.9), radius: 2 * scale))
                         layer.draw(label, at: pos)
@@ -224,9 +282,8 @@ struct SpotlightImage: View {
             // 掉落标记
             for mark in fallMarks {
                 guard let h = holds.first(where: { $0.id == mark.holdID }), revealed.contains(h) else { continue }
-                let c = geo.point(h)
-                let r = geo.radius(h)
-                let p = CGPoint(x: c.x + r * 0.75, y: c.y + r * 0.75)
+                let b = geo.bounds(h)
+                let p = CGPoint(x: b.maxX, y: b.maxY)
                 let dotR: CGFloat = (mark.count > 1 ? 8 : 5.5) * scale
                 let alpha = 0.45 + 0.55 * mark.recency
                 ctx.fill(Path(ellipseIn: circleRect(p, dotR)), with: .color(Self.coral.opacity(alpha)))
@@ -241,6 +298,17 @@ struct SpotlightImage: View {
                 drawFigure(ctx: &ctx, pose: pose, geo: geo)
             }
         }
+    }
+
+    private func shapes(for hold: Hold, geo: SpotlightGeometry, bandY: CGFloat) -> [(Path, Double)] {
+        let pop = popScale(for: hold, geo: geo, bandY: bandY)
+        guard hold.contour != nil, hold.id == transitionHoldID, contourTransition < 1 else {
+            return [(geo.outline(hold, pop: pop), 1)]
+        }
+        var circle = hold
+        circle.clearContour()
+        let mix = min(1, max(0, contourTransition))
+        return [(geo.outline(circle, pop: pop), 1 - mix), (geo.outline(hold, pop: pop), mix)]
     }
 
     // MARK: 绘制细节

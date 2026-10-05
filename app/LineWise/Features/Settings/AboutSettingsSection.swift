@@ -22,12 +22,15 @@ struct AboutSettingsSection: View {
                 Label("隐私", systemImage: "lock.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
-                Text("全部数据只保存在这台手机上：不请求定位，不请求相册全量访问，不上传任何内容。分享图和导出文件都由你自己发出。")
+                Text("照片和攀爬记录只保存在这台手机上：不请求定位，不请求相册全量访问，不上传照片或记录。首次抠形会下载模型；分享图和导出文件都由你自己发出。")
                     .font(.footnote)
                     .foregroundStyle(Color.subtle)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
+            Link("岩点模型 · Apple SAM 2.1 Tiny · Apache 2.0", destination: URL(string: "https://huggingface.co/apple/coreml-sam2.1-tiny")!)
+                .font(.footnote)
+                .foregroundStyle(Color.accent)
             VStack(alignment: .leading, spacing: 8) {
                 Text("不做的事")
                     .font(.subheadline.weight(.semibold))

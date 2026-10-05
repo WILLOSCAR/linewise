@@ -690,9 +690,17 @@ struct ExportBundleTests {
         let s2 = f.store.newSession(for: line, date: .now)
         s2.sent = true
         s2.check = .worked
+        s2.reminderSnapshot = line.reminderText
         f.store.commitSession(s2, line: line, fallLabel: nil)
         line.actualSequence = ClimbSequence(steps: [SequenceStep(limb: .leftHand, holdID: ordered[1].id)])
         line.feltGrade = .hard
+        wall.segmentationVersion = "fixture"
+        var outlined = line.holds
+        outlined[0].polygon = [.init(x: 0.25, y: 0.85), .init(x: 0.35, y: 0.85),
+                               .init(x: 0.35, y: 0.95), .init(x: 0.25, y: 0.95)]
+        outlined[0].anchor = .init(x: 0.3, y: 0.9)
+        outlined[0].segmentationVersion = "fixture"
+        line.holds = outlined
         f.store.save()
 
         let bundle = ExportService.makeBundle(gyms: f.store.gyms())
@@ -704,7 +712,7 @@ struct ExportBundleTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(ExportService.Bundle.self, from: data)
 
-        #expect(decoded.schemaVersion == 1)
+        #expect(decoded.schemaVersion == 2)
         #expect(decoded.gyms.count == 2)
         let g = try #require(decoded.gyms.first { $0.id == gym.id })
         #expect(g.name == gym.name)
@@ -713,6 +721,7 @@ struct ExportBundleTests {
         #expect(w.id == wall.id)
         #expect(w.areaName == "斜板墙")
         #expect(w.angle == WallAngle.slab.rawValue)
+        #expect(w.segmentationVersion == "fixture")
         #expect(w.photoFileName == nil)
         #expect(w.lines.count == 1)
         let l = try #require(w.lines.first)
@@ -743,6 +752,8 @@ struct ExportBundleTests {
         let d2 = l.sessions[1]
         #expect(d2.sent)
         #expect(d2.check == "worked")
+        #expect(d2.reminderSnapshot == s2.reminderSnapshot)
+        #expect(d2.reminderSnapshot == "掉在 ② · 脚 · 脚先踩高")
 
         let g2 = try #require(decoded.gyms.first { $0.id == other.id })
         #expect(g2.walls.first?.lines.first?.id == line2.id)

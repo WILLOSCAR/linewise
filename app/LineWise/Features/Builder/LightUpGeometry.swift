@@ -108,8 +108,8 @@ enum LightUpGeometry {
         for h in holds {
             let c = geo.point(h)
             let onScreen = hypot(c.x - local.x, c.y - local.y) * s
-            let reach = max(minHitRadius, geo.radius(h) * s + slop)
-            if onScreen <= reach, best == nil || onScreen < best!.1 { best = (h, onScreen) }
+            let insideReach = onScreen <= minHitRadius || geo.distance(to: h, from: local) * s <= slop
+            if insideReach, best == nil || onScreen < best!.1 { best = (h, onScreen) }
         }
         return best?.0
     }
@@ -335,6 +335,8 @@ struct LightUpDraft: Equatable {
     mutating func setRadius(id: UUID, r: Double) {
         guard let i = holds.firstIndex(where: { $0.id == id }) else { return }
         holds[i].r = min(max(r, Hold.minRadius), Hold.maxRadius)
+        holds[i].clearContour()
+        holds[i].prefersCircle = true
     }
 
     /// 调大 / 调小一档（×1.25 / ÷1.25），夹在允许范围内。
@@ -360,7 +362,25 @@ struct LightUpDraft: Equatable {
         guard let i = holds.firstIndex(where: { $0.id == id }) else { return }
         holds[i].x = min(max(x, 0), 1)
         holds[i].y = min(max(y, 0), 1)
+        holds[i].clearContour()
         recomputeDefaults()
+    }
+
+    /// An asynchronous suggestion only applies to the unchanged tap it was requested for.
+    @discardableResult
+    mutating func applyContour(_ contour: HoldContour, anchor: NormalizedPoint?, version: String, to expected: Hold) -> Bool {
+        guard let i = holds.firstIndex(where: { $0.id == expected.id }), holds[i] == expected,
+              !holds[i].prefersCircle else { return false }
+        holds[i].polygon = contour.points
+        holds[i].anchor = anchor
+        holds[i].segmentationVersion = version
+        return true
+    }
+
+    mutating func preferCircle(id: UUID, _ preferred: Bool) {
+        guard let i = holds.firstIndex(where: { $0.id == id }) else { return }
+        holds[i].clearContour()
+        holds[i].prefersCircle = preferred
     }
 
     /// 按归一化增量挪动。

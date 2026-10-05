@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct LineWiseApp: App {
-    private let container: ModelContainer
+    @State private var container: ModelContainer?
     @State private var undoCenter = UndoCenter()
     @State private var appState = AppState()
 
@@ -22,26 +22,31 @@ struct LineWiseApp: App {
         if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         }
-        let schema = Schema([Gym.self, Wall.self, Line.self, Session.self])
-        let config = ModelConfiguration("LineWise", schema: schema, isStoredInMemoryOnly: uiTesting)
-        do {
-            container = try ModelContainer(for: schema, configurations: [config])
-        } catch {
-            // 数据库无法打开时退回内存库，至少保证 App 能启动；导出/删除可在设置里处理。
-            let fallback = ModelConfiguration("LineWise-memory", schema: schema, isStoredInMemoryOnly: true)
-            container = try! ModelContainer(for: schema, configurations: [fallback])
-        }
+        _container = State(initialValue: try? LineWisePersistence.container(inMemory: uiTesting))
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .background(UndoToastWindowInstaller(undoCenter: undoCenter))
-                .environment(undoCenter)
-                .environment(appState)
-                .preferredColorScheme(.dark)
-                .tint(.accent)
+            Group {
+                if let container {
+                    RootView()
+                        .background(UndoToastWindowInstaller(undoCenter: undoCenter))
+                        .environment(undoCenter)
+                        .environment(appState)
+                        .modelContainer(container)
+                } else {
+                    ContentUnavailableView {
+                        Label("本机记录暂时打不开", systemImage: "externaldrive.badge.exclamationmark")
+                    } description: {
+                        Text("记录和照片仍保留在这台设备上。")
+                    } actions: {
+                        Button("重新打开") { container = try? LineWisePersistence.container() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+            .preferredColorScheme(.dark)
+            .tint(.accent)
         }
-        .modelContainer(container)
     }
 }

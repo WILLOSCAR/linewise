@@ -6,6 +6,7 @@
 | --- | --- |
 | 下一步做什么 | [Demo A–D 路线](roadmap.md) |
 | 已实现什么、如何验证 | [2026-10-05 进度核对](linewise_status_2026-10-05.md) |
+| 本次 PRD 梳理与 Demo A 交付 | [单点轮廓实现与验收](demo-a-implementation.md) |
 | 当前产品要求 | [PRD v2.0](linewise_prd_v2_0.md) |
 | 记忆闭环细则、馆访模板 | [PRD v1.1](linewise_prd_v1_0.md)；仅 v2.0 §5.4 明确继承的章节有效 |
 | 视觉与交互 | [UI 规范](linewise_ui_spec_v1.md) |
